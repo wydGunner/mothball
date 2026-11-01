@@ -6,16 +6,31 @@ use crate::json::Json;
 use crate::{p, Vault};
 
 pub fn index(v: &Vault, et: &str, id: &str, project_id: &str, title: &str, body: &str) -> DbResult<()> {
-    v.db.exec("DELETE FROM search_index WHERE entity_type=? AND entity_id=?", p![et, id])?;
+    unindex(v, et, id)?;
     v.db.exec(
         "INSERT INTO search_index(entity_type,entity_id,project_id,title,body) VALUES (?,?,?,?,?)",
         p![et, id, project_id, title, body],
     )?;
+    let rowid = v.db.last_insert_rowid();
+    v.db.exec("INSERT INTO search_keys(entity_type,entity_id,fts_rowid) VALUES (?,?,?)", p![et, id, rowid])?;
     Ok(())
 }
 
 pub fn unindex(v: &Vault, et: &str, id: &str) -> DbResult<()> {
-    v.db.exec("DELETE FROM search_index WHERE entity_type=? AND entity_id=?", p![et, id])?;
+    if let Some(r) = v.db.one("SELECT fts_rowid FROM search_keys WHERE entity_type=? AND entity_id=?", p![et, id])? {
+        v.db.exec("DELETE FROM search_index WHERE rowid=?", p![r.i("fts_rowid")])?;
+        v.db.exec("DELETE FROM search_keys WHERE entity_type=? AND entity_id=?", p![et, id])?;
+    }
+    Ok(())
+}
+
+/// Removes every index row belonging to a project.
+pub fn unindex_project(v: &Vault, project_id: &str) -> DbResult<()> {
+    v.db.exec(
+        "DELETE FROM search_keys WHERE fts_rowid IN (SELECT rowid FROM search_index WHERE project_id=?)",
+        p![project_id],
+    )?;
+    v.db.exec("DELETE FROM search_index WHERE project_id=?", p![project_id])?;
     Ok(())
 }
 
@@ -105,6 +120,7 @@ pub fn search(v: &Vault, q: &str, project_id: Option<&str>, types: &[String], li
 /// Rebuilds the whole index from source tables (recovery tool).
 pub fn rebuild(v: &Vault) -> DbResult<i64> {
     v.db.exec("DELETE FROM search_index", p![])?;
+    v.db.exec("DELETE FROM search_keys", p![])?;
     for r in v.db.query("SELECT id FROM projects", p![])? {
         index_project(v, &r.s("id"))?;
     }

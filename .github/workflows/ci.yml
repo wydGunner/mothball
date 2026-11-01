@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core-and-ui-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Core unit tests
+        run: cargo test --manifest-path crates/vault-core/Cargo.toml
+      - name: Build dev server
+        run: cargo build --manifest-path crates/vault-core/Cargo.toml --bin vault-devserver
+      - run: npm install
+      - name: Type-check UI
+        run: npm run typecheck
+      - name: Build UI
+        run: npm run build:ui
+      - run: npx playwright install --with-deps chromium
+      - name: End-to-end UI test
+        run: node scripts/ui-smoke.mjs --shots ui-shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: ui-screenshots, path: ui-shots }
+
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install
+      - name: Build installers (NSIS + MSI)
+        run: npx tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: project-vault-windows
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi

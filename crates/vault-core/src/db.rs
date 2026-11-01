@@ -80,6 +80,7 @@ extern "C" {
     fn sqlite3_column_blob(s: *mut sqlite3_stmt, i: c_int) -> *const c_void;
     fn sqlite3_column_bytes(s: *mut sqlite3_stmt, i: c_int) -> c_int;
     fn sqlite3_changes(db: *mut sqlite3) -> c_int;
+    fn sqlite3_last_insert_rowid(db: *mut sqlite3) -> i64;
     fn sqlite3_busy_timeout(db: *mut sqlite3, ms: c_int) -> c_int;
     fn sqlite3_libversion() -> *const c_char;
 }
@@ -320,6 +321,10 @@ impl Db {
         }
         unsafe { sqlite3_reset(st.raw) };
         Ok(unsafe { sqlite3_changes(self.raw) } as usize)
+    }
+
+    pub fn last_insert_rowid(&self) -> i64 {
+        unsafe { sqlite3_last_insert_rowid(self.raw) }
     }
 
     pub fn query(&self, sql: &str, params: &[Value]) -> DbResult<Vec<Row>> {

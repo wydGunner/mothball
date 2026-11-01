@@ -65,7 +65,7 @@ fn export_project(v: &Vault, pid: &str, dir: &Path) -> DbResult<()> {
 
     let mut tl = String::from("# Timeline\n\n");
     for e in v.db.query("SELECT * FROM timeline WHERE project_id=? ORDER BY at", p![pid])? {
-        tl.push_str(&format!("- {} — {}{}\n", e.i("at"), e.s("summary"), if e.s("detail").is_empty() { String::new() } else { format!(" ({})", e.s("detail")) }));
+        tl.push_str(&format!("- {} — {}{}\n", crate::util::iso_utc(e.i("at")), e.s("summary"), if e.s("detail").is_empty() { String::new() } else { format!(" ({})", e.s("detail")) }));
     }
     w(dir.join("timeline.md"), tl)?;
     Ok(())

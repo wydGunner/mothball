@@ -199,6 +199,16 @@ CREATE TABLE timeline (
 );
 CREATE INDEX timeline_project ON timeline(project_id, at);
 
+-- Maps an entity to its FTS row so updates delete by rowid (FTS5 cannot
+-- index UNINDEXED columns; deleting by entity_id would scan the whole index).
+CREATE TABLE search_keys (
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  fts_rowid INTEGER NOT NULL,
+  PRIMARY KEY (entity_type, entity_id)
+);
+CREATE INDEX search_keys_rowid ON search_keys(fts_rowid);
+
 CREATE VIRTUAL TABLE search_index USING fts5(
   entity_type UNINDEXED, entity_id UNINDEXED, project_id UNINDEXED,
   title, body, tokenize = 'unicode61 remove_diacritics 2'

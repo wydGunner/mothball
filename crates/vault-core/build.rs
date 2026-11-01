@@ -1,16 +1,12 @@
 // Decide how SQLite gets linked.
 //
-// VAULT_SQLITE=provided  -> the final binary supplies SQLite (src-tauri sets
-//                           this through .cargo/config.toml and depends on
-//                           libsqlite3-sys "bundled").
-// otherwise              -> link the system SQLite (Linux/macOS dev & CI, or
-//                           Windows with VAULT_SQLITE_LIB_DIR pointing at a
-//                           directory containing sqlite3.lib).
+// feature "system-sqlite" (default): link the platform SQLite (Linux/macOS
+//   dev & CI; on Windows set VAULT_SQLITE_LIB_DIR to a folder with sqlite3.lib).
+// without it (the desktop app uses `default-features = false`): the final
+//   binary supplies SQLite through libsqlite3-sys with the "bundled" feature.
 fn main() {
-    println!("cargo:rerun-if-env-changed=VAULT_SQLITE");
     println!("cargo:rerun-if-env-changed=VAULT_SQLITE_LIB_DIR");
-    let mode = std::env::var("VAULT_SQLITE").unwrap_or_default();
-    if mode == "provided" {
+    if std::env::var_os("CARGO_FEATURE_SYSTEM_SQLITE").is_none() {
         return;
     }
     if let Ok(dir) = std::env::var("VAULT_SQLITE_LIB_DIR") {

@@ -256,8 +256,7 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
             let fid = r.s("id");
             let was_missing = r.s("state") == "missing";
             if !was_missing && r.i("size") == seen.size && r.i("mtime") == seen.mtime && r.os("sha256").is_some() {
-                db.exec("UPDATE files SET last_seen=? WHERE id=?", p![now, fid.clone()])?;
-                continue;
+                continue; // unchanged: no write, keeps rescans of big trees cheap
             }
             let h = hash(rel, &mut rep);
             let content_changed = h.is_some() && h != r.os("sha256");
@@ -410,14 +409,6 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
         }
         Ok(())
     })?;
-    if first_scan {
-        v.db.tx(|_| {
-            for r in v.db.query("SELECT id FROM files WHERE project_id=?", p![project_id])? {
-                search::index_file(v, &r.s("id"))?;
-            }
-            Ok(())
-        })?;
-    }
     Ok(rep)
 }
 
@@ -472,7 +463,7 @@ pub fn resolve_review(v: &Vault, review_id: &str, accept: bool) -> DbResult<Json
             if cand_doc.is_some() {
                 db.exec("UPDATE file_docs SET file_id=? WHERE file_id=?", p![mid.clone(), cid.clone()])?;
             }
-            db.exec("DELETE FROM search_index WHERE entity_type='file' AND entity_id=?", p![cid.clone()])?;
+            search::unindex(v, "file", &cid)?;
             db.exec("DELETE FROM files WHERE id=?", p![cid.clone()])?;
             let changed = c.os("sha256") != m.os("sha256");
             db.exec(
@@ -503,7 +494,7 @@ pub fn forget_missing(v: &Vault, file_id: &str) -> DbResult<()> {
     v.db.tx(|db| {
         db.exec("DELETE FROM links WHERE (a_type='file' AND a_id=?) OR (b_type='file' AND b_id=?)", p![file_id, file_id])?;
         db.exec("DELETE FROM entity_tags WHERE entity_type='file' AND entity_id=?", p![file_id])?;
-        db.exec("DELETE FROM search_index WHERE entity_type='file' AND entity_id=?", p![file_id])?;
+        search::unindex(v, "file", file_id)?;
         db.exec("DELETE FROM files WHERE id=?", p![file_id])?;
         Ok(())
     })

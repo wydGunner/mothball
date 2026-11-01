@@ -9,8 +9,13 @@ license = "MIT"
 # (src/db/ffi.rs). Where the symbols come from is decided at link time:
 #   * Desktop app (src-tauri): links `libsqlite3-sys` with the `bundled`
 #     feature, so the shipped binary carries its own SQLite with FTS5.
-#   * Standalone core tests / dev server: build.rs links the system libsqlite3.
+#   * Standalone core tests / dev server: build.rs links the system libsqlite3
+#     (feature "system-sqlite", on by default).
 [dependencies]
+
+[features]
+default = ["system-sqlite"]
+system-sqlite = []
 
 [lib]
 path = "src/lib.rs"

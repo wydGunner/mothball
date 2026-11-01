@@ -99,7 +99,8 @@ pub fn save(v: &Vault, id: &str, patch: &Json) -> DbResult<Json> {
     if changed {
         v.db.tx(|db| {
             let last = db.scalar_i64("SELECT COALESCE(MAX(created_at),0) FROM note_revisions WHERE note_id=?", p![id])?;
-            if (old.s("body_md") != body || old.s("title") != title) && now - last > 5 * 60 * 1000 && !old.s("body_md").is_empty() {
+            let force = patch.get("forceRevision").and_then(|x| x.as_bool()).unwrap_or(false);
+            if (old.s("body_md") != body || old.s("title") != title) && (force || now - last > 5 * 60 * 1000) && !old.s("body_md").is_empty() {
                 db.exec(
                     "INSERT INTO note_revisions(id,note_id,title,body_md,created_at) VALUES (?,?,?,?,?)",
                     p![new_id(), id, old.s("title"), old.s("body_md"), now],

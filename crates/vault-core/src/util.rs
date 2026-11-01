@@ -48,6 +48,22 @@ pub fn new_id() -> String {
     format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
 }
 
+/// `2026-11-01 20:37 UTC` from Unix milliseconds (civil-from-days, Howard Hinnant).
+pub fn iso_utc(ms: i64) -> String {
+    let secs = ms.div_euclid(1000);
+    let (days, rem) = (secs.div_euclid(86400), secs.rem_euclid(86400));
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    format!("{y:04}-{m:02}-{d:02} {:02}:{:02} UTC", rem / 3600, rem % 3600 / 60)
+}
+
 // ---------------------------------------------------------------- SHA-256
 
 const K: [u32; 64] = [
@@ -315,6 +331,12 @@ mod tests {
         assert!(safe_join(root, "a\\..\\..\\b").is_err());
         assert_eq!(safe_join(root, "/a/b").unwrap(), PathBuf::from("/r/a/b"));
         assert_eq!(safe_join(root, "a\\b.txt").unwrap(), PathBuf::from("/r/a/b.txt"));
+    }
+    #[test]
+    fn iso() {
+        assert_eq!(iso_utc(0), "1970-01-01 00:00 UTC");
+        assert_eq!(iso_utc(1_793_565_420_000), "2026-11-01 20:37 UTC");
+        assert_eq!(iso_utc(951_782_400_000), "2000-02-29 00:00 UTC");
     }
     #[test]
     fn misc() {

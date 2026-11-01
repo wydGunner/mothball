@@ -318,7 +318,7 @@ pub fn remove(v: &Vault, id: &str, delete_managed_files: bool) -> DbResult<Json>
     let r = v.db.one("SELECT mode, root_path FROM projects WHERE id=?", p![id])?.ok_or("Project not found")?;
     let root = PathBuf::from(r.s("root_path"));
     v.db.tx(|db| {
-        db.exec("DELETE FROM search_index WHERE project_id=?", p![id])?;
+        search::unindex_project(v, id)?;
         db.exec("DELETE FROM entity_tags WHERE entity_id IN (SELECT id FROM files WHERE project_id=?) OR entity_id=?", p![id, id])?;
         db.exec("DELETE FROM projects WHERE id=?", p![id])?;
         Ok(())
