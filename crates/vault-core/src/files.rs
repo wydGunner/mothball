@@ -1,0 +1,1120 @@
+//! File indexing, reconciliation, imports, and file-level documentation.
+//!
+//! Identity model
+//! --------------
+//! Every file gets a random, stable `id` the first time it is seen. Notes,
+//! tags, links and history hang off that id, never off the path. A scan
+//! compares the folder with the index and classifies each difference:
+//!
+//! * same path, same size+mtime        -> unchanged (not re-hashed)
+//! * same path, content changed        -> modified (doc kept, flagged)
+//! * path gone + new path, same SHA-256,
+//!   and that hash is unique on both sides -> moved/renamed (doc follows)
+//! * anything ambiguous (duplicate hashes, same name elsewhere with different
+//!   content)                            -> both kept separate, and a review
+//!                                          item is created for the user
+//! * path gone, no match                -> marked missing (doc retained)
+//!
+//! Documentation is therefore never silently attached to a different file.
+//! If the project folder itself is unreachable (unplugged drive), the scan
+//! aborts without marking anything missing.
+
+use crate::db::{DbResult, Row};
+use crate::json::Json;
+use crate::util::{extension_of, new_id, now_ms, rel_path, safe_join, sha256_file, system_time_ms, unique_dest};
+use crate::{p, projects, search, timeline, Vault};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
+const ALWAYS_IGNORE_DIRS: &[&str] = &[".git", ".hg", ".svn", "node_modules", "__pycache__", ".vs", "$RECYCLE.BIN", "System Volume Information"];
+const ALWAYS_IGNORE_FILES: &[&str] = &["Thumbs.db", "desktop.ini", ".DS_Store"];
+const MAX_FILES_PER_PROJECT: usize = 500_000;
+
+pub fn classify(ext: &str) -> &'static str {
+    match ext {
+        "rs" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "py" | "cs" | "c" | "h" | "cpp" | "hpp" | "cc" | "go"
+        | "java" | "kt" | "lua" | "gsc" | "csc" | "gd" | "shader" | "hlsl" | "glsl" | "sh" | "bat" | "ps1" | "cmd"
+        | "rb" | "php" | "swift" | "sql" | "css" | "scss" | "html" | "vue" | "svelte" | "ino" => "code",
+        "md" | "markdown" | "txt" | "rtf" | "pdf" | "doc" | "docx" | "odt" | "xls" | "xlsx" | "csv" | "ppt" | "pptx" => "document",
+        "json" | "yaml" | "yml" | "toml" | "xml" | "ini" | "cfg" | "conf" | "env" | "lock" => "config",
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "ico" | "tga" | "psd" | "tif" | "tiff" | "exr" | "hdr" => "image",
+        "stl" | "obj" | "3mf" | "ply" | "amf" => "mesh",
+        "step" | "stp" | "f3d" | "fcstd" | "iges" | "igs" | "scad" | "blend" | "fbx" | "dae" | "gltf" | "glb" | "max" | "ma" | "mb" => "model",
+        "gcode" | "bgcode" | "gco" => "gcode",
+        "zip" | "7z" | "rar" | "tar" | "gz" | "xz" | "bz2" | "iwd" | "ff" => "archive",
+        "unity" | "prefab" | "asset" | "mat" | "meta" | "controller" | "anim" | "asmdef" | "uasset" | "umap" | "tscn" | "tres" => "engine",
+        "wav" | "mp3" | "ogg" | "flac" | "aiff" => "audio",
+        "mp4" | "mov" | "mkv" | "webm" | "avi" => "video",
+        "kicad_pcb" | "kicad_sch" | "kicad_pro" | "sch" | "brd" | "gbr" | "drl" | "fzz" => "electronics",
+        "exe" | "dll" | "so" | "dylib" | "bin" | "elf" | "hex" | "uf2" => "binary",
+        _ => "other",
+    }
+}
+
+pub fn is_text_ext(ext: &str) -> bool {
+    matches!(classify(ext), "code" | "config")
+        || matches!(ext, "md" | "markdown" | "txt" | "csv" | "log" | "gitignore" | "gcode" | "scad" | "meta" | "asmdef" | "kicad_sch" | "kicad_pro" | "tres" | "tscn")
+}
+
+// ------------------------------------------------------------------ ignore
+
+pub struct Ignore {
+    dirs: HashSet<String>,
+    dir_paths: Vec<String>,
+    exts: HashSet<String>,
+    names: HashSet<String>,
+}
+
+impl Ignore {
+    /// One rule per line: `Name/` (directory name anywhere), `a/b/` (directory
+    /// at a project-relative path), `*.ext`, or an exact file name.
+    pub fn parse(rules: &str) -> Ignore {
+        let mut ig = Ignore { dirs: HashSet::new(), dir_paths: Vec::new(), exts: HashSet::new(), names: HashSet::new() };
+        for d in ALWAYS_IGNORE_DIRS {
+            ig.dirs.insert(d.to_lowercase());
+        }
+        for f in ALWAYS_IGNORE_FILES {
+            ig.names.insert(f.to_lowercase());
+        }
+        for line in rules.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+            let l = line.replace('\\', "/").to_lowercase();
+            if let Some(e) = l.strip_prefix("*.") {
+                ig.exts.insert(e.to_string());
+            } else if let Some(d) = l.strip_suffix('/') {
+                let d = d.trim_start_matches('/');
+                if d.contains('/') { ig.dir_paths.push(d.to_string()) } else { ig.dirs.insert(d.to_string()); }
+            } else {
+                ig.names.insert(l);
+            }
+        }
+        ig
+    }
+    fn skip_dir(&self, name: &str, rel: &str) -> bool {
+        let n = name.to_lowercase();
+        let r = rel.to_lowercase();
+        self.dirs.contains(&n) || self.dir_paths.iter().any(|d| *d == r)
+    }
+    fn skip_file(&self, name: &str) -> bool {
+        let n = name.to_lowercase();
+        self.names.contains(&n) || self.exts.contains(&extension_of(&n)) || n.starts_with(".pv-tmp-")
+    }
+}
+
+// ------------------------------------------------------------------ walk
+
+pub struct Seen {
+    pub size: i64,
+    pub mtime: i64,
+}
+
+pub struct Walk {
+    pub files: BTreeMap<String, Seen>,
+    pub errors: Vec<String>,
+}
+
+/// Read-only walk. Never locks or opens files for writing, never follows
+/// symlinks/junctions (avoids loops and escaping the project root).
+pub fn walk(root: &Path, ig: &Ignore) -> Walk {
+    let mut w = Walk { files: BTreeMap::new(), errors: Vec::new() };
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(e) => {
+                w.errors.push(format!("{}: {e}", dir.display()));
+                continue;
+            }
+        };
+        for ent in rd {
+            let ent = match ent {
+                Ok(e) => e,
+                Err(e) => {
+                    w.errors.push(format!("{}: {e}", dir.display()));
+                    continue;
+                }
+            };
+            let path = ent.path();
+            let name = ent.file_name().to_string_lossy().to_string();
+            let ft = match ent.file_type() {
+                Ok(t) => t,
+                Err(e) => {
+                    w.errors.push(format!("{}: {e}", path.display()));
+                    continue;
+                }
+            };
+            if ft.is_symlink() {
+                continue;
+            }
+            let Some(rel) = rel_path(root, &path) else { continue };
+            if ft.is_dir() {
+                if !ig.skip_dir(&name, &rel) {
+                    stack.push(path);
+                }
+            } else if ft.is_file() && !ig.skip_file(&name) {
+                match ent.metadata() {
+                    Ok(m) => {
+                        let mtime = m.modified().map(system_time_ms).unwrap_or(0);
+                        w.files.insert(rel, Seen { size: m.len() as i64, mtime });
+                    }
+                    Err(e) => w.errors.push(format!("{}: {e}", path.display())),
+                }
+                if w.files.len() > MAX_FILES_PER_PROJECT {
+                    w.errors.push(format!("Stopped after {MAX_FILES_PER_PROJECT} files; add ignore rules for generated folders."));
+                    return w;
+                }
+            }
+        }
+    }
+    w
+}
+
+// ------------------------------------------------------------------ scan
+
+#[derive(Default, Debug)]
+pub struct ScanReport {
+    pub total: usize,
+    pub added: usize,
+    pub modified: usize,
+    pub moved: usize,
+    pub missing: usize,
+    pub restored: usize,
+    pub needs_review: usize,
+    pub errors: Vec<String>,
+    pub hashed: usize,
+}
+
+impl ScanReport {
+    pub fn json(&self) -> Json {
+        Json::obj()
+            .with("total", self.total)
+            .with("added", self.added)
+            .with("modified", self.modified)
+            .with("moved", self.moved)
+            .with("missing", self.missing)
+            .with("restored", self.restored)
+            .with("needsReview", self.needs_review)
+            .with("hashed", self.hashed)
+            .with("errors", Json::Arr(self.errors.iter().take(50).map(|e| Json::from(e.as_str())).collect()))
+            .with("errorCount", self.errors.len())
+    }
+    fn changes(&self) -> usize {
+        self.added + self.modified + self.moved + self.missing + self.restored
+    }
+}
+
+fn event(v: &Vault, pid: &str, fid: &str, kind: &str, detail: &str, sha: Option<&str>) -> DbResult<()> {
+    v.db.exec(
+        "INSERT INTO file_events(id,project_id,file_id,kind,detail,sha256,at) VALUES (?,?,?,?,?,?,?)",
+        p![new_id(), pid, fid, kind, detail, sha.map(String::from), now_ms()],
+    )?;
+    Ok(())
+}
+
+fn file_name_of(rel: &str) -> String {
+    rel.rsplit('/').next().unwrap_or(rel).to_string()
+}
+
+pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
+    let pr = v.db.one("SELECT root_path, ignore_globs FROM projects WHERE id=?", p![project_id])?.ok_or("Project not found")?;
+    let root = PathBuf::from(pr.s("root_path"));
+    if !root.is_dir() {
+        v.db.exec("UPDATE projects SET root_available=0 WHERE id=?", p![project_id])?;
+        return Err(format!(
+            "The project folder {} is not reachable (drive disconnected, renamed or deleted?). Nothing was changed. \
+             Reconnect the drive or use \"Re-link folder\".",
+            root.display()
+        ));
+    }
+    let ig = Ignore::parse(&pr.s("ignore_globs"));
+    let w = walk(&root, &ig);
+    let mut rep = ScanReport { errors: w.errors, ..Default::default() };
+    rep.total = w.files.len();
+    let now = now_ms();
+    let first_scan = v.db.scalar_i64("SELECT count(*) FROM files WHERE project_id=?", p![project_id])? == 0;
+
+    let existing = v.db.query("SELECT * FROM files WHERE project_id=?", p![project_id])?;
+    let by_path: HashMap<String, &Row> = existing.iter().map(|r| (r.s("rel_path"), r)).collect();
+
+    let hash = |rel: &str, rep: &mut ScanReport| -> Option<String> {
+        let ap = safe_join(&root, rel).ok()?;
+        match sha256_file(&ap) {
+            Ok(h) => {
+                rep.hashed += 1;
+                Some(h)
+            }
+            Err(e) => {
+                rep.errors.push(format!("{rel}: {e}"));
+                None
+            }
+        }
+    };
+
+    v.db.tx(|db| {
+        // 1. paths that exist both on disk and in the index
+        for (rel, seen) in &w.files {
+            let Some(r) = by_path.get(rel) else { continue };
+            let fid = r.s("id");
+            let was_missing = r.s("state") == "missing";
+            if !was_missing && r.i("size") == seen.size && r.i("mtime") == seen.mtime && r.os("sha256").is_some() {
+                db.exec("UPDATE files SET last_seen=? WHERE id=?", p![now, fid.clone()])?;
+                continue;
+            }
+            let h = hash(rel, &mut rep);
+            let content_changed = h.is_some() && h != r.os("sha256");
+            db.exec(
+                "UPDATE files SET size=?, mtime=?, sha256=COALESCE(?, sha256), state='present', last_seen=?,
+                   last_changed=CASE WHEN ? THEN ? ELSE last_changed END,
+                   changed_since_review=CASE WHEN ? THEN 1 ELSE changed_since_review END
+                 WHERE id=?",
+                p![seen.size, seen.mtime, h.clone(), now, content_changed, now, content_changed, fid.clone()],
+            )?;
+            if was_missing {
+                rep.restored += 1;
+                event(v, project_id, &fid, "restored", "File is present again", h.as_deref())?;
+            }
+            if content_changed {
+                rep.modified += 1;
+                event(v, project_id, &fid, "modified", "Content changed outside Project Vault", h.as_deref())?;
+            }
+        }
+
+        // 2. vanished (present in index, absent on disk) + previously missing
+        let disk: HashSet<&String> = w.files.keys().collect();
+        let gone: Vec<&Row> = existing.iter().filter(|r| !disk.contains(&r.s("rel_path"))).collect();
+        // 3. brand-new paths
+        let mut new_files: Vec<(String, i64, i64, Option<String>)> = Vec::new();
+        for (rel, seen) in &w.files {
+            if !by_path.contains_key(rel) {
+                let h = hash(rel, &mut rep);
+                new_files.push((rel.clone(), seen.size, seen.mtime, h));
+            }
+        }
+
+        // 4. hash matching between gone and new
+        let mut gone_by_hash: HashMap<String, Vec<&Row>> = HashMap::new();
+        for g in &gone {
+            if let Some(h) = g.os("sha256") {
+                gone_by_hash.entry(h).or_default().push(g);
+            }
+        }
+        let mut new_by_hash: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, n) in new_files.iter().enumerate() {
+            if let Some(h) = &n.3 {
+                new_by_hash.entry(h.clone()).or_default().push(i);
+            }
+        }
+        let mut consumed_new: HashSet<usize> = HashSet::new();
+        let mut consumed_gone: HashSet<String> = HashSet::new();
+        for (h, gs) in &gone_by_hash {
+            let Some(ns) = new_by_hash.get(h) else { continue };
+            if gs.len() == 1 && ns.len() == 1 {
+                // also require the hash to be unique among files still present,
+                // otherwise a copy could be mistaken for the moved original
+                let present_dupes = db.scalar_i64(
+                    "SELECT count(*) FROM files WHERE project_id=? AND sha256=? AND state='present' AND id!=?",
+                    p![project_id, h.clone(), gs[0].s("id")],
+                )?;
+                let gone_present = gs[0].s("state") == "present";
+                if present_dupes == 0 {
+                    let g = gs[0];
+                    let n = &new_files[ns[0]];
+                    let fid = g.s("id");
+                    db.exec(
+                        "UPDATE files SET rel_path=?, name=?, ext=?, kind=?, size=?, mtime=?, state='present', last_seen=? WHERE id=?",
+                        p![n.0.clone(), file_name_of(&n.0), extension_of(&n.0), classify(&extension_of(&n.0)), n.1, n.2, now, fid.clone()],
+                    )?;
+                    event(v, project_id, &fid, "moved", &format!("{} → {}", g.s("rel_path"), n.0), Some(h))?;
+                    if gone_present { rep.moved += 1 } else { rep.restored += 1 }
+                    consumed_new.insert(ns[0]);
+                    consumed_gone.insert(fid);
+                }
+            }
+        }
+
+        // 5. remaining new files are inserted as new identities
+        let mut inserted: Vec<(String, usize)> = Vec::new();
+        for (i, n) in new_files.iter().enumerate() {
+            if consumed_new.contains(&i) {
+                continue;
+            }
+            let fid = new_id();
+            let ext = extension_of(&n.0);
+            db.exec(
+                "INSERT INTO files(id,project_id,rel_path,name,ext,kind,size,mtime,sha256,state,first_seen,last_seen,last_changed)
+                 VALUES (?,?,?,?,?,?,?,?,?,'present',?,?,?)",
+                p![fid.clone(), project_id, n.0.clone(), file_name_of(&n.0), ext.clone(), classify(&ext), n.1, n.2, n.3.clone(), now, now, now],
+            )?;
+            if !first_scan {
+                event(v, project_id, &fid, "added", "", n.3.as_deref())?;
+            }
+            rep.added += 1;
+            inserted.push((fid, i));
+        }
+
+        // 6. remaining gone files become missing; queue reviews for ambiguity
+        for g in &gone {
+            let gid = g.s("id");
+            if consumed_gone.contains(&gid) {
+                continue;
+            }
+            if g.s("state") == "present" {
+                db.exec("UPDATE files SET state='missing' WHERE id=?", p![gid.clone()])?;
+                event(v, project_id, &gid, "missing", &format!("No longer at {}", g.s("rel_path")), None)?;
+                rep.missing += 1;
+            }
+            let gname = g.s("name").to_lowercase();
+            let gh = g.os("sha256");
+            for (nid, i) in &inserted {
+                let n = &new_files[*i];
+                let reason = if gh.is_some() && gh == n.3 {
+                    Some("identical content")
+                } else if file_name_of(&n.0).to_lowercase() == gname {
+                    Some("same file name, different content")
+                } else {
+                    None
+                };
+                if let Some(reason) = reason {
+                    let c = db.exec(
+                        "INSERT OR IGNORE INTO reconcile_reviews(id,project_id,missing_file_id,candidate_file_id,reason,created_at) VALUES (?,?,?,?,?,?)",
+                        p![new_id(), project_id, gid.clone(), nid.clone(), reason, now],
+                    )?;
+                    rep.needs_review += c;
+                }
+            }
+        }
+
+        db.exec("UPDATE projects SET last_scan_at=?, root_available=1 WHERE id=?", p![now, project_id])?;
+        if first_scan && rep.added > 0 {
+            timeline::add(v, project_id, "files", &format!("Indexed {} files", rep.added), "", None, false)?;
+        } else if rep.changes() > 0 {
+            let mut parts = Vec::new();
+            for (n, label) in [(rep.added, "added"), (rep.modified, "modified"), (rep.moved, "moved/renamed"), (rep.missing, "missing"), (rep.restored, "restored")] {
+                if n > 0 {
+                    parts.push(format!("{n} {label}"));
+                }
+            }
+            timeline::add(v, project_id, "files", &format!("File changes detected: {}", parts.join(", ")), "", None, false)?;
+        }
+        Ok(())
+    })?;
+
+    // index text for new/changed rows (outside the scan tx keeps it short)
+    let touched = v.db.query(
+        "SELECT id FROM files WHERE project_id=? AND first_seen=?
+         UNION SELECT file_id FROM file_events WHERE project_id=? AND at>=?",
+        p![project_id, now, project_id, now],
+    )?;
+    v.db.tx(|_| {
+        for r in &touched {
+            search::index_file(v, &r.s("id"))?;
+        }
+        Ok(())
+    })?;
+    if first_scan {
+        v.db.tx(|_| {
+            for r in v.db.query("SELECT id FROM files WHERE project_id=?", p![project_id])? {
+                search::index_file(v, &r.s("id"))?;
+            }
+            Ok(())
+        })?;
+    }
+    Ok(rep)
+}
+
+// ------------------------------------------------------------------ reviews
+
+pub fn reviews(v: &Vault, project_id: &str) -> DbResult<Json> {
+    let rows = v.db.query(
+        "SELECT r.id, r.reason, r.created_at,
+                m.id AS mid, m.rel_path AS mpath, m.size AS msize,
+                c.id AS cid, c.rel_path AS cpath, c.size AS csize,
+                (SELECT count(*) FROM file_docs d WHERE d.file_id=m.id AND (d.purpose!='' OR d.notes_md!='')) AS mdoc
+         FROM reconcile_reviews r JOIN files m ON m.id=r.missing_file_id JOIN files c ON c.id=r.candidate_file_id
+         WHERE r.project_id=? ORDER BY r.created_at",
+        p![project_id],
+    )?;
+    Ok(Json::Arr(
+        rows.iter()
+            .map(|r| {
+                Json::obj()
+                    .with("id", r.s("id"))
+                    .with("reason", r.s("reason"))
+                    .with("missing", Json::obj().with("id", r.s("mid")).with("path", r.s("mpath")).with("size", r.i("msize")).with("hasDocs", r.i("mdoc") > 0))
+                    .with("candidate", Json::obj().with("id", r.s("cid")).with("path", r.s("cpath")).with("size", r.i("csize")))
+            })
+            .collect(),
+    ))
+}
+
+/// Resolves a review. `accept` = the candidate IS the missing file: the
+/// candidate's location is merged into the original identity (keeping all
+/// documentation/history) and the candidate row is removed. `reject` = they
+/// are different files; the review is dismissed.
+pub fn resolve_review(v: &Vault, review_id: &str, accept: bool) -> DbResult<Json> {
+    let r = v.db.one("SELECT * FROM reconcile_reviews WHERE id=?", p![review_id])?.ok_or("Review not found")?;
+    let (pid, mid, cid) = (r.s("project_id"), r.s("missing_file_id"), r.s("candidate_file_id"));
+    v.db.tx(|db| {
+        if accept {
+            let c = db.one("SELECT * FROM files WHERE id=?", p![cid.clone()])?.ok_or("Candidate no longer exists")?;
+            let m = db.one("SELECT * FROM files WHERE id=?", p![mid.clone()])?.ok_or("File no longer exists")?;
+            if m.s("state") != "missing" {
+                return Err("The original file is present again; this review is obsolete.".into());
+            }
+            // move candidate-owned data to the original identity, then drop candidate
+            db.exec("UPDATE OR IGNORE links SET a_id=? WHERE a_type='file' AND a_id=?", p![mid.clone(), cid.clone()])?;
+            db.exec("UPDATE OR IGNORE links SET b_id=? WHERE b_type='file' AND b_id=?", p![mid.clone(), cid.clone()])?;
+            db.exec("UPDATE OR IGNORE entity_tags SET entity_id=? WHERE entity_type='file' AND entity_id=?", p![mid.clone(), cid.clone()])?;
+            let cand_doc = db.one("SELECT 1 FROM file_docs WHERE file_id=? AND (purpose!='' OR notes_md!='')", p![cid.clone()])?;
+            let orig_doc = db.one("SELECT 1 FROM file_docs WHERE file_id=?", p![mid.clone()])?;
+            if cand_doc.is_some() && orig_doc.is_some() {
+                return Err("Both files have documentation. Copy what you need from the newer one, clear it, then accept.".into());
+            }
+            if cand_doc.is_some() {
+                db.exec("UPDATE file_docs SET file_id=? WHERE file_id=?", p![mid.clone(), cid.clone()])?;
+            }
+            db.exec("DELETE FROM search_index WHERE entity_type='file' AND entity_id=?", p![cid.clone()])?;
+            db.exec("DELETE FROM files WHERE id=?", p![cid.clone()])?;
+            let changed = c.os("sha256") != m.os("sha256");
+            db.exec(
+                "UPDATE files SET rel_path=?, name=?, ext=?, kind=?, size=?, mtime=?, sha256=?, state='present', last_seen=?,
+                   changed_since_review = CASE WHEN ? THEN 1 ELSE changed_since_review END,
+                   last_changed = CASE WHEN ? THEN ? ELSE last_changed END WHERE id=?",
+                p![c.s("rel_path"), c.s("name"), c.s("ext"), c.s("kind"), c.i("size"), c.i("mtime"), c.os("sha256"), now_ms(), changed, changed, now_ms(), mid.clone()],
+            )?;
+            event(v, &pid, &mid, "relinked", &format!("{} → {} (confirmed by user)", m.s("rel_path"), c.s("rel_path")), c.os("sha256").as_deref())?;
+            db.exec("DELETE FROM reconcile_reviews WHERE missing_file_id=? OR candidate_file_id=? OR candidate_file_id=?", p![mid.clone(), cid.clone(), mid.clone()])?;
+        } else {
+            db.exec("DELETE FROM reconcile_reviews WHERE id=?", p![review_id])?;
+        }
+        Ok(())
+    })?;
+    if accept {
+        search::index_file(v, &mid)?;
+    }
+    Ok(Json::obj().with("ok", true))
+}
+
+/// Permanently forgets a missing file's record (and its documentation).
+pub fn forget_missing(v: &Vault, file_id: &str) -> DbResult<()> {
+    let r = v.db.one("SELECT state FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
+    if r.s("state") != "missing" {
+        return Err("Only missing files can be forgotten".into());
+    }
+    v.db.tx(|db| {
+        db.exec("DELETE FROM links WHERE (a_type='file' AND a_id=?) OR (b_type='file' AND b_id=?)", p![file_id, file_id])?;
+        db.exec("DELETE FROM entity_tags WHERE entity_type='file' AND entity_id=?", p![file_id])?;
+        db.exec("DELETE FROM search_index WHERE entity_type='file' AND entity_id=?", p![file_id])?;
+        db.exec("DELETE FROM files WHERE id=?", p![file_id])?;
+        Ok(())
+    })
+}
+
+// ------------------------------------------------------------------ listing
+
+fn file_json(r: &Row) -> Json {
+    Json::obj()
+        .with("id", r.s("id"))
+        .with("path", r.s("rel_path"))
+        .with("name", r.s("name"))
+        .with("ext", r.s("ext"))
+        .with("kind", r.s("kind"))
+        .with("size", r.i("size"))
+        .with("mtime", r.i("mtime"))
+        .with("sha256", r.os("sha256"))
+        .with("state", r.s("state"))
+        .with("firstSeen", r.i("first_seen"))
+        .with("lastChanged", r.i("last_changed"))
+        .with("changedSinceReview", r.b("changed_since_review"))
+        .with("hasDocs", r.i("has_docs") > 0)
+        .with("purpose", r.s("purpose"))
+}
+
+const FILE_SELECT: &str = "SELECT f.*, COALESCE(d.purpose,'') AS purpose,
+    (d.file_id IS NOT NULL AND (d.purpose!='' OR d.notes_md!='' OR d.warnings!='')) AS has_docs
+    FROM files f LEFT JOIN file_docs d ON d.file_id=f.id";
+
+pub fn list(v: &Vault, project_id: &str, filter: &Json) -> DbResult<Json> {
+    let q = filter.str_of("query").unwrap_or_default().to_lowercase();
+    let kind = filter.str_of("kind");
+    let state = filter.str_of("state");
+    let dir = filter.str_of("dir");
+    let only_changed = filter.get("changedOnly").and_then(|x| x.as_bool()).unwrap_or(false);
+    let undocumented = filter.get("undocumented").and_then(|x| x.as_bool()).unwrap_or(false);
+    let limit = filter.get("limit").and_then(|x| x.as_i64()).unwrap_or(5000).clamp(1, 50000);
+    let like = format!("%{}%", q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+    let dir_like = dir.as_ref().map(|d| format!("{}/%", d.trim_end_matches('/').replace('%', "\\%").replace('_', "\\_")));
+    let sort = match filter.str_of("sort").as_deref() {
+        Some("size") => "f.size DESC",
+        Some("changed") => "f.last_changed DESC",
+        Some("name") => "f.name COLLATE NOCASE",
+        _ => "f.rel_path COLLATE NOCASE",
+    };
+    let rows = v.db.query(
+        &format!(
+            "{FILE_SELECT} WHERE f.project_id=? AND (?='' OR lower(f.rel_path) LIKE ? ESCAPE '\\')
+             AND (? IS NULL OR f.kind=?) AND (? IS NULL OR f.state=?) AND (? IS NULL OR f.rel_path LIKE ? ESCAPE '\\')
+             AND (?=0 OR f.changed_since_review=1) AND (?=0 OR d.file_id IS NULL OR (d.purpose='' AND d.notes_md=''))
+             ORDER BY {sort} LIMIT ?"
+        ),
+        p![project_id, q.clone(), like, kind.clone(), kind, state.clone(), state, dir_like.clone(), dir_like, only_changed, undocumented, limit],
+    )?;
+    Ok(Json::Arr(rows.iter().map(file_json).collect()))
+}
+
+pub fn get(v: &Vault, file_id: &str) -> DbResult<Json> {
+    let r = v.db.one(&format!("{FILE_SELECT} WHERE f.id=?"), p![file_id])?.ok_or("File not found")?;
+    let mut j = file_json(&r);
+    let root = projects::root_of(v, &r.s("project_id"))?;
+    j.set("projectId", r.s("project_id"));
+    j.set("absPath", safe_join(&root, &r.s("rel_path"))?.to_string_lossy().to_string());
+    j.set("tags", projects::tags_for(v, "file", file_id)?);
+    j.set("docs", docs_get(v, file_id)?);
+    j.set("events", events(v, file_id, 100)?);
+    j.set("links", crate::knowledge::links_for(v, "file", file_id)?);
+    j.set("duplicates", Json::Arr(match r.os("sha256") {
+        Some(h) => v
+            .db
+            .query("SELECT id, rel_path FROM files WHERE project_id=? AND sha256=? AND id!=? AND state='present'", p![r.s("project_id"), h, file_id])?
+            .iter()
+            .map(|d| Json::obj().with("id", d.s("id")).with("path", d.s("rel_path")))
+            .collect(),
+        None => vec![],
+    }));
+    if r.s("ext") == "stl" && r.s("state") == "present" {
+        if let Ok(ap) = safe_join(&root, &r.s("rel_path")) {
+            if let Some((x, y, z)) = stl_dimensions(&ap) {
+                j.set("meshDimensionsMm", Json::Arr(vec![x.into(), y.into(), z.into()]));
+            }
+        }
+    }
+    Ok(j)
+}
+
+/// Folder tree of present+missing files: [{path, files, bytes}] per directory.
+pub fn dirs(v: &Vault, project_id: &str) -> DbResult<Json> {
+    let rows = v.db.query("SELECT rel_path, size FROM files WHERE project_id=?", p![project_id])?;
+    let mut agg: BTreeMap<String, (i64, i64)> = BTreeMap::new();
+    for r in &rows {
+        let rp = r.s("rel_path");
+        let mut cur = String::new();
+        let parts: Vec<&str> = rp.split('/').collect();
+        agg.entry(String::new()).or_default();
+        for seg in &parts[..parts.len().saturating_sub(1)] {
+            cur = if cur.is_empty() { seg.to_string() } else { format!("{cur}/{seg}") };
+            let e = agg.entry(cur.clone()).or_default();
+            e.0 += 1;
+            e.1 += r.i("size");
+        }
+        let e = agg.entry(String::new()).or_default();
+        e.0 += 1;
+        e.1 += r.i("size");
+    }
+    Ok(Json::Arr(agg.into_iter().map(|(k, (n, b))| Json::obj().with("path", k).with("files", n).with("bytes", b)).collect()))
+}
+
+pub fn events(v: &Vault, file_id: &str, limit: i64) -> DbResult<Json> {
+    let rows = v.db.query("SELECT * FROM file_events WHERE file_id=? ORDER BY at DESC LIMIT ?", p![file_id, limit])?;
+    Ok(Json::Arr(
+        rows.iter()
+            .map(|r| Json::obj().with("kind", r.s("kind")).with("detail", r.s("detail")).with("sha256", r.os("sha256")).with("at", r.i("at")))
+            .collect(),
+    ))
+}
+
+pub fn recent_activity(v: &Vault, project_id: &str, limit: i64) -> DbResult<Json> {
+    let rows = v.db.query(
+        "SELECT e.kind, e.detail, e.at, f.id, f.rel_path FROM file_events e JOIN files f ON f.id=e.file_id
+         WHERE e.project_id=? ORDER BY e.at DESC LIMIT ?",
+        p![project_id, limit],
+    )?;
+    Ok(Json::Arr(
+        rows.iter()
+            .map(|r| Json::obj().with("kind", r.s("kind")).with("detail", r.s("detail")).with("at", r.i("at")).with("fileId", r.s("id")).with("path", r.s("rel_path")))
+            .collect(),
+    ))
+}
+
+pub fn duplicates(v: &Vault, project_id: &str) -> DbResult<Json> {
+    let rows = v.db.query(
+        "SELECT sha256, size, group_concat(id, '|') AS ids, group_concat(rel_path, '|') AS paths, count(*) AS n
+         FROM files WHERE project_id=? AND state='present' AND sha256 IS NOT NULL AND size>0
+         GROUP BY sha256 HAVING n>1 ORDER BY size*n DESC LIMIT 500",
+        p![project_id],
+    )?;
+    Ok(Json::Arr(
+        rows.iter()
+            .map(|r| {
+                let ids: Vec<Json> = r.s("ids").split('|').map(Json::from).collect();
+                let paths: Vec<Json> = r.s("paths").split('|').map(Json::from).collect();
+                Json::obj().with("sha256", r.s("sha256")).with("size", r.i("size")).with("ids", Json::Arr(ids)).with("paths", Json::Arr(paths))
+            })
+            .collect(),
+    ))
+}
+
+pub fn mark_reviewed(v: &Vault, file_ids: &[String]) -> DbResult<()> {
+    v.db.tx(|db| {
+        for id in file_ids {
+            db.exec("UPDATE files SET changed_since_review=0 WHERE id=?", p![id.clone()])?;
+        }
+        Ok(())
+    })
+}
+
+/// Text preview (first `max` bytes) for supported text formats.
+pub fn preview_text(v: &Vault, file_id: &str, max: usize) -> DbResult<Json> {
+    let r = v.db.one("SELECT project_id, rel_path, ext, size, state FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
+    if r.s("state") != "present" {
+        return Err("File is missing on disk".into());
+    }
+    let root = projects::root_of(v, &r.s("project_id"))?;
+    let ap = safe_join(&root, &r.s("rel_path"))?;
+    use std::io::Read;
+    let mut f = std::fs::File::open(&ap).map_err(|e| format!("Cannot read {}: {e}", ap.display()))?;
+    let mut buf = vec![0u8; max.min(2 * 1024 * 1024)];
+    let n = f.read(&mut buf).map_err(|e| e.to_string())?;
+    buf.truncate(n);
+    let binary = buf.iter().take(8000).any(|b| *b == 0);
+    if binary && !is_text_ext(&r.s("ext")) {
+        return Ok(Json::obj().with("binary", true));
+    }
+    Ok(Json::obj()
+        .with("binary", false)
+        .with("text", String::from_utf8_lossy(&buf).to_string())
+        .with("truncated", (n as i64) < r.i("size")))
+}
+
+/// Reads an image as base64 (for previews) — bounded size.
+pub fn read_base64(v: &Vault, file_id: &str, max_bytes: u64) -> DbResult<Json> {
+    let r = v.db.one("SELECT project_id, rel_path, size, ext FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
+    if r.i("size") as u64 > max_bytes {
+        return Err("File too large to preview".into());
+    }
+    let root = projects::root_of(v, &r.s("project_id"))?;
+    let data = std::fs::read(safe_join(&root, &r.s("rel_path"))?).map_err(|e| e.to_string())?;
+    let mime = match r.s("ext").as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        _ => "application/octet-stream",
+    };
+    Ok(Json::obj().with("mime", mime).with("base64", base64(&data)))
+}
+
+pub fn base64(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut s = String::with_capacity(data.len().div_ceil(3) * 4);
+    for c in data.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        s.push(T[(n >> 18) as usize & 63] as char);
+        s.push(T[(n >> 12) as usize & 63] as char);
+        s.push(if c.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        s.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    s
+}
+
+/// Bounding box of an STL (binary or ASCII), in model units (normally mm).
+/// Ported from Print Vault's extractor.
+pub fn stl_dimensions(p: &Path) -> Option<(f64, f64, f64)> {
+    let md = std::fs::metadata(p).ok()?;
+    if md.len() > 512 * 1024 * 1024 {
+        return None;
+    }
+    let data = std::fs::read(p).ok()?;
+    let mut mn = [f64::MAX; 3];
+    let mut mx = [f64::MIN; 3];
+    let mut push = |v: [f64; 3]| {
+        for i in 0..3 {
+            mn[i] = mn[i].min(v[i]);
+            mx[i] = mx[i].max(v[i]);
+        }
+    };
+    let binary_ok = data.len() >= 84 && {
+        let n = u32::from_le_bytes([data[80], data[81], data[82], data[83]]) as usize;
+        84 + n * 50 == data.len()
+    };
+    let mut any = false;
+    if binary_ok {
+        let n = (data.len() - 84) / 50;
+        for t in 0..n {
+            let base = 84 + t * 50 + 12;
+            for k in 0..3 {
+                let o = base + k * 12;
+                let f = |i: usize| f32::from_le_bytes([data[o + i], data[o + i + 1], data[o + i + 2], data[o + i + 3]]) as f64;
+                push([f(0), f(4), f(8)]);
+                any = true;
+            }
+        }
+    } else {
+        let text = String::from_utf8_lossy(&data);
+        for line in text.lines() {
+            let mut it = line.split_whitespace();
+            if it.next().map(|w| w.eq_ignore_ascii_case("vertex")) == Some(true) {
+                let v: Vec<f64> = it.filter_map(|x| x.parse().ok()).collect();
+                if v.len() == 3 {
+                    push([v[0], v[1], v[2]]);
+                    any = true;
+                }
+            }
+        }
+    }
+    if !any {
+        return None;
+    }
+    let r = |x: f64| (x * 1000.0).round() / 1000.0;
+    Some((r(mx[0] - mn[0]), r(mx[1] - mn[1]), r(mx[2] - mn[2])))
+}
+
+// ------------------------------------------------------------------ import
+
+/// Copies external files into the project (managed storage or a folder of a
+/// linked project). Never overwrites: name collisions get " (2)" suffixes.
+/// Files whose content already exists in the project are skipped unless
+/// `allow_duplicates`. Each copy is verified by hash before it is kept.
+pub fn import(v: &Vault, project_id: &str, sources: &[PathBuf], dest_rel_dir: &str, allow_duplicates: bool) -> DbResult<Json> {
+    let root = projects::root_of(v, project_id)?;
+    if !root.is_dir() {
+        return Err(format!("Project folder {} is not reachable", root.display()));
+    }
+    let dest_dir = safe_join(&root, dest_rel_dir)?;
+    std::fs::create_dir_all(&dest_dir).map_err(|e| format!("Cannot create {}: {e}", dest_dir.display()))?;
+    let mut imported = Vec::new();
+    let mut skipped = Vec::new();
+    let mut errors = Vec::new();
+    // expand folders
+    let mut queue: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for s in sources {
+        if s.is_dir() {
+            let base = s.parent().unwrap_or(s).to_path_buf();
+            let w = walk(s, &Ignore::parse(""));
+            for (rel, _) in w.files {
+                let src = s.join(&rel);
+                let sub = rel_path(&base, &src).unwrap_or(rel.clone());
+                queue.push((src, PathBuf::from(sub)));
+            }
+            errors.extend(w.errors);
+        } else {
+            queue.push((s.clone(), PathBuf::from(s.file_name().map(|x| x.to_os_string()).unwrap_or_default())));
+        }
+    }
+    for (src, sub) in queue {
+        if src.starts_with(&root) {
+            skipped.push(Json::obj().with("source", src.to_string_lossy().to_string()).with("reason", "already inside the project folder"));
+            continue;
+        }
+        let h = match sha256_file(&src) {
+            Ok(h) => h,
+            Err(e) => {
+                errors.push(format!("{}: {e}", src.display()));
+                continue;
+            }
+        };
+        if !allow_duplicates {
+            if let Some(d) = v.db.one("SELECT rel_path FROM files WHERE project_id=? AND sha256=? AND state='present'", p![project_id, h.clone()])? {
+                skipped.push(Json::obj().with("source", src.to_string_lossy().to_string()).with("reason", format!("duplicate of {}", d.s("rel_path"))));
+                continue;
+            }
+        }
+        let sub_s = sub.to_string_lossy().replace('\\', "/");
+        let target_dir = match sub_s.rsplit_once('/') {
+            Some((d, _)) => match safe_join(&dest_dir, d) {
+                Ok(p) => p,
+                Err(e) => {
+                    errors.push(e);
+                    continue;
+                }
+            },
+            None => dest_dir.clone(),
+        };
+        if let Err(e) = std::fs::create_dir_all(&target_dir) {
+            errors.push(format!("{}: {e}", target_dir.display()));
+            continue;
+        }
+        let name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
+        let dest = unique_dest(&target_dir, &name);
+        let tmp = target_dir.join(format!(".pv-tmp-{}", &new_id()[..8]));
+        let res = std::fs::copy(&src, &tmp).map_err(|e| e.to_string()).and_then(|_| {
+            let h2 = sha256_file(&tmp).map_err(|e| e.to_string())?;
+            if h2 != h {
+                return Err("verification failed (source changed during copy?)".into());
+            }
+            if dest.exists() {
+                return Err("destination appeared during copy".into());
+            }
+            std::fs::rename(&tmp, &dest).map_err(|e| e.to_string())
+        });
+        if let Err(e) = res {
+            let _ = std::fs::remove_file(&tmp);
+            errors.push(format!("{}: {e}", src.display()));
+            continue;
+        }
+        imported.push(Json::obj().with("source", src.to_string_lossy().to_string()).with("path", rel_path(&root, &dest).unwrap_or_default()));
+    }
+    let n = imported.len();
+    let scan_rep = scan(v, project_id)?;
+    if n > 0 {
+        timeline::add(v, project_id, "import", &format!("Imported {n} file{}", if n == 1 { "" } else { "s" }), "", None, false)?;
+    }
+    Ok(Json::obj()
+        .with("imported", Json::Arr(imported))
+        .with("skipped", Json::Arr(skipped))
+        .with("errors", Json::Arr(errors.into_iter().map(Json::from).collect()))
+        .with("scan", scan_rep.json()))
+}
+
+// ------------------------------------------------------------------ docs
+
+pub fn docs_get(v: &Vault, file_id: &str) -> DbResult<Json> {
+    let d = v.db.one("SELECT * FROM file_docs WHERE file_id=?", p![file_id])?;
+    let f = v.db.one("SELECT sha256 FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
+    Ok(match d {
+        Some(d) => Json::obj()
+            .with("purpose", d.s("purpose"))
+            .with("notes", d.s("notes_md"))
+            .with("warnings", d.s("warnings"))
+            .with("custom", Json::parse(&d.s("custom_json")).unwrap_or(Json::obj()))
+            .with("updatedAt", d.i("updated_at"))
+            .with("docSha256", d.os("doc_sha256"))
+            .with("fileChangedSinceDoc", d.os("doc_sha256").is_some() && d.os("doc_sha256") != f.os("sha256")),
+        None => Json::obj().with("purpose", "").with("notes", "").with("warnings", "").with("custom", Json::obj()).with("updatedAt", Json::Null).with("fileChangedSinceDoc", false),
+    })
+}
+
+/// Saves documentation. A revision of the *previous* content is kept when it
+/// differs and the last revision is older than 10 minutes (autosave-friendly).
+pub fn docs_save(v: &Vault, file_id: &str, d: &Json) -> DbResult<Json> {
+    let f = v.db.one("SELECT project_id, sha256, rel_path FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
+    let purpose = d.str_of("purpose").unwrap_or_default();
+    let notes = d.str_of("notes").unwrap_or_default();
+    let warnings = d.str_of("warnings").unwrap_or_default();
+    let custom = d.get("custom").cloned().unwrap_or(Json::obj());
+    if !matches!(custom, Json::Obj(_)) {
+        return Err("custom fields must be an object".into());
+    }
+    let now = now_ms();
+    v.db.tx(|db| {
+        if let Some(old) = db.one("SELECT * FROM file_docs WHERE file_id=?", p![file_id])? {
+            let changed = old.s("purpose") != purpose || old.s("notes_md") != notes || old.s("warnings") != warnings;
+            let last_rev = db.scalar_i64("SELECT COALESCE(MAX(created_at),0) FROM file_doc_revisions WHERE file_id=?", p![file_id])?;
+            if changed && now - last_rev > 10 * 60 * 1000 && (old.s("purpose") != "" || old.s("notes_md") != "") {
+                db.exec(
+                    "INSERT INTO file_doc_revisions(id,file_id,purpose,notes_md,warnings,file_sha256,created_at) VALUES (?,?,?,?,?,?,?)",
+                    p![new_id(), file_id, old.s("purpose"), old.s("notes_md"), old.s("warnings"), old.os("doc_sha256"), now],
+                )?;
+            }
+        }
+        db.exec(
+            "INSERT INTO file_docs(file_id,purpose,notes_md,warnings,custom_json,doc_sha256,updated_at) VALUES (?,?,?,?,?,?,?)
+             ON CONFLICT(file_id) DO UPDATE SET purpose=excluded.purpose, notes_md=excluded.notes_md, warnings=excluded.warnings,
+               custom_json=excluded.custom_json, doc_sha256=excluded.doc_sha256, updated_at=excluded.updated_at",
+            p![file_id, purpose.clone(), notes.clone(), warnings.clone(), custom.to_string(), f.os("sha256"), now],
+        )?;
+        db.exec("UPDATE files SET changed_since_review=0 WHERE id=?", p![file_id])?;
+        if let Some(Json::Arr(tags)) = d.get("tags") {
+            let t: Vec<String> = tags.iter().filter_map(|x| x.as_str().map(String::from)).collect();
+            projects::set_tags(v, "file", file_id, &t)?;
+        }
+        timeline::add_coalesced(v, &f.s("project_id"), "file-doc", &format!("Documented {}", f.s("rel_path")), "file", file_id)?;
+        Ok(())
+    })?;
+    search::index_file(v, file_id)?;
+    docs_get(v, file_id)
+}
+
+pub fn doc_revisions(v: &Vault, file_id: &str) -> DbResult<Json> {
+    let rows = v.db.query("SELECT * FROM file_doc_revisions WHERE file_id=? ORDER BY created_at DESC LIMIT 200", p![file_id])?;
+    Ok(Json::Arr(
+        rows.iter()
+            .map(|r| {
+                Json::obj()
+                    .with("id", r.s("id"))
+                    .with("purpose", r.s("purpose"))
+                    .with("notes", r.s("notes_md"))
+                    .with("warnings", r.s("warnings"))
+                    .with("fileSha256", r.os("file_sha256"))
+                    .with("at", r.i("created_at"))
+            })
+            .collect(),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::projects::{create, NewProject};
+    use crate::testutil::*;
+    use std::fs;
+
+    fn linked(v: &Vault, dir: &Path) -> String {
+        create(v, NewProject { name: "OMEN v2".into(), description: "".into(), category: "software".into(), status: "".into(), link_path: Some(dir.to_path_buf()), module: Json::obj() })
+            .unwrap()
+            .str_of("id")
+            .unwrap()
+    }
+    fn id_at(v: &Vault, pid: &str, rel: &str) -> String {
+        v.db.one("SELECT id FROM files WHERE project_id=? AND rel_path=?", p![pid, rel]).unwrap().unwrap().s("id")
+    }
+    fn bump_mtime(p: &Path) {
+        // ensure mtime differs even on coarse-grained filesystems
+        let f = fs::File::options().append(true).open(p).unwrap();
+        f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
+    }
+
+    #[test]
+    fn modify_move_missing_and_docs_follow() {
+        let (t, v) = vault();
+        let d = t.path().join("omen");
+        fs::create_dir_all(d.join("scripts")).unwrap();
+        fs::create_dir_all(d.join(".git")).unwrap();
+        fs::write(d.join(".git/HEAD"), "x").unwrap();
+        fs::write(d.join("scripts/weapon_tuner.gsc"), "init() {}").unwrap();
+        fs::write(d.join("scripts/util.gsc"), "util() {}").unwrap();
+        let pid = linked(&v, &d);
+        let r = scan(&v, &pid).unwrap();
+        assert_eq!(r.added, 2, "ignored .git");
+        let wid = id_at(&v, &pid, "scripts/weapon_tuner.gsc");
+        docs_save(&v, &wid, &Json::parse(r#"{"purpose":"Handles weapon tuning","notes":"- instashoot config","tags":["weapons"]}"#).unwrap()).unwrap();
+
+        // unchanged rescan: nothing hashed
+        let r = scan(&v, &pid).unwrap();
+        assert_eq!((r.hashed, r.added, r.modified), (0, 0, 0));
+
+        // external modification
+        fs::write(d.join("scripts/weapon_tuner.gsc"), "init() { tune(); }").unwrap();
+        bump_mtime(&d.join("scripts/weapon_tuner.gsc"));
+        let r = scan(&v, &pid).unwrap();
+        assert_eq!(r.modified, 1);
+        let g = get(&v, &wid).unwrap();
+        assert_eq!(g.get("changedSinceReview").unwrap().as_bool(), Some(true));
+        assert_eq!(g.get("docs").unwrap().get("fileChangedSinceDoc").unwrap().as_bool(), Some(true));
+
+        // rename + move: identity and docs follow
+        fs::create_dir_all(d.join("weapons")).unwrap();
+        fs::rename(d.join("scripts/weapon_tuner.gsc"), d.join("weapons/tuner.gsc")).unwrap();
+        let r = scan(&v, &pid).unwrap();
+        assert_eq!((r.moved, r.added, r.missing), (1, 0, 0));
+        assert_eq!(id_at(&v, &pid, "weapons/tuner.gsc"), wid);
+        assert_eq!(get(&v, &wid).unwrap().get("docs").unwrap().str_of("purpose").unwrap(), "Handles weapon tuning");
+
+        // delete -> missing, docs retained
+        fs::remove_file(d.join("weapons/tuner.gsc")).unwrap();
+        let r = scan(&v, &pid).unwrap();
+        assert_eq!(r.missing, 1);
+        assert_eq!(get(&v, &wid).unwrap().str_of("state").unwrap(), "missing");
+        assert!(search::search(&v, "weapon tuning", None, &[], 10).unwrap().to_string().contains(&wid));
+    }
+
+    #[test]
+    fn ambiguous_matches_go_to_review_not_auto_attach() {
+        let (t, v) = vault();
+        let d = t.path().join("p");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("a.cfg"), "same").unwrap();
+        let pid = linked(&v, &d);
+        scan(&v, &pid).unwrap();
+        let aid = id_at(&v, &pid, "a.cfg");
+        docs_save(&v, &aid, &Json::parse(r#"{"purpose":"A's purpose"}"#).unwrap()).unwrap();
+        // a.cfg disappears; two identical copies appear -> ambiguous
+        fs::remove_file(d.join("a.cfg")).unwrap();
+        fs::write(d.join("b.cfg"), "same").unwrap();
+        fs::write(d.join("c.cfg"), "same").unwrap();
+        let r = scan(&v, &pid).unwrap();
+        assert_eq!((r.moved, r.added, r.missing, r.needs_review), (0, 2, 1, 2));
+        let bid = id_at(&v, &pid, "b.cfg");
+        assert_eq!(get(&v, &bid).unwrap().get("docs").unwrap().str_of("purpose").unwrap(), "", "docs must not jump to a guess");
+        // user confirms b.cfg is the original
+        let revs = reviews(&v, &pid).unwrap();
+        let rv = revs.as_arr().unwrap().iter().find(|x| x.get("candidate").unwrap().str_of("path").unwrap() == "b.cfg").unwrap();
+        resolve_review(&v, &rv.str_of("id").unwrap(), true).unwrap();
+        assert_eq!(id_at(&v, &pid, "b.cfg"), aid);
+        assert_eq!(get(&v, &aid).unwrap().get("docs").unwrap().str_of("purpose").unwrap(), "A's purpose");
+        assert_eq!(reviews(&v, &pid).unwrap().as_arr().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn rename_with_edit_is_flagged_for_review() {
+        let (t, v) = vault();
+        let d = t.path().join("p");
+        fs::create_dir_all(d.join("x")).unwrap();
+        fs::write(d.join("x/main.lua"), "v1").unwrap();
+        let pid = linked(&v, &d);
+        scan(&v, &pid).unwrap();
+        fs::create_dir_all(d.join("y")).unwrap();
+        fs::remove_file(d.join("x/main.lua")).unwrap();
+        fs::write(d.join("y/main.lua"), "v2").unwrap();
+        let r = scan(&v, &pid).unwrap();
+        assert_eq!((r.moved, r.needs_review), (0, 1));
+    }
+
+    #[test]
+    fn unreachable_root_changes_nothing() {
+        let (t, v) = vault();
+        let d = t.path().join("ext");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("f.txt"), "x").unwrap();
+        let pid = linked(&v, &d);
+        scan(&v, &pid).unwrap();
+        fs::rename(&d, t.path().join("ext-unplugged")).unwrap();
+        assert!(scan(&v, &pid).is_err());
+        assert_eq!(v.db.scalar_i64("SELECT count(*) FROM files WHERE state='missing'", p![]).unwrap(), 0);
+        crate::projects::relink(&v, &pid, &t.path().join("ext-unplugged")).unwrap();
+        let r = scan(&v, &pid).unwrap();
+        assert_eq!((r.added, r.missing), (0, 0));
+    }
+
+    #[test]
+    fn import_never_overwrites_and_dedupes() {
+        let (t, v) = vault();
+        let pid = create(&v, NewProject { name: "Prints".into(), description: "".into(), category: "3d-printing".into(), status: "".into(), link_path: None, module: Json::obj() }).unwrap().str_of("id").unwrap();
+        let src = t.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("cat.stl"), "solid c\nvertex 0 0 0\nvertex 10 5 2\nendsolid").unwrap();
+        fs::write(src.join("other.stl"), "solid d\nvertex 0 0 0\nvertex 1 1 1\nendsolid").unwrap();
+        let r = import(&v, &pid, &[src.join("cat.stl")], "models", false).unwrap();
+        assert_eq!(r.get("imported").unwrap().as_arr().unwrap().len(), 1);
+        let r = import(&v, &pid, &[src.join("cat.stl")], "models", false).unwrap();
+        assert_eq!(r.get("skipped").unwrap().as_arr().unwrap().len(), 1, "duplicate content skipped");
+        // same name, different content -> suffixed, original intact
+        fs::write(src.join("cat.stl"), "solid c2\nvertex 0 0 0\nvertex 3 3 3\nendsolid").unwrap();
+        let r = import(&v, &pid, &[src.join("cat.stl")], "models", false).unwrap();
+        assert_eq!(r.get("imported").unwrap().as_arr().unwrap()[0].str_of("path").unwrap(), "models/cat (2).stl");
+        let fid = id_at(&v, &pid, "models/cat.stl");
+        let dims = get(&v, &fid).unwrap();
+        assert_eq!(dims.get("meshDimensionsMm").unwrap().to_string(), "[10,5,2]");
+        assert!(import(&v, &pid, &[src.join("other.stl")], "../escape", false).is_err());
+    }
+
+    #[test]
+    fn stl_binary_dims() {
+        let t = TempDir::new("stl");
+        let mut b = vec![0u8; 80];
+        b.extend_from_slice(&1u32.to_le_bytes());
+        b.extend_from_slice(&[0u8; 12]);
+        for v in [[0f32, 0., 0.], [20., 0., 0.], [0., 7.5, 3.]] {
+            for x in v {
+                b.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+        b.extend_from_slice(&[0, 0]);
+        let p = t.path().join("b.stl");
+        fs::write(&p, b).unwrap();
+        assert_eq!(stl_dimensions(&p), Some((20.0, 7.5, 3.0)));
+    }
+
+    #[test]
+    fn ignore_rules() {
+        let ig = Ignore::parse("Library/\nAssets/Gen/\n*.log\nsecret.txt");
+        assert!(ig.skip_dir("Library", "Library"));
+        assert!(ig.skip_dir("node_modules", "a/node_modules"));
+        assert!(ig.skip_dir("Gen", "Assets/Gen"));
+        assert!(!ig.skip_dir("Gen", "Other/Gen"));
+        assert!(ig.skip_file("x.LOG"));
+        assert!(ig.skip_file("secret.txt"));
+        assert!(!ig.skip_file("main.rs"));
+    }
+}

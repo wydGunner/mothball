@@ -1,0 +1,20 @@
+[package]
+name = "vault-core"
+version = "0.1.0"
+edition = "2021"
+description = "Project Vault core: storage, file reconciliation, notes, search, tasks, git."
+license = "MIT"
+
+# Deliberately dependency-free. SQLite is reached through a small FFI layer
+# (src/db/ffi.rs). Where the symbols come from is decided at link time:
+#   * Desktop app (src-tauri): links `libsqlite3-sys` with the `bundled`
+#     feature, so the shipped binary carries its own SQLite with FTS5.
+#   * Standalone core tests / dev server: build.rs links the system libsqlite3.
+[dependencies]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "vault-devserver"
+path = "src/bin/vault-devserver.rs"
