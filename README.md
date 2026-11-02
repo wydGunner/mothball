@@ -53,6 +53,12 @@ Your data is kept in `%APPDATA%\com.projectvault.desktop\` (the folder keeps its
 original name so data from before the rename to Mothball carries over). To use another
 folder (portable or test install), set `MOTHBALL_DATA` first.
 
+Projects Mothball manages for you ("Kept in app storage") live under that
+folder by default. To keep them on another drive, use Settings → Storage →
+*Project folders* → Change…; existing ones are moved (copied, verified, then
+removed from the old drive). File backups and snapshots have their own location
+in the same place.
+
 ## Bambu Lab printer status
 
 Settings → **Printers** → *Add printer*: the printer's IP address, serial number

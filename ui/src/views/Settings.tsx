@@ -67,6 +67,66 @@ function EditorSaving() {
   );
 }
 
+/** Where managed projects ("Kept in app storage") live; moving them frees the old drive. */
+function ProjectStorage() {
+  const st = useLoad(() => call<any>('storage.projects'), []);
+  const [pending, setPending] = useState<string | null>(null);
+  const [moveExisting, setMoveExisting] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const act = useAction();
+  const choose = async () => {
+    const dir = await pickFolder('Choose where Mothball keeps project folders');
+    if (!dir) return;
+    st.reload(); // the dialog reads the counts live, so they update when this returns
+    setPending(dir); setMoveExisting(true); setResult(null);
+  };
+  const apply = async (dir: string, move: boolean) => {
+    setBusy(true);
+    const r: any = await act(() => call('storage.setProjectsRoot', { path: dir, moveExisting: move }));
+    setBusy(false);
+    if (r) { setPending(null); setResult(r); st.reload(); }
+  };
+  const d = st.data;
+  return (
+    <div className="card pad" style={{ marginBottom: 16 }}>
+      <h2>Project folders</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>Where Mothball keeps the files of projects it manages for you (projects that show “Kept in app storage”). Projects linked to your own folders stay where they are.</p>
+      {st.error ? <div className="alert bad">{st.error}</div> : !d ? <div className="muted small">Loading…</div> : <>
+        <div className="row" style={{ flexWrap: 'wrap' }}>
+          <span className="mono small grow" style={{ wordBreak: 'break-all' }}>{d.root}</span>
+          {d.isDefault && <span className="badge">default</span>}
+          {isTauri && <button className="btn sm icon" title="Show in Explorer" onClick={() => act(() => revealPath(d.root))}><LuFolderOpen /></button>}
+          <button className="btn sm" disabled={busy} onClick={choose}>Change…</button>
+          {!d.isDefault && <button className="btn sm ghost" disabled={busy} onClick={() => { st.reload(); setPending(d.defaultRoot); setMoveExisting(true); setResult(null); }}>Use default</button>}
+        </div>
+        <p className="small" style={{ marginBottom: 0 }}>{d.projects} project{d.projects === 1 ? '' : 's'} · {bytes(d.bytes)}{d.notHere > 0 ? ` · ${d.notHere} still in an older location (${bytes(d.bytesNotHere)})` : ''}</p>
+        {d.notHere > 0 && !pending && <button className="btn sm" style={{ marginTop: 8 }} disabled={busy} onClick={() => apply(d.root, true)}>{busy ? 'Moving…' : `Move ${d.notHere === 1 ? 'it' : 'them'} here`}</button>}
+      </>}
+      {result && (
+        <div className={cx('alert small', result.failed.length ? 'warn' : 'info')} style={{ marginTop: 10, display: 'block' }}>
+          {result.moved.length > 0 ? <>Moved {result.moved.length} project{result.moved.length === 1 ? '' : 's'}{result.freed > 0 ? ` and freed ${bytes(result.freed)} in the old location` : ''}.</> : 'New projects will be created here.'}
+          {result.moved.some((m: any) => m.oldFolderKept) && <div>Some old folders couldn’t be deleted (a file may be open); the projects use the new copies, so you can delete the old folders yourself.</div>}
+          {result.failed.map((f: any) => <div key={f.name}><b>{f.name}</b> wasn’t moved: {f.error}</div>)}
+        </div>
+      )}
+      {pending && d && (
+        <Modal title="Move project folders?" onClose={() => !busy && setPending(null)} footer={<>
+          <button className="btn" disabled={busy} onClick={() => setPending(null)}>Cancel</button>
+          <button className="btn primary" disabled={busy} onClick={() => apply(pending, moveExisting)}>{busy ? 'Moving…' : moveExisting && d.projects ? 'Move projects' : 'Use this folder'}</button>
+        </>}>
+          <p style={{ marginTop: 0 }}>New projects will be created in <span className="mono">{pending}</span>.</p>
+          {d.projects > 0 && <>
+            <label className="row" style={{ alignItems: 'flex-start' }}><input type="checkbox" checked={moveExisting} onChange={(e) => setMoveExisting(e.target.checked)} style={{ marginTop: 3 }} />
+              <span>Also move the {d.projects} existing project{d.projects === 1 ? '' : 's'} there ({bytes(d.bytes)})</span></label>
+            {moveExisting && <p className="small muted" style={{ marginBottom: 0 }}>Each project is copied, every file is checked against the original, and only then is the old folder deleted — so the space is freed on the old drive. If anything goes wrong with a project, it stays where it is. Close programs that have project files open first.</p>}
+          </>}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function BackupStorage() {
   const st = useLoad(() => call<any>('storage.get'), []);
   const [busy, setBusy] = useState(false);
@@ -383,7 +443,7 @@ const SECTIONS: { id: Section; label: string; icon: ReactElement; hint: string }
   { id: 'printers', label: 'Printers', icon: <LuPrinter />, hint: 'Watch a Bambu Lab printer and log prints to projects' },
   { id: 'backups', label: 'Backups', icon: <LuDatabaseBackup />, hint: 'Back up now, or on a schedule' },
   { id: 'restore', label: 'Restore', icon: <LuArchiveRestore />, hint: 'Check a backup and bring things back' },
-  { id: 'storage', label: 'Version storage', icon: <LuHardDrive />, hint: 'Where file backups and snapshots live' },
+  { id: 'storage', label: 'Storage', icon: <LuHardDrive />, hint: 'Where project folders, file backups and snapshots live' },
   { id: 'about', label: 'About & updates', icon: <LuInfo />, hint: 'Version, data folder, shortcuts' },
 ];
 
@@ -410,7 +470,7 @@ export function SettingsView({ nav }: { nav: Nav }) {
         {sec === 'printers' && <PrinterSettings />}
         {sec === 'backups' && <><BackupCard nav={nav} dataDir={info.data?.dataDir} /><ScheduleCard /></>}
         {sec === 'restore' && <RestoreCard nav={nav} />}
-        {sec === 'storage' && <BackupStorage />}
+        {sec === 'storage' && <><ProjectStorage /><BackupStorage /></>}
         {sec === 'about' && <>
           <div className="card pad">
             <h2>Version</h2>

@@ -72,7 +72,9 @@ pub fn create(v: &Vault, np: NewProject) -> DbResult<Json> {
             ("linked", canon)
         }
         None => {
-            let dir = v.managed_root().join(format!("{}-{}", slugify(name), &id[..8]));
+            let base = v.managed_root();
+            std::fs::create_dir_all(&base).map_err(|e| format!("The folder for new projects ({}) isn't available: {e}. Change it in Settings → Storage.", base.display()))?;
+            let dir = base.join(format!("{}-{}", slugify(name), &id[..8]));
             std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create project storage: {e}"))?;
             ("managed", dir)
         }
@@ -516,7 +518,7 @@ pub fn use_folder(v: &Vault, id: &str, folder: &Path) -> DbResult<Json> {
     }
     let old = PathBuf::from(r.s("root_path"));
     let new_root = dunce(folder);
-    if new_root.starts_with(v.managed_root()) {
+    if crate::storage::is_managed_folder(v, &new_root) || new_root == v.managed_root() || new_root == crate::storage::default_root(v) {
         return Err("Choose a folder outside Mothball's own storage".into());
     }
     let mut copied = 0i64;
@@ -566,7 +568,7 @@ pub fn remove(v: &Vault, id: &str, delete_managed_files: bool) -> DbResult<Json>
     let root = PathBuf::from(r.s("root_path"));
     let mut deleted = false;
     if delete_managed_files && r.s("mode") == "managed" {
-        if !root.starts_with(v.managed_root()) || root == v.managed_root() {
+        if !crate::storage::is_managed_folder(v, &root) {
             return Err(format!("Refusing to delete {}: it is not a project folder inside the vault's managed storage", root.display()));
         }
         if root.exists() {

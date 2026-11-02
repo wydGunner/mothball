@@ -710,7 +710,7 @@ await step('Settings: save behaviour and backup storage location', async () => {
   await page.locator('label').filter({ hasText: 'Just save' }).locator('input').check();
   if (await page.evaluate(() => localStorage.getItem('pv.saveMode')) !== 'manual') throw new Error('save mode not stored');
   await page.locator('label').filter({ hasText: 'Ask every time' }).locator('input').check();
-  await section('Version storage');
+  await section('Storage');
   const card = page.locator('.card').filter({ hasText: 'Backup storage location' });
   await card.getByText('available').waitFor();
   const newRoot = join(tmp, 'ExternalDrive', 'PVBackups');
@@ -722,6 +722,35 @@ await step('Settings: save behaviour and backup storage location', async () => {
   const sidecars = readdirSync(join(newRoot, 'history'), { recursive: true }).filter((f) => String(f).endsWith('.json'));
   if (!sidecars.length) throw new Error('no sidecar metadata');
   await toastGone();
+});
+
+await step('Settings: move managed project folders to another drive', async () => {
+  // a managed project ("Kept in app storage") with a file in it
+  const pr = (await api('projects.create', { name: 'Kept In App' })).data;
+  const oldRoot = pr.rootPath;
+  writeFileSync(join(oldRoot, 'part.stl'), 'solid x\nendsolid x\n');
+  await api('files.scan', { projectId: pr.id });
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.locator('.set-link').filter({ hasText: 'Storage' }).click();
+  const card = page.locator('.card').filter({ hasText: 'Project folders' });
+  await card.getByText('default').waitFor();
+  const target = join(tmp, 'DDrive', 'Mothball Projects');
+  page.once('dialog', (d) => d.accept(target));
+  await card.getByRole('button', { name: 'Change…' }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Move project folders?' });
+  if (!(await m.getByRole('checkbox').isChecked())) throw new Error('moving existing projects should be the default');
+  if (shots) await page.screenshot({ path: join(shots, 'x-move-projects.png') });
+  await m.getByRole('button', { name: 'Move projects' }).click();
+  await card.getByText(/Moved 1 project and freed \d+ B in the old location/).waitFor({ timeout: 30000 });
+  await card.getByText(target).waitFor();
+  const moved = (await api('projects.get', { id: pr.id })).data;
+  if (!moved.rootPath.startsWith(target) || existsSync(oldRoot)) throw new Error(`not moved: ${moved.rootPath}, old exists: ${existsSync(oldRoot)}`);
+  if (readFileSync(join(moved.rootPath, 'part.stl'), 'utf8') !== 'solid x\nendsolid x\n') throw new Error('file content');
+  // new managed projects go there; removing with "delete folder" works there too
+  const p2 = (await api('projects.create', { name: 'Also There' })).data;
+  if (!p2.rootPath.startsWith(target)) throw new Error('new project not created in the new location: ' + p2.rootPath);
+  for (const id of [pr.id, p2.id]) if (!(await api('projects.remove', { id, deleteManagedFiles: true })).ok) throw new Error('remove failed');
+  await page.getByRole('button', { name: 'Dashboard' }).click();
 });
 
 await step('Backup with project files as .zip, verify', async () => {

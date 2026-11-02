@@ -5,7 +5,7 @@
 use crate::db::DbResult;
 use crate::json::Json;
 use crate::projects::NewProject;
-use crate::{backup, deploy, files, git, knowledge, printers, profiles, projects, search, snapshots, symbols, tasks, timeline, versions, watch, time, Vault};
+use crate::{backup, deploy, files, git, knowledge, printers, profiles, projects, search, snapshots, storage, symbols, tasks, timeline, versions, watch, time, Vault};
 use std::path::PathBuf;
 
 fn s(a: &Json, k: &str) -> DbResult<String> {
@@ -179,6 +179,8 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
                 tags: &os(a, "tags").unwrap_or_default(),
             },
         ),
+        "storage.projects" => storage::info(v),
+        "storage.setProjectsRoot" => storage::set_root(v, &PathBuf::from(s(a, "path")?), a.get("moveExisting").and_then(|x| x.as_bool()).unwrap_or(true)),
         "storage.get" => Ok(Json::obj().with("root", projects::display_path(&versions::storage_root(v))).with("available", versions::storage_root(v).is_dir()).with("stats", versions::stats(v, None)?)),
         "storage.set" => versions::set_storage_root(v, &PathBuf::from(s(a, "path")?)),
         "snapshots.create" => snapshots::create(v, &s(a, "projectId")?, &os(a, "name").unwrap_or_default(), &os(a, "description").unwrap_or_default(), a.get("maxFileMb").and_then(|x| x.as_f64()).unwrap_or(200.0)),

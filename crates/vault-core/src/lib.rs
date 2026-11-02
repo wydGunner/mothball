@@ -21,6 +21,7 @@ pub mod projects;
 pub mod schema;
 pub mod search;
 pub mod snapshots;
+pub mod storage;
 pub mod symbols;
 pub mod tasks;
 pub mod time;
@@ -74,8 +75,9 @@ impl Vault {
         Ok(v)
     }
 
+    /// Where new managed projects are created (Settings → Storage).
     pub fn managed_root(&self) -> PathBuf {
-        self.data_dir.join("managed")
+        storage::root(self)
     }
 }
 
