@@ -394,3 +394,23 @@ input[type=checkbox] { accent-color: var(--accent); }
 .verrow { flex-wrap: wrap; }
 .verrow .verbody { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
 .verrow .veracts { gap: 2px; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+.addrow { display: flex; flex-wrap: wrap; gap: 6px; }
+.addrow .chip { color: var(--fg2); border-style: dashed; }
+.opchoice { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+.opcard { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line2); border-radius: 8px; cursor: pointer; background: var(--bg1); }
+.opcard b { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+.opcard.on { border-color: var(--accent); background: var(--accent-bg); }
+.opcard.disabled { opacity: .55; cursor: default; }
+.opcard input { margin-top: 3px; }
+@media (max-width: 900px) { .opchoice { grid-template-columns: 1fr; } }
+.pgroup { margin-top: 14px; border-radius: 10px; }
+.pgroup.drop { outline: 2px dashed var(--accent); outline-offset: 4px; }
+.pgroup-head { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.pgroup-head .btn b { color: var(--fg0); font-size: 13.5px; }
+.sidebar .sectionbtn { display: flex; align-items: center; gap: 4px; width: 100%; background: none; border: 0; cursor: pointer; text-align: left; font-family: inherit; }
+.sidebar .sectionbtn:hover { color: var(--fg1); }
+.sidebar .sectionbtn .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar.collapsed .sectionbtn .label { display: none; }
+.filesec { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 12px; background: var(--bg1); border: 0; border-bottom: 1px solid var(--line); color: var(--fg1); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; text-align: left; position: sticky; top: 0; z-index: 1; }
+.filesec:hover { color: var(--fg0); }
+.filesec .count { color: var(--fg3); font-weight: 400; }

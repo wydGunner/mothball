@@ -567,7 +567,9 @@ pub fn list(v: &Vault, project_id: &str, filter: &Json) -> DbResult<Json> {
     let only_changed = filter.get("changedOnly").and_then(|x| x.as_bool()).unwrap_or(false);
     let undocumented = filter.get("undocumented").and_then(|x| x.as_bool()).unwrap_or(false);
     let limit = filter.get("limit").and_then(|x| x.as_i64()).unwrap_or(5000).clamp(1, 50000);
-    let exts = filter.get("exts").and_then(|x| x.as_arr()).map(|a| a.iter().filter_map(|e| e.as_str()).map(|e| e.to_lowercase()).collect::<Vec<_>>().join(",")).unwrap_or_default();
+    let ext_list: Option<Vec<String>> = filter.get("exts").and_then(|x| x.as_arr()).map(|a| a.iter().filter_map(|e| e.as_str()).map(|e| e.to_lowercase()).collect());
+    let has_exts = ext_list.is_some();
+    let exts = ext_list.unwrap_or_default().join(",");
     let like = format!("%{}%", q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
     let dir_like = dir.as_ref().map(|d| format!("{}/%", d.trim_end_matches('/').replace('%', "\\%").replace('_', "\\_")));
     let sort = match filter.str_of("sort").as_deref() {
@@ -581,10 +583,10 @@ pub fn list(v: &Vault, project_id: &str, filter: &Json) -> DbResult<Json> {
             "{FILE_SELECT} WHERE f.project_id=? AND (?='' OR lower(f.rel_path) LIKE ? ESCAPE '\\')
              AND (? IS NULL OR f.kind=?) AND (CASE WHEN ? IS NULL THEN f.state!='deleted' ELSE f.state=? END) AND (? IS NULL OR f.rel_path LIKE ? ESCAPE '\\')
              AND (?=0 OR f.changed_since_review=1) AND (?=0 OR d.file_id IS NULL OR (d.purpose='' AND d.notes_md=''))
-             AND (?='' OR instr(',' || ? || ',', ',' || f.ext || ',')>0)
+             AND (?=0 OR instr(',' || ? || ',', ',' || f.ext || ',')>0)
              ORDER BY {sort} LIMIT ?"
         ),
-        p![project_id, q.clone(), like, kind.clone(), kind, state.clone(), state, dir_like.clone(), dir_like, only_changed, undocumented, exts.clone(), exts, limit],
+        p![project_id, q.clone(), like, kind.clone(), kind, state.clone(), state, dir_like.clone(), dir_like, only_changed, undocumented, has_exts, exts, limit],
     )?;
     Ok(Json::Arr(rows.iter().map(file_json).collect()))
 }
@@ -640,26 +642,54 @@ pub fn dirs(v: &Vault, project_id: &str) -> DbResult<Json> {
     Ok(Json::Arr(agg.into_iter().map(|(k, (n, b))| Json::obj().with("path", k).with("files", n).with("bytes", b)).collect()))
 }
 
-/// The project's file-type groups (from its category) with file counts.
+/// The project's file-type groups (from its category) with file counts, plus
+/// an "Other files" group for every extension no group covers, so nothing in
+/// the project is ever hidden by the type chips. `found` lists the extensions
+/// actually present in each group, most common first.
 pub fn groups(v: &Vault, project_id: &str) -> DbResult<Json> {
     let pr = v.db.one("SELECT category FROM projects WHERE id=?", p![project_id])?.ok_or("Project not found")?;
-    let counts: HashMap<String, i64> = v
+    let mut counts: Vec<(String, i64)> = v
         .db
-        .query("SELECT ext, count(*) AS n FROM files WHERE project_id=? AND state='present' GROUP BY ext", p![project_id])?
+        .query("SELECT ext, count(*) AS n FROM files WHERE project_id=? AND state='present' GROUP BY ext ORDER BY n DESC, ext", p![project_id])?
         .iter()
         .map(|r| (r.s("ext"), r.i("n")))
         .collect();
+    let found = |exts: &[String], counts: &[(String, i64)]| -> (i64, Json) {
+        let hits: Vec<&(String, i64)> = counts.iter().filter(|(e, _)| exts.contains(e)).collect();
+        (hits.iter().map(|(_, n)| n).sum(), Json::Arr(hits.iter().map(|(e, n)| Json::obj().with("ext", e.as_str()).with("count", *n)).collect()))
+    };
     let mut out = Vec::new();
-    for g in crate::profiles::groups(&pr.s("category")) {
-        let n: i64 = g.exts.iter().map(|e| counts.get(*e).copied().unwrap_or(0)).sum();
+    let mut covered: Vec<String> = Vec::new();
+    let defs = crate::profiles::groups(&pr.s("category"));
+    for g in &defs {
+        let exts: Vec<String> = g.exts.iter().map(|e| e.to_string()).collect();
+        let (n, f) = found(&exts, &counts);
+        covered.extend(exts.iter().cloned());
         out.push(
             Json::obj()
                 .with("id", g.id)
                 .with("label", g.label)
                 .with("hint", g.hint)
                 .with("count", n)
-                .with("exts", Json::Arr(g.exts.iter().map(|e| Json::from(*e)).collect())),
+                .with("found", f)
+                .with("exts", Json::Arr(exts.into_iter().map(Json::from).collect())),
         );
+    }
+    if !defs.is_empty() {
+        counts.retain(|(e, _)| !covered.contains(e));
+        let other: Vec<String> = counts.iter().map(|(e, _)| e.clone()).collect();
+        let (n, f) = found(&other, &counts);
+        if n > 0 {
+            out.push(
+                Json::obj()
+                    .with("id", "other")
+                    .with("label", "Other files")
+                    .with("hint", "File types this project type doesn't group")
+                    .with("count", n)
+                    .with("found", f)
+                    .with("exts", Json::Arr(other.into_iter().map(Json::from).collect())),
+            );
+        }
     }
     Ok(Json::Arr(out))
 }
@@ -829,6 +859,13 @@ pub fn stl_dimensions(p: &Path) -> Option<(f64, f64, f64)> {
 /// Files whose content already exists in the project are skipped unless
 /// `allow_duplicates`. Each copy is verified by hash before it is kept.
 pub fn import(v: &Vault, project_id: &str, sources: &[PathBuf], dest_rel_dir: &str, allow_duplicates: bool) -> DbResult<Json> {
+    import_op(v, project_id, sources, dest_rel_dir, allow_duplicates, false)
+}
+
+/// Copies (or, with `move_files`, moves) files into the project. A move is a
+/// rename when source and project are on the same drive; otherwise the copy
+/// is verified first and only then is the original sent to the Recycle Bin.
+pub fn import_op(v: &Vault, project_id: &str, sources: &[PathBuf], dest_rel_dir: &str, allow_duplicates: bool, move_files: bool) -> DbResult<Json> {
     let root = projects::root_of(v, project_id)?;
     if !root.is_dir() {
         return Err(format!("Project folder {} is not reachable", root.display()));
@@ -889,6 +926,16 @@ pub fn import(v: &Vault, project_id: &str, sources: &[PathBuf], dest_rel_dir: &s
         }
         let name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
         let dest = unique_dest(&target_dir, &name);
+        if move_files && std::fs::rename(&src, &dest).is_ok() {
+            imported.push(
+                Json::obj()
+                    .with("source", src.to_string_lossy().to_string())
+                    .with("path", rel_path(&root, &dest).unwrap_or_default())
+                    .with("sha256", h)
+                    .with("moved", true),
+            );
+            continue;
+        }
         let tmp = target_dir.join(format!(".pv-tmp-{}", &new_id()[..8]));
         let res = std::fs::copy(&src, &tmp).map_err(|e| e.to_string()).and_then(|_| {
             let h2 = sha256_file(&tmp).map_err(|e| e.to_string())?;
@@ -905,7 +952,15 @@ pub fn import(v: &Vault, project_id: &str, sources: &[PathBuf], dest_rel_dir: &s
             errors.push(format!("{}: {e}", src.display()));
             continue;
         }
-        imported.push(Json::obj().with("source", src.to_string_lossy().to_string()).with("path", rel_path(&root, &dest).unwrap_or_default()).with("sha256", h));
+        let mut item = Json::obj().with("source", src.to_string_lossy().to_string()).with("path", rel_path(&root, &dest).unwrap_or_default()).with("sha256", h);
+        if move_files {
+            // the verified copy is in place; now retire the original
+            match to_recycle_bin(&src) {
+                Ok(()) => item.set("moved", true),
+                Err(e) => errors.push(format!("{}: copied, but the original could not be removed ({e})", src.display())),
+            }
+        }
+        imported.push(item);
     }
     let n = imported.len();
     let scan_rep = scan(v, project_id)?;
@@ -916,7 +971,8 @@ pub fn import(v: &Vault, project_id: &str, sources: &[PathBuf], dest_rel_dir: &s
             "INSERT INTO import_batches(id,project_id,dest_dir,files_json,created_at) VALUES (?,?,?,?,?)",
             p![id.clone(), project_id, dest_rel_dir, Json::Arr(imported.clone()).to_string(), now_ms()],
         )?;
-        timeline::add(v, project_id, "import", &format!("Imported {n} file{}", if n == 1 { "" } else { "s" }), &format!("into /{}", dest_rel_dir.trim_matches('/')), Some(("import", &id)), false)?;
+        let verb = if move_files { "Moved" } else { "Imported" };
+        timeline::add(v, project_id, "import", &format!("{verb} {n} file{} in", if n == 1 { "" } else { "s" }), &format!("into /{}", dest_rel_dir.trim_matches('/')), Some(("import", &id)), false)?;
         batch_id = Json::from(id);
     }
     Ok(Json::obj()
@@ -997,6 +1053,8 @@ pub fn import_preview(v: &Vault, project_id: &str, sources: &[PathBuf], dest_rel
         .with("mode", pr.s("mode"))
         .with("destDir", dest_rel_dir.trim_matches('/'))
         .with("destAbs", projects::display_path(&dest_dir))
+        .with("root", projects::display_path(&root))
+        .with("fileCount", v.db.scalar_i64("SELECT count(*) FROM files WHERE project_id=? AND state='present'", p![project_id])?)
         .with("operation", "copy")
         .with("items", Json::Arr(items)))
 }
@@ -1040,6 +1098,39 @@ pub fn undo_import(v: &Vault, batch_id: &str) -> DbResult<Json> {
         }
         if sha256_file(&path).ok().as_deref() != Some(sha.as_str()) {
             kept.push(Json::obj().with("path", rel).with("reason", "changed since the import — kept"));
+            continue;
+        }
+        if it.get("moved").and_then(|x| x.as_bool()).unwrap_or(false) {
+            // put it back where it was; never overwrite something that's there now
+            let src = PathBuf::from(it.str_of("source").unwrap_or_default());
+            if src.exists() {
+                kept.push(Json::obj().with("path", rel).with("reason", format!("{} exists again — kept both", src.display())));
+                continue;
+            }
+            let back = (|| -> Result<(), String> {
+                if let Some(parent) = src.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                if std::fs::rename(&path, &src).is_ok() {
+                    return Ok(());
+                }
+                std::fs::copy(&path, &src).map_err(|e| e.to_string())?;
+                if sha256_file(&src).ok().as_deref() != Some(sha.as_str()) {
+                    let _ = std::fs::remove_file(&src);
+                    return Err("verification failed".into());
+                }
+                std::fs::remove_file(&path).map_err(|e| e.to_string())
+            })();
+            match back {
+                Ok(()) => {
+                    if let Some(r) = v.db.one("SELECT id FROM files WHERE project_id=? AND rel_path=?", p![pid.clone(), rel.clone()])? {
+                        search::unindex(v, "file", &r.s("id"))?;
+                        v.db.exec("DELETE FROM files WHERE id=?", p![r.s("id")])?;
+                    }
+                    removed.push(Json::from(rel));
+                }
+                Err(e) => kept.push(Json::obj().with("path", rel).with("reason", format!("could not move back: {e}"))),
+            }
             continue;
         }
         match to_recycle_bin(&path) {
@@ -1638,6 +1729,74 @@ mod tests {
         let e = write_text(&v, &fid, "mine", &w.str_of("sha256").unwrap(), "lf", false).unwrap_err();
         assert!(e.starts_with("CONFLICT:"));
         assert_eq!(fs::read_to_string(d.join("cfg.ini")).unwrap(), "external");
+    }
+
+    #[test]
+    fn import_move_and_undo_moves_back() {
+        let (t, v) = vault();
+        let d = t.path().join("p");
+        fs::create_dir_all(&d).unwrap();
+        let pid = linked(&v, &d);
+        let src = t.path().join("Downloads");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("glock.3mf"), "model").unwrap();
+        fs::write(src.join("mag.stl"), "mag").unwrap();
+        let r = import_op(&v, &pid, &[src.join("glock.3mf"), src.join("mag.stl")], "prints", false, true).unwrap();
+        assert!(d.join("prints/glock.3mf").exists() && !src.join("glock.3mf").exists(), "moved, not copied");
+        // undo: unchanged file goes back where it came from; edited one stays
+        fs::write(d.join("prints/mag.stl"), "edited").unwrap();
+        let u = undo_import(&v, &r.str_of("batchId").unwrap()).unwrap();
+        assert_eq!(u.get("removed").unwrap().as_arr().unwrap().len(), 1);
+        assert_eq!(fs::read_to_string(src.join("glock.3mf")).unwrap(), "model");
+        assert!(!d.join("prints/glock.3mf").exists());
+        assert!(d.join("prints/mag.stl").exists() && !src.join("mag.stl").exists());
+    }
+
+    #[test]
+    fn managed_project_can_switch_to_working_in_place() {
+        let (t, v) = vault();
+        let pid = create(&v, NewProject { name: "3D Prints".into(), description: "".into(), category: "3d-printing".into(), status: "".into(), link_path: None, module: Json::obj() }).unwrap().str_of("id").unwrap();
+        let src = t.path().join("dl");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("old.stl"), "in vault").unwrap();
+        import(&v, &pid, &[src.join("old.stl")], "", false).unwrap();
+        let fid = id_at(&v, &pid, "old.stl");
+        docs_save(&v, &fid, &Json::parse(r#"{"purpose":"keep my notes"}"#).unwrap()).unwrap();
+        // the user's own folder, with a different file of the same name already in it
+        let mine = t.path().join("My Prints");
+        fs::create_dir_all(&mine).unwrap();
+        fs::write(mine.join("glock.3mf"), "edit me in place").unwrap();
+        fs::write(mine.join("old.stl"), "something else").unwrap();
+        let r = projects::use_folder(&v, &pid, &mine).unwrap();
+        assert_eq!(r.str_of("mode").unwrap(), "linked");
+        assert_eq!(fs::read_to_string(mine.join("old.stl")).unwrap(), "something else", "never overwritten");
+        let moved_rel = r.get("renamed").unwrap().as_arr().unwrap()[0].as_str().unwrap().to_string();
+        assert_eq!(fs::read_to_string(mine.join(&moved_rel)).unwrap(), "in vault");
+        assert_eq!(id_at(&v, &pid, &moved_rel), fid, "notes stay with the vault's copy");
+        assert!(id_at(&v, &pid, "glock.3mf").len() > 0, "files in the folder are now part of the project");
+        assert!(projects::use_folder(&v, &pid, &mine).is_err(), "only managed projects");
+    }
+
+    #[test]
+    fn type_groups_never_hide_files() {
+        let (t, v) = vault();
+        let d = t.path().join("g");
+        fs::create_dir_all(d.join("maps")).unwrap();
+        fs::write(d.join("a.gsc"), "x").unwrap();
+        fs::write(d.join("b.iwi"), "x").unwrap();
+        fs::write(d.join("maps/c.d3dbsp"), "x").unwrap();
+        fs::write(d.join("README"), "no extension").unwrap();
+        let pid = create(&v, NewProject { name: "Old Omen".into(), description: "".into(), category: "game".into(), status: "".into(), link_path: Some(d.clone()), module: Json::obj() }).unwrap().str_of("id").unwrap();
+        scan(&v, &pid).unwrap();
+        let gs = groups(&v, &pid).unwrap();
+        let g = |id: &str| gs.as_arr().unwrap().iter().find(|x| x.str_of("id").as_deref() == Some(id)).cloned().unwrap();
+        assert_eq!(g("scripts").get("count").and_then(|x| x.as_i64()), Some(1), "gsc is a script in game projects");
+        assert_eq!(g("art").get("count").and_then(|x| x.as_i64()), Some(1), "iwi is a texture");
+        let other = g("other");
+        assert_eq!(other.get("count").and_then(|x| x.as_i64()), Some(2));
+        // every group's exts filter finds exactly its files, including files without an extension
+        let total: usize = gs.as_arr().unwrap().iter().map(|x| list(&v, &pid, &Json::obj().with("exts", x.get("exts").cloned().unwrap())).unwrap().as_arr().unwrap().len()).sum();
+        assert_eq!(total, 4);
     }
 
     #[test]

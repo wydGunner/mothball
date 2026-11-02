@@ -273,6 +273,12 @@ CREATE TABLE import_batches (
   undone_at INTEGER
 );
 "#,
+), (
+    4,
+    r#"
+-- Project groups (e.g. "MW2 mods", "3D prints"): a plain label, '' = ungrouped.
+ALTER TABLE projects ADD COLUMN group_name TEXT NOT NULL DEFAULT '';
+"#,
 )];
 
 pub fn current_version(db: &Db) -> DbResult<i64> {

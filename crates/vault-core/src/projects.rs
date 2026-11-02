@@ -210,6 +210,7 @@ fn row_json(v: &Vault, r: &Row) -> DbResult<Json> {
         .with("color", r.s("color"))
         .with("progress", r.i("progress"))
         .with("favorite", r.b("favorite"))
+        .with("group", r.s("group_name"))
         .with("module", module)
         .with("ignoreGlobs", r.s("ignore_globs"))
         .with("createdAt", r.i("created_at"))
@@ -280,6 +281,13 @@ pub fn update(v: &Vault, id: &str, patch: &Json) -> DbResult<Json> {
         if let Some(f) = patch.get("favorite").and_then(|x| x.as_bool()) {
             db.exec("UPDATE projects SET favorite=? WHERE id=?", p![f, id])?;
         }
+        if let Some(g) = patch.str_of("group") {
+            let g: String = g.split_whitespace().collect::<Vec<_>>().join(" ");
+            if g.chars().count() > 60 {
+                return Err("Group names can be at most 60 characters".into());
+            }
+            db.exec("UPDATE projects SET group_name=? WHERE id=?", p![g, id])?;
+        }
         if let Some(m) = patch.get("module") {
             db.exec("UPDATE projects SET module_json=? WHERE id=?", p![m.to_string(), id])?;
         }
@@ -316,6 +324,62 @@ pub fn relink(v: &Vault, id: &str, new_root: &Path) -> DbResult<Json> {
     )?;
     timeline::add(v, id, "project", "Project folder re-linked", &format!("{} → {}", r.s("root_path"), canon.display()), None, false)?;
     get(v, id)
+}
+
+/// Turns a managed project into a linked one that works on `folder` in place,
+/// so files there are edited directly instead of copied into app storage.
+/// Anything already in the managed folder is copied over first (verified,
+/// never overwriting; a differing file with the same name is kept under a
+/// new name). The old managed folder is left untouched.
+pub fn use_folder(v: &Vault, id: &str, folder: &Path) -> DbResult<Json> {
+    let r = v.db.one("SELECT mode, root_path FROM projects WHERE id=?", p![id])?.ok_or("Project not found")?;
+    if r.s("mode") != "managed" {
+        return Err("This project already works on a folder of yours. Use “Re-link” to point it somewhere else.".into());
+    }
+    if !folder.is_dir() {
+        return Err(format!("{} is not an accessible folder", folder.display()));
+    }
+    let old = PathBuf::from(r.s("root_path"));
+    let new_root = dunce(folder);
+    if new_root.starts_with(v.managed_root()) {
+        return Err("Choose a folder outside Project Vault's own storage".into());
+    }
+    let mut copied = 0i64;
+    let mut renamed = Vec::new();
+    if old.is_dir() {
+        let rows = v.db.query("SELECT id, rel_path, sha256 FROM files WHERE project_id=? AND state='present'", p![id])?;
+        for f in &rows {
+            let src = crate::util::safe_join(&old, &f.s("rel_path"))?;
+            let mut dest = crate::util::safe_join(&new_root, &f.s("rel_path"))?;
+            if dest.exists() {
+                if crate::util::sha256_file(&dest).ok() == f.os("sha256") {
+                    continue; // already there
+                }
+                let name = dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let (stem, ext) = match name.rfind('.') { Some(i) if i > 0 => (name[..i].to_string(), name[i..].to_string()), _ => (name.clone(), String::new()) };
+                let mut n = 2;
+                while dest.exists() {
+                    dest = dest.with_file_name(format!("{stem} (from vault {n}){ext}"));
+                    n += 1;
+                }
+                renamed.push(Json::from(crate::util::rel_path(&new_root, &dest).unwrap_or_default()));
+                // the record follows the renamed copy so its notes stay attached
+                v.db.exec("UPDATE files SET rel_path=?, name=? WHERE id=?", p![crate::util::rel_path(&new_root, &dest).unwrap_or_default(), dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), f.s("id")])?;
+            }
+            if let Some(dir) = dest.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+            std::fs::copy(&src, &dest).map_err(|e| format!("{}: {e}", src.display()))?;
+            if crate::util::sha256_file(&dest).ok() != f.os("sha256") {
+                return Err(format!("Copy of {} could not be verified; the project was not changed.", f.s("rel_path")));
+            }
+            copied += 1;
+        }
+    }
+    v.db.exec("UPDATE projects SET mode='linked', root_path=?, updated_at=? WHERE id=?", p![new_root.to_string_lossy().to_string(), now_ms(), id])?;
+    timeline::add(v, id, "project", "Project now works on your folder", &format!("{} ({} file(s) copied over from app storage)", new_root.display(), copied), None, false)?;
+    let scan = crate::files::scan(v, id)?;
+    Ok(get(v, id)?.with("copied", copied).with("renamed", Json::Arr(renamed)).with("oldFolder", old.to_string_lossy().to_string()).with("scan", scan.json()))
 }
 
 /// Removes the project from the vault. Never touches a linked folder.
@@ -366,7 +430,8 @@ mod tests {
         assert!(Path::new(&m.str_of("rootPath").unwrap()).is_dir());
         assert!(statuses(&v).unwrap().to_string().contains("Custom Thing"));
         let id = p.str_of("id").unwrap();
-        let u = update(&v, &id, &Json::parse(r#"{"tags":["gsc","mw2"],"favorite":true,"progress":140}"#).unwrap()).unwrap();
+        let u = update(&v, &id, &Json::parse(r#"{"tags":["gsc","mw2"],"favorite":true,"progress":140,"group":"  MW2   mods "}"#).unwrap()).unwrap();
+        assert_eq!(u.str_of("group").unwrap(), "MW2 mods");
         assert_eq!(u.get("progress").unwrap().as_i64(), Some(100));
         assert_eq!(u.get("tags").unwrap().as_arr().unwrap().len(), 2);
         let r = remove(&v, &id, true).unwrap();

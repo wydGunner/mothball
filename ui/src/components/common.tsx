@@ -112,7 +112,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
 }
 
 /** Promise-based text prompt (e.g. rename). `validate` returns an error message or null. */
-type PromptOpts = { title: string; label?: string; value?: string; confirm?: string; selectUntilDot?: boolean; validate?: (v: string) => string | null };
+type PromptOpts = { title: string; label?: string; value?: string; confirm?: string; selectUntilDot?: boolean; validate?: (v: string) => string | null; suggestions?: string[]; hint?: string };
 const PromptCtx = createContext<(o: PromptOpts) => Promise<string | null>>(async () => null);
 export const usePrompt = () => useContext(PromptCtx);
 export function PromptProvider({ children }: { children: ReactNode }) {
@@ -139,7 +139,10 @@ export function PromptProvider({ children }: { children: ReactNode }) {
         </>}>
           <div className="field" style={{ margin: 0 }}>
             {req.label && <label>{req.label}</label>}
-            <input ref={input} className="input" value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !err) done(val); }} />
+            <input ref={input} className="input" value={val} list={req.suggestions?.length ? 'pv-prompt-sugg' : undefined} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !err) done(val); }} />
+            {req.suggestions?.length ? <datalist id="pv-prompt-sugg">{req.suggestions.map((x) => <option key={x} value={x} />)}</datalist> : null}
+            {req.suggestions?.length ? <div className="row wrap" style={{ gap: 4, marginTop: 6 }}>{req.suggestions.map((x) => <button key={x} className={cx('chip', val === x && 'on')} onClick={() => setVal(x)}>{x}</button>)}</div> : null}
+            {req.hint && <span className="small dim">{req.hint}</span>}
             {err && val !== (req.value || '') && <span className="small" style={{ color: 'var(--bad)' }}>{err}</span>}
           </div>
         </Modal>

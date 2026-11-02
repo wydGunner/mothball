@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
-import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuDownload, LuLink, LuDatabase } from 'react-icons/lu';
+import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuDownload, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine } from 'react-icons/lu';
 import { call, pickFolder, revealPath, isTauri, type Project } from '../ipc';
-import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, useLoad, useConfirm } from '../components/common';
+import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, useLoad, useConfirm, usePrompt } from '../components/common';
 import { ago, bytes, CATEGORY_LABELS, cx } from '../format';
 import type { Nav } from '../main';
 
@@ -14,8 +14,15 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   const [category, setCategory] = useState('');
   const [tag, setTag] = useState('');
   const [text, setText] = useState('');
-  const [sort, setSort] = useState<Sort>('recent');
+  // Name by default so cards stay put; the choice is remembered.
+  const [sort, setSortRaw] = useState<Sort>(() => (localStorage.getItem('pv.dashSort') as Sort) || 'name');
+  const setSort = (s: Sort) => { setSortRaw(s); localStorage.setItem('pv.dashSort', s); };
   const [favOnly, setFavOnly] = useState(false);
+  const [groupF, setGroupF] = useState<string | null>(null);
+  const [collapsed, setCollapsedRaw] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pv.dashCollapsed') || '[]'); } catch { return []; } });
+  const toggleCollapsed = (g: string) => setCollapsedRaw((c) => { const n = c.includes(g) ? c.filter((x) => x !== g) : [...c, g]; try { localStorage.setItem('pv.dashCollapsed', JSON.stringify(n)); } catch { /* ignore */ } return n; });
+  const [dragOver, setDragOver] = useState<string | null>(null);
+  const prompt = usePrompt();
   const [attention, setAttention] = useState(false);
   const [importPV, setImportPV] = useState(false);
   const act = useAction();
@@ -28,7 +35,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   const list = useMemo(() => {
     const t = text.toLowerCase();
     const out = nav.projects.filter((p) =>
-      (!status || p.status === status) && (!category || p.category === category) && (!tag || p.tags.includes(tag)) && (!favOnly || p.favorite) &&
+      (groupF === null || p.group === groupF) && (!status || p.status === status) && (!category || p.category === category) && (!tag || p.tags.includes(tag)) && (!favOnly || p.favorite) &&
       (!attention || p.changedFiles + p.pendingReviews + p.missingFiles > 0 || !p.rootAvailable) &&
       (!t || p.name.toLowerCase().includes(t) || p.description.toLowerCase().includes(t)));
     const by: Record<Sort, (a: Project, b: Project) => number> = {
@@ -40,9 +47,35 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
       progress: (a, b) => b.progress - a.progress,
     };
     return out.sort((a, b) => Number(b.favorite) - Number(a.favorite) || by[sort](a, b));
-  }, [nav.projects, status, category, tag, text, sort, favOnly, attention]);
+  }, [nav.projects, status, category, tag, text, sort, favOnly, attention, groupF]);
+  const allGroups = useMemo(() => [...new Set(nav.projects.map((p) => p.group).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })), [nav.projects]);
+  // sections: each group (A→Z), then ungrouped; a flat list when nothing is grouped
+  const sections = useMemo(() => {
+    if (!allGroups.length) return [{ key: '', label: '', items: list }];
+    const out = allGroups.map((g) => ({ key: g, label: g, items: list.filter((p) => p.group === g) })).filter((x) => x.items.length);
+    const rest = list.filter((p) => !p.group);
+    if (rest.length) out.push({ key: '', label: 'Ungrouped', items: rest });
+    return out;
+  }, [list, allGroups]);
+  const setGroup = async (ids: string[], group: string) => {
+    for (const id of ids) await act(() => call('projects.update', { id, patch: { group } }));
+    nav.refreshProjects();
+  };
+  const askGroup = async (p: Project) => {
+    const g = await prompt({ title: `Group for “${p.name}”`, label: 'Group name', value: p.group, confirm: 'Save', suggestions: allGroups,
+      hint: 'Pick an existing group or type a new name. Leave empty to ungroup.', validate: (v) => (v.trim().length > 60 ? 'At most 60 characters' : null) });
+    if (g !== null) setGroup([p.id], g.trim());
+  };
+  const renameGroup = async (g: string) => {
+    const n = await prompt({ title: `Rename group “${g}”`, label: 'New name', value: g, confirm: 'Rename', validate: (v) => (!v.trim() ? 'Enter a name' : v.trim().length > 60 ? 'At most 60 characters' : null) });
+    if (n && n.trim() !== g) setGroup(nav.projects.filter((p) => p.group === g).map((p) => p.id), n.trim());
+  };
+  const ungroupAll = async (g: string) => {
+    if (await confirm({ title: `Remove the group “${g}”?`, confirm: 'Remove group', body: <>The projects in it become ungrouped. Nothing else changes.</> })) setGroup(nav.projects.filter((p) => p.group === g).map((p) => p.id), '');
+  };
   const activeFilters = [
     favOnly && { key: 'fav', label: 'Favorites', clear: () => setFavOnly(false) },
+    groupF !== null && { key: 'g', label: `Group: ${groupF || 'Ungrouped'}`, clear: () => setGroupF(null) },
     attention && { key: 'att', label: 'Needs attention', clear: () => setAttention(false) },
     status && { key: 's', label: `Status: ${status}`, clear: () => setStatus('') },
     category && { key: 'c', label: CATEGORY_LABELS[category], clear: () => setCategory('') },
@@ -54,6 +87,8 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   const ctx = (e: React.MouseEvent, p: Project) => menu(e, [
     { label: 'Open', icon: <LuFolderOpen />, onClick: () => nav.go({ view: 'project', id: p.id }) },
     { label: p.favorite ? 'Remove from favorites' : 'Add to favorites', icon: <LuStar />, onClick: () => toggleFav(p) },
+    { label: p.group ? 'Change group…' : 'Add to a group…', icon: <LuFolderInput />, onClick: () => askGroup(p) },
+    ...(p.group ? [{ label: `Remove from “${p.group}”`, onClick: () => setGroup([p.id], '') }] : []),
     { label: 'Show folder in Explorer', icon: <LuHardDrive />, onClick: () => act(() => revealPath(p.rootPath)), disabled: !isTauri },
     { label: 'Project notes', onClick: () => nav.go({ view: 'project', id: p.id, tab: 'notes' }) },
     { sep: true, label: '' },
@@ -94,6 +129,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
             { key: 'fav', label: 'Favorites only', checked: favOnly, onSelect: () => setFavOnly(!favOnly) },
             { key: 'att', label: 'Needs attention', hint: 'Changed, missing or unconfirmed files, or folder offline', checked: attention, onSelect: () => setAttention(!attention) },
           ] },
+          ...(allGroups.length ? [{ title: 'Group', items: [...allGroups, ''].map((g) => ({ key: 'g:' + g, label: g || 'Ungrouped', checked: groupF === g, onSelect: () => setGroupF(groupF === g ? null : g) })) }] : []),
           { title: 'Status', items: (statuses.data || []).map((x) => ({ key: x.name, label: x.name, checked: status === x.name, onSelect: () => setStatus(status === x.name ? '' : x.name) })) },
           { title: 'Project type', items: Object.entries(CATEGORY_LABELS).filter(([k]) => nav.projects.some((p) => p.category === k)).map(([k, v]) => ({ key: k, label: v, checked: category === k, onSelect: () => setCategory(category === k ? '' : k) })) },
           { title: 'Tag', items: allTags.map((t) => ({ key: t, label: t, checked: tag === t, onSelect: () => setTag(tag === t ? '' : t) })) },
@@ -104,10 +140,27 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
         <div className="seg right"><button className={cx(mode === 'grid' && 'on')} onClick={() => setMode2('grid')} title="Grid"><LuLayoutGrid /></button><button className={cx(mode === 'list' && 'on')} onClick={() => setMode2('list')} title="List"><LuList /></button></div>
       </div>
 
+      {sections.map((sec) => {
+        const isCollapsed = !!sec.label && collapsed.includes(sec.key || '\u0000');
+        return (
+          <section key={sec.key || '\u0000'} className={cx('pgroup', dragOver === (sec.key || '\u0000') && 'drop')}
+            onDragOver={(e) => { if (sec.label && e.dataTransfer.types.includes('text/pv-project')) { e.preventDefault(); setDragOver(sec.key || '\u0000'); } }}
+            onDragLeave={() => setDragOver(null)}
+            onDrop={(e) => { const id = e.dataTransfer.getData('text/pv-project'); setDragOver(null); if (id && sec.label) setGroup([id], sec.key); }}>
+            {sec.label && (
+              <div className="pgroup-head" onContextMenu={(e) => sec.key && menu(e, [
+                { label: 'Rename group…', icon: <LuPencilLine />, onClick: () => renameGroup(sec.key) },
+                { label: 'Remove group (ungroup its projects)…', onClick: () => ungroupAll(sec.key) },
+              ])}>
+                <button className="btn ghost sm" aria-expanded={!isCollapsed} onClick={() => toggleCollapsed(sec.key || '\u0000')}>{isCollapsed ? <LuChevronRight /> : <LuChevronDown />} <b>{sec.label}</b> <span className="dim">{sec.items.length}</span></button>
+                {sec.key && <button className="btn ghost sm icon" title="Rename group" onClick={() => renameGroup(sec.key)}><LuPencilLine /></button>}
+              </div>
+            )}
+            {!isCollapsed && (<>
       {mode === 'grid' ? (
         <div className="pgrid">
-          {list.map((p) => (
-            <div key={p.id} className="card pcard" onClick={() => nav.go({ view: 'project', id: p.id })} onContextMenu={(e) => ctx(e, p)}>
+          {sec.items.map((p) => (
+            <div key={p.id} className="card pcard" draggable onDragStart={(e) => { e.dataTransfer.setData('text/pv-project', p.id); e.dataTransfer.effectAllowed = 'move'; }} onClick={() => nav.go({ view: 'project', id: p.id })} onContextMenu={(e) => ctx(e, p)}>
               <button className={cx('star fav', p.favorite && 'on')} onClick={(e) => { e.stopPropagation(); toggleFav(p); }} title="Favorite"><LuStar fill={p.favorite ? 'currentColor' : 'none'} /></button>
               <div className="head">
                 <ProjectIcon category={p.category} icon={p.icon} color={p.color} />
@@ -133,8 +186,8 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
         <table className="list">
           <thead><tr><th style={{ width: 28 }} /><th>Name</th><th>Status</th><th>Category</th><th>Progress</th><th>Files</th><th>Size</th><th>Latest activity</th><th>Created</th></tr></thead>
           <tbody>
-            {list.map((p) => (
-              <tr key={p.id} className="click" onClick={() => nav.go({ view: 'project', id: p.id })} onContextMenu={(e) => ctx(e, p)}>
+            {sec.items.map((p) => (
+              <tr key={p.id} className="click" draggable onDragStart={(e) => { e.dataTransfer.setData('text/pv-project', p.id); e.dataTransfer.effectAllowed = 'move'; }} onClick={() => nav.go({ view: 'project', id: p.id })} onContextMenu={(e) => ctx(e, p)}>
                 <td><button className={cx('star', p.favorite && 'on')} onClick={(e) => { e.stopPropagation(); toggleFav(p); }}><LuStar fill={p.favorite ? 'currentColor' : 'none'} /></button></td>
                 <td><div className="row"><ProjectIcon category={p.category} icon={p.icon} color={p.color} size={22} /><b>{p.name}</b>{p.tags.slice(0, 3).map((t) => <span className="tag" key={t}>{t}</span>)}</div></td>
                 <td><StatusPill status={p.status} colors={colors} /></td><td className="muted">{CATEGORY_LABELS[p.category]}</td>
@@ -146,6 +199,12 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
           </tbody>
         </table>
       )}
+            </>)}
+          </section>
+        );
+      })}
+      {allGroups.length === 0 && list.length > 1 && <p className="small dim" style={{ marginTop: 12 }}>Tip: right-click a project → “Add to a group…” to sort projects into groups like “MW2 mods” or “3D prints”.</p>}
+      {allGroups.length > 0 && <p className="small dim" style={{ marginTop: 12 }}>Drag a project onto a group heading to move it there.</p>}
       {!list.length && <Empty title="No projects match these filters" />}
       {importPV && <ImportPrintVault onClose={() => setImportPV(false)} onDone={nav.refreshProjects} />}
     </div>

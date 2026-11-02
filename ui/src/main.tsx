@@ -1,6 +1,6 @@
 import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { LuLayoutDashboard, LuSearch, LuSettings, LuPanelLeftClose, LuPanelLeftOpen, LuStar, LuClock, LuPlus, LuChevronRight } from 'react-icons/lu';
+import { LuLayoutDashboard, LuSearch, LuSettings, LuPanelLeftClose, LuPanelLeftOpen, LuStar, LuClock, LuPlus, LuChevronRight, LuChevronDown } from 'react-icons/lu';
 import { call, type Project } from './ipc';
 import { ToastProvider, ConfirmProvider, ContextMenuProvider, PromptProvider, ProjectIcon } from './components/common';
 import { Dashboard, NewProjectDialog } from './views/Dashboard';
@@ -67,8 +67,15 @@ function App() {
     return () => window.removeEventListener('keydown', k);
   }, [go, back]);
 
-  const favorites = projects.filter((p) => p.favorite);
-  const recent = [...projects].filter((p) => p.lastOpenedAt && !p.favorite).sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0)).slice(0, 8);
+  const byName = (a: Project, b: Project) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
+  const favorites = projects.filter((p) => p.favorite).sort(byName);
+  // Groups list all their projects A→Z (collapsible); Recent covers the rest.
+  const groupNames = [...new Set(projects.filter((p) => !p.favorite && p.group).map((p) => p.group))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  // The 8 most recently opened projects, listed alphabetically so opening one doesn't reshuffle the list.
+  const recent = [...projects].filter((p) => p.lastOpenedAt && !p.favorite && !p.group).sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0)).slice(0, 8)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
+  const [sideClosed, setSideClosed] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pv.sideCollapsed') || '[]'); } catch { return []; } });
+  const toggleSide = (g: string) => setSideClosed((c) => { const n = c.includes(g) ? c.filter((x) => x !== g) : [...c, g]; try { localStorage.setItem('pv.sideCollapsed', JSON.stringify(n)); } catch { /* ignore */ } return n; });
   const current = route.view === 'project' ? projects.find((p) => p.id === route.id) : undefined;
 
   const projLink = (p: Project) => (
@@ -88,6 +95,15 @@ function App() {
         </nav>
         <div className="scroll">
           {favorites.length > 0 && <><div className="section"><LuStar size={10} /> Favorites</div><nav>{favorites.map(projLink)}</nav></>}
+          {groupNames.map((g) => {
+            const open = !sideClosed.includes(g);
+            return (
+              <div key={g}>
+                <button className="section sectionbtn" aria-expanded={open} onClick={() => toggleSide(g)} title={g}>{open ? <LuChevronDown size={10} /> : <LuChevronRight size={10} />} <span className="label">{g}</span></button>
+                {open && <nav>{projects.filter((p) => !p.favorite && p.group === g).sort(byName).map(projLink)}</nav>}
+              </div>
+            );
+          })}
           {recent.length > 0 && <><div className="section"><LuClock size={10} /> Recent</div><nav>{recent.map(projLink)}</nav></>}
         </div>
         <div className="foot">

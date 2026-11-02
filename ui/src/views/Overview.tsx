@@ -164,11 +164,12 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
         {/* ---------- key files */}
         <section className="card pad">
           <div className="row" style={{ marginBottom: 10 }}><h2 className="grow">Files</h2><button className="btn sm ghost" onClick={() => ctx.openFiles()}>Browse all {p.fileCount} <LuChevronRight /></button></div>
-          {(groups.data || []).length > 0 ? (
+          {(groups.data || []).some((g) => g.count > 0) ? (
             <div className="groupgrid">
-              {groups.data!.map((g) => (
-                <button key={g.id} className="groupcard" onClick={() => ctx.openFiles(g.id)} disabled={!g.count}>
-                  <b>{g.count}</b><span>{g.label}</span><small>{g.exts.slice(0, 4).map((e: string) => '.' + e).join(' ')}</small>
+              {groups.data!.filter((g) => g.count > 0).map((g) => (
+                <button key={g.id} className="groupcard" onClick={() => ctx.openFiles(g.id)} title={g.hint}>
+                  <b>{g.count}</b><span>{g.label}</span>
+                  <small>{(g.found || []).slice(0, 4).map((f: any) => `${f.ext ? '.' + f.ext : 'no ext'} ${f.count}`).join(' · ')}{(g.found || []).length > 4 ? ' …' : ''}</small>
                 </button>
               ))}
             </div>
@@ -224,7 +225,7 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
   const act = useAction();
   const toast = useToast();
   const [tab, setTab] = useState(initialTab);
-  const [f, setF] = useState({ name: p.name, description: p.description, icon: p.icon, status: p.status, category: p.category, progress: p.progress, tags: p.tags, ignoreGlobs: p.ignoreGlobs });
+  const [f, setF] = useState({ name: p.name, description: p.description, icon: p.icon, status: p.status, category: p.category, progress: p.progress, tags: p.tags, ignoreGlobs: p.ignoreGlobs, group: p.group || '' });
   const [module, setModule] = useState<Record<string, any>>(p.module || {});
   const [customStatus, setCustomStatus] = useState('');
   const statuses = useLoad(() => call<{ name: string }[]>('projects.statuses'), []);
@@ -269,7 +270,13 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
           </div>
         </div>
         <div className="field"><label>Progress — {f.progress}%</label><input type="range" min={0} max={100} step={5} value={f.progress} onChange={(e) => setF({ ...f, progress: Number(e.target.value) })} /></div>
-        <div className="field"><label>Tags</label><TagInput value={f.tags} onChange={(tags) => setF({ ...f, tags })} /></div>
+        <div className="grid2">
+          <div className="field"><label>Group</label>
+            <input className="input" list="pv-groups" value={f.group} maxLength={60} placeholder="e.g. MW2 mods (optional)" onChange={(e) => setF({ ...f, group: e.target.value })} />
+            <datalist id="pv-groups">{[...new Set(ctx.nav.projects.map((x) => x.group).filter(Boolean))].map((g) => <option key={g} value={g} />)}</datalist>
+          </div>
+          <div className="field"><label>Tags</label><TagInput value={f.tags} onChange={(tags) => setF({ ...f, tags })} /></div>
+        </div>
       </>}
 
       {tab === 'details' && <>
@@ -333,11 +340,11 @@ function PrintLog({ log, onChange }: { log: any[]; onChange: (l: any[]) => void 
   );
 }
 
-export function CustomFields({ value, onChange }: { value: Record<string, string>; onChange: (v: Record<string, string>) => void }) {
+export function CustomFields({ value, onChange, compact }: { value: Record<string, string>; onChange: (v: Record<string, string>) => void; compact?: boolean }) {
   const [k, setK] = useState('');
   const [v, setV] = useState('');
   return (
-    <div style={{ marginTop: 14 }}>
+    <div style={{ marginTop: compact ? 0 : 14 }}>
       <h3 style={{ marginBottom: 8 }}>Custom fields</h3>
       {Object.entries(value).map(([key, val]) => (
         <div key={key} className="row" style={{ marginBottom: 6 }}>

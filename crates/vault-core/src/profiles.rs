@@ -36,11 +36,25 @@ pub fn groups(category: &str) -> Vec<Group> {
             Group { id: "assets", label: "Assets & archives", hint: "Packaged mod files and resources", exts: &["iwd", "ff", "zip", "7z", "rar", "png", "jpg", "dds", "tga"] },
         ],
         "game" => vec![
-            Group { id: "scripts", label: "Scripts & shaders", hint: "Gameplay code", exts: &["cs", "shader", "hlsl", "glsl", "compute", "gd", "lua", "cpp", "h", "asmdef"] },
+            Group {
+                id: "scripts",
+                label: "Scripts & code",
+                hint: "Gameplay and mod scripts, shaders",
+                exts: &[
+                    "cs", "gsc", "csc", "gsh", "menu", "inc", "lua", "py", "js", "ts", "gd", "cpp", "c", "h", "hpp", "shader", "hlsl", "glsl", "compute", "asmdef", "nut", "as",
+                    "sp", "qc", "uc",
+                ],
+            },
             Group { id: "scenes", label: "Scenes & prefabs", hint: "Level and object setup", exts: &["unity", "prefab", "asset", "controller", "anim", "overridecontroller", "tscn", "umap"] },
-            Group { id: "art", label: "Models & textures", hint: "3D models, textures, materials", exts: &["fbx", "obj", "blend", "gltf", "glb", "png", "tga", "psd", "jpg", "exr", "mat"] },
+            Group {
+                id: "art",
+                label: "Models & textures",
+                hint: "3D models, textures, materials",
+                exts: &["fbx", "obj", "blend", "gltf", "glb", "png", "tga", "psd", "jpg", "jpeg", "dds", "iwi", "exr", "mat", "xmodel_export", "xanim_export"],
+            },
             Group { id: "audio", label: "Audio", hint: "Sounds and music", exts: &["wav", "mp3", "ogg", "flac", "aiff"] },
-            Group { id: "config", label: "Config & data", hint: "Settings and data tables", exts: &["json", "xml", "yaml", "yml", "csv", "txt", "md"] },
+            Group { id: "config", label: "Config & data", hint: "Settings, string tables, data", exts: &["json", "xml", "yaml", "yml", "csv", "cfg", "ini", "toml", "str", "arena", "txt", "md"] },
+            Group { id: "packages", label: "Packages & archives", hint: "Packed mod files and archives", exts: &["iwd", "ff", "pak", "pk3", "vpk", "zip", "7z", "rar", "unitypackage"] },
         ],
         "electronics" => vec![
             Group { id: "design", label: "Schematics & PCB", hint: "KiCad / Eagle / Fritzing files", exts: &["kicad_pcb", "kicad_sch", "kicad_pro", "sch", "brd", "fzz"] },

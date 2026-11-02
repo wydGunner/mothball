@@ -70,7 +70,7 @@ export async function onFileDrop(cb: (paths: string[]) => void, onHover?: (over:
 export interface Project {
   id: string; name: string; description: string; category: string; status: string;
   mode: 'linked' | 'managed'; rootPath: string; rootAvailable: boolean; icon: string; color: string;
-  progress: number; favorite: boolean; module: Record<string, any>; ignoreGlobs: string;
+  progress: number; favorite: boolean; group: string; module: Record<string, any>; ignoreGlobs: string;
   createdAt: number; updatedAt: number; lastOpenedAt?: number; lastScanAt?: number; tags: string[];
   fileCount: number; bytes: number; missingFiles: number; changedFiles: number; pendingReviews: number;
   openTasks: number; latestActivity?: string; latestActivityAt?: number;

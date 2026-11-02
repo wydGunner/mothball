@@ -60,13 +60,15 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "files.get" => files::get(v, &s(a, "id")?),
         "files.preview" => files::preview_text(v, &s(a, "id")?, 256 * 1024),
         "files.image" => files::read_base64(v, &s(a, "id")?, 15 * 1024 * 1024),
-        "files.import" => files::import(
+        "files.import" => files::import_op(
             v,
             &s(a, "projectId")?,
             &strs(a, "paths").into_iter().map(PathBuf::from).collect::<Vec<_>>(),
             &os(a, "destDir").unwrap_or_default(),
             a.get("allowDuplicates").and_then(|x| x.as_bool()).unwrap_or(false),
+            os(a, "operation").as_deref() == Some("move"),
         ),
+        "projects.useFolder" => projects::use_folder(v, &s(a, "id")?, &PathBuf::from(s(a, "path")?)),
         "files.rename" => files::rename(v, &s(a, "id")?, &s(a, "name")?),
         "files.delete" => files::delete(v, &strs(a, "ids")),
         "files.restoreDeleted" => files::restore_deleted(v, &s(a, "id")?),

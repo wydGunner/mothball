@@ -86,6 +86,7 @@ await step('Create OMEN v2 linked project', async () => {
   await page.locator('.modal select').first().selectOption('software');
   await page.getByRole('button', { name: 'Create project' }).click();
   await page.locator('.filerow').filter({ hasText: 'weapon_tuner.gsc' }).waitFor();
+  await page.locator('.chip.on').filter({ hasText: 'All files' }).waitFor(); // never opens pre-filtered
 });
 
 await step('Browse folder tree', async () => {
@@ -97,11 +98,15 @@ await step('Browse folder tree', async () => {
 
 await step('Document weapon_tuner.gsc', async () => {
   await page.locator('.filerow').filter({ hasText: 'weapon_tuner.gsc' }).click();
-  await page.getByPlaceholder(/What is this file for/).fill('Handles weapon-specific tuning and behavior');
+  // an undocumented file shows one line plus "add" chips, not a wall of empty fields
+  if (await page.locator('.doc textarea').count()) throw new Error('empty docs should not open editors');
+  await page.getByPlaceholder(/One line, e\.g\./).fill('Handles weapon-specific tuning and behavior');
+  await page.locator('.addrow .chip').filter({ hasText: 'Notes' }).click();
   await page.locator('textarea.code').fill('- Contains instashoot configuration\n- Depends on [[file:configs/weapons.json]]\n- Requires dedicated server testing');
+  await page.locator('.addrow .chip').filter({ hasText: 'Warning' }).click();
   await page.getByPlaceholder('e.g. Never edit while the server is running').fill('Requires dedicated server testing before release');
   await page.locator('.savestate').filter({ hasText: 'Saved' }).waitFor({ timeout: 5000 });
-  await page.getByRole('button', { name: 'View' }).click();
+  await page.getByRole('button', { name: 'Done' }).click();
   await page.locator('.md').getByText('Contains instashoot configuration').waitFor();
 });
 
@@ -111,10 +116,10 @@ await step('Link script to related file, note and bug', async () => {
   const bug = await api('tasks.create', { projectId: pid, title: 'Instashoot desync on dedicated', kind: 'bug' });
   if (!note.ok || !bug.ok) throw new Error('setup failed');
   for (const [tab, name] of [['File', '_util.gsc'], ['Note', 'Weapon Systems'], ['Task / bug', 'Instashoot desync']]) {
-    await page.getByRole('button', { name: 'Add link' }).click();
+    await page.locator('.addrow .chip').filter({ hasText: /link/i }).click();
     await page.locator('.modal .seg button').filter({ hasText: tab }).click();
     await page.locator('.modal .filerow').filter({ hasText: name }).first().click();
-    await page.locator('.docsec').getByText(name).first().waitFor();
+    await page.locator('.doc').getByText(name).first().waitFor();
   }
 });
 
@@ -344,6 +349,45 @@ await step('Import with preview, then Undo import', async () => {
   if (!existsSync(join(omen, 'configs', renamed))) throw new Error('undo import removed a file changed after import');
   if (!existsSync(join(omen, 'configs/weapons.json'))) throw new Error('undo import removed an unrelated file');
   await toastGone();
+  // Move instead of copy: the original leaves its folder; Undo puts it back
+  page.once('dialog', (d) => d.accept(join(src, 'loot_table.json')));
+  await page.getByRole('button', { name: 'Import', exact: true }).click();
+  await m.locator('.opcard').filter({ hasText: 'Move into the project' }).click();
+  await m.getByRole('button', { name: /Move 1 file into/ }).click();
+  await m.waitFor({ state: 'detached' });
+  if (existsSync(join(src, 'loot_table.json')) || !existsSync(join(omen, 'configs/loot_table.json'))) throw new Error('move did not move');
+  await page.locator('.toast').getByRole('button', { name: 'Undo import' }).click();
+  await page.getByText(/Moved 1 file\(s\) back/).waitFor();
+  if (!existsSync(join(src, 'loot_table.json')) || existsSync(join(omen, 'configs/loot_table.json'))) throw new Error('undo did not move the file back');
+  await toastGone();
+});
+
+await step('Import: edit files where they are (managed → your folder)', async () => {
+  const mine = join(tmp, 'My Prints'); mkdirSync(mine, { recursive: true });
+  writeFileSync(join(mine, 'Skeleton Glock.3mf'), 'glock');
+  writeFileSync(join(mine, 'mag.stl'), 'mag');
+  const pr = (await api('projects.create', { name: 'Prints In Place', category: '3d-printing' })).data;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await page.goto(base + '/');
+  await page.locator('.pcard').filter({ hasText: 'Prints In Place' }).click();
+  await page.getByRole('tab', { name: /Files/ }).click();
+  page.once('dialog', (d) => d.accept(join(mine, 'Skeleton Glock.3mf')));
+  await page.getByRole('button', { name: 'Import', exact: true }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Import files' });
+  await m.locator('.opcard').filter({ hasText: 'Edit them where they are' }).click();
+  await m.getByText(mine).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-import-inplace.png') });
+  await m.getByRole('button', { name: 'Use this folder' }).click();
+  await m.waitFor({ state: 'detached' });
+  await page.locator('.filerow').filter({ hasText: 'mag.stl' }).waitFor();
+  const p2 = (await api('projects.get', { id: pr.id })).data;
+  if (p2.mode !== 'linked' || !p2.rootPath.endsWith('My Prints')) throw new Error('project not switched to the folder: ' + JSON.stringify(p2));
+  if (!existsSync(join(mine, 'Skeleton Glock.3mf'))) throw new Error('original file touched');
+  await toastGone();
+  await page.locator('.pcard, .sidebar a, nav a').first().waitFor().catch(() => {});
+  await page.goto(base + '/');
+  await page.locator('.pcard').filter({ hasText: 'OMEN v2' }).click();
+  await page.getByRole('tab', { name: /Files/ }).click();
 });
 
 await step('Remove from Project Vault keeps the file on disk', async () => {
@@ -586,9 +630,43 @@ await step('Backup and verify', async () => {
   if (dirs.length !== 1) throw new Error('expected one backup folder');
 });
 
-await step('Dashboard', async () => {
+await step('Files: group the list by folder', async () => {
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  await page.locator('.pcard').filter({ hasText: 'OMEN v2' }).click();
+  await page.getByRole('tab', { name: /Files/ }).click();
+  await page.getByRole('button', { name: /^Sort:/ }).click();
+  await page.locator('.dd-item').filter({ hasText: 'Folder' }).click();
+  await page.keyboard.press('Escape');
+  const sec = page.locator('.filesec').filter({ hasText: 'scripts/mp/' });
+  await sec.waitFor();
+  await page.locator('.filerow').filter({ hasText: '_util.gsc' }).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-files-grouped.png') });
+  await sec.click(); // collapse
+  await page.locator('.filerow').filter({ hasText: '_util.gsc' }).waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: /^Sort:/ }).click();
+  await page.locator('.dd-item').filter({ hasText: 'No grouping' }).click();
+  await page.keyboard.press('Escape');
+  await page.locator('.filesec').first().waitFor({ state: 'detached' });
+});
+
+await step('Dashboard: project groups', async () => {
   await page.getByRole('button', { name: 'Dashboard' }).click();
   await page.locator('.pcard').first().waitFor();
+  await page.locator('.pcard').filter({ hasText: 'OMEN v2' }).click({ button: 'right' });
+  await page.locator('.ctx button').filter({ hasText: 'Add to a group…' }).click();
+  await page.locator('.modal input').fill('MW2 mods');
+  await page.locator('.modal').getByRole('button', { name: 'Save' }).click();
+  const head = page.locator('.pgroup-head').filter({ hasText: 'MW2 mods' });
+  await head.waitFor();
+  await page.locator('.pgroup').filter({ has: head }).locator('.pcard').filter({ hasText: 'OMEN v2' }).waitFor();
+  await page.locator('.sidebar .sectionbtn').filter({ hasText: 'MW2 mods' }).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-dashboard-groups.png') });
+  // opening a project doesn't reorder the sidebar
+  const before = await page.locator('.sidebar .navitem .label').allTextContents();
+  await page.locator('.sidebar .navitem').filter({ hasText: 'Prints In Place' }).first().click();
+  await page.waitForTimeout(400);
+  const after = await page.locator('.sidebar .navitem .label').allTextContents();
+  if (before.join('|') !== after.join('|')) throw new Error('sidebar reordered: ' + before + ' -> ' + after);
 });
 
 await browser.close();

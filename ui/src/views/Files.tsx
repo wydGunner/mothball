@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { CodeEditor } from '../components/CodeEditor';
 import type { EditorHandle } from '../../editor/api';
 import { useFileActions, TEXT_EDITABLE, type FileRef } from '../fileActions';
 import {
   LuFolder, LuFolderOpen, LuChevronRight, LuChevronDown, LuSearch, LuExternalLink, LuFolderSearch, LuCopy, LuTriangleAlert,
-  LuUpload, LuEye, LuFilter, LuCode, LuSave, LuArrowLeft, LuMaximize2, LuMinimize2, LuTrash2, LuArchiveRestore, LuEllipsis, LuShieldCheck, LuPencil, LuLink2, LuX, LuHistory, LuGitCommitHorizontal, LuFileQuestion, LuCopyCheck, LuCircleCheck,
+  LuUpload, LuEye, LuFilter, LuCode, LuSave, LuArrowLeft, LuMaximize2, LuMinimize2, LuTrash2, LuArchiveRestore, LuEllipsis, LuShieldCheck, LuPencil, LuLink2, LuX, LuHistory, LuGitCommitHorizontal, LuFileQuestion, LuCopyCheck, LuCircleCheck, LuPlus,
 } from 'react-icons/lu';
 import { call, isTauri, openPath, pickFiles, revealPath, type FileDetail, type FileDocs, type VFile } from '../ipc';
 import { Dropdown, Empty, KindIcon, useConfirm, Markdown, SaveState, TagInput, useAction, useAutosave, useContextMenu, useLoad, useResizable, useToast } from '../components/common';
@@ -33,6 +33,8 @@ function buildTree(dirs: { path: string; files: number }[]): DirNode {
 }
 
 const FILE_SORTS: [string, string][] = [['path', 'Path'], ['name', 'Name'], ['changed', 'Last changed'], ['size', 'Size']];
+type GroupBy = 'none' | 'folder' | 'type' | 'ext';
+const GROUP_BYS: [GroupBy, string][] = [['none', 'No grouping'], ['folder', 'Folder'], ['type', 'File type'], ['ext', 'Extension']];
 const KINDS = ['code', 'document', 'config', 'image', 'mesh', 'model', 'gcode', 'archive', 'engine', 'audio', 'video', 'electronics', 'binary', 'other'];
 
 export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
@@ -42,15 +44,15 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   const [kind, setKind] = useState('');
   const [show, setShow] = useState<'all' | 'changed' | 'undocumented' | 'missing' | 'deleted'>('all');
   const [sort, setSort] = useState('path');
-  const [group, setGroup] = useState<string>(ctx.fileGroup || (ctx.focus?.type === 'file' ? 'all' : 'auto'));
-  const groups = useLoad(() => call<{ id: string; label: string; hint: string; count: number; exts: string[] }[]>('files.groups', { projectId: pid }), [pid, ctx.scanTick]);
+  const [groupBy, setGroupByRaw] = useState<GroupBy>(() => (localStorage.getItem('pv.fileGroupBy') as GroupBy) || 'none');
+  const setGroupBy = (g: GroupBy) => { setGroupByRaw(g); localStorage.setItem('pv.fileGroupBy', g); setClosedSecs([]); };
+  const [closedSecs, setClosedSecs] = useState<string[]>([]);
+  // Always opens on every file; the type chips narrow it down on request.
+  const [group, setGroup] = useState<string>(ctx.fileGroup || 'all');
+  const groups = useLoad(() => call<{ id: string; label: string; hint: string; count: number; exts: string[]; found: { ext: string; count: number }[] }[]>('files.groups', { projectId: pid }), [pid, ctx.scanTick]);
   useEffect(() => { if (ctx.fileGroup) setGroup(ctx.fileGroup); }, [ctx.fileGroup]);
-  useEffect(() => {
-    if (group === 'auto' && groups.data) setGroup(groups.data.some((g) => g.count > 0) ? 'key' : 'all');
-  }, [group, groups.data]);
   const exts = useMemo(() => {
     const gs = groups.data || [];
-    if (group === 'key') return [...new Set(gs.flatMap((g) => g.exts))];
     const g = gs.find((x) => x.id === group);
     return g ? g.exts : null;
   }, [group, groups.data]);
@@ -106,7 +108,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   }, [ctx.focus]);
 
   const dirs = useLoad(() => call<{ path: string; files: number }[]>('files.dirs', { projectId: pid }), [pid, ctx.scanTick]);
-  const files = useLoad(() => group === 'auto' ? Promise.resolve([] as VFile[]) : call<VFile[]>('files.list', {
+  const files = useLoad(() => call<VFile[]>('files.list', {
     projectId: pid, query, kind: kind || null, dir: dir || null, sort, exts,
     state: show === 'missing' ? 'missing' : show === 'deleted' ? 'deleted' : null, changedOnly: show === 'changed', undocumented: show === 'undocumented', limit: 5000,
   }), [pid, query, kind, dir, show, sort, ctx.scanTick, group, exts?.join(',')]);
@@ -131,6 +133,26 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
     setExpanded((e) => { const n = new Set(e); parts.forEach((_, i) => n.add(parts.slice(0, i + 1).join('/'))); return n; });
   }, [selected, files.data]);
 
+  // Optional grouping of the list (folder / type / extension), with collapsible headers.
+  const fileSections = useMemo(() => {
+    const all = files.data || [];
+    if (groupBy === 'none') return [{ key: '', label: '', items: all }];
+    const m = new Map<string, VFile[]>();
+    const keyOf = (f: VFile) => {
+      if (groupBy === 'folder') { const rel = dir ? f.path.slice(dir.length + 1) : f.path; return rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : ''; }
+      if (groupBy === 'ext') return f.ext ? '.' + f.ext : '';
+      return (groups.data || []).find((g) => g.id !== 'other' && g.exts.includes(f.ext))?.label || '';
+    };
+    for (const f of all) { const k = keyOf(f); m.set(k, [...(m.get(k) || []), f]); }
+    let keys = [...m.keys()];
+    if (groupBy === 'folder') keys.sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b, undefined, { sensitivity: 'base' })));
+    else if (groupBy === 'ext') keys.sort((a, b) => (a === '' ? 1 : b === '' ? -1 : m.get(b)!.length - m.get(a)!.length || a.localeCompare(b)));
+    else { const order = (groups.data || []).map((g) => g.label); keys.sort((a, b) => (a === '' ? 1 : b === '' ? -1 : order.indexOf(a) - order.indexOf(b))); }
+    const empty = groupBy === 'folder' ? (dir ? `${dir.split('/').pop()}/ (this folder)` : 'Project root') : groupBy === 'ext' ? '(no extension)' : 'Other files';
+    return keys.map((k) => ({ key: k || '\u0000', label: groupBy === 'folder' && k ? k + '/' : k || empty, items: m.get(k)! }));
+  }, [files.data, groupBy, dir, groups.data]);
+  const visible = useMemo(() => fileSections.flatMap((x) => (closedSecs.includes(x.key) ? [] : x.items)), [fileSections, closedSecs]);
+
   const importFiles = async () => {
     const gs = (groups.data || []).filter((g) => g.exts.length);
     const filters = gs.length ? [
@@ -145,10 +167,10 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   const onRowClick = (e: React.MouseEvent, f: VFile, i: number) => {
     if (e.ctrlKey || e.metaKey) {
       setMulti((m) => { const n = new Set(m); n.has(f.id) ? n.delete(f.id) : n.add(f.id); return n; });
-    } else if (e.shiftKey && selected && files.data) {
-      const a = files.data.findIndex((x) => x.id === selected);
+    } else if (e.shiftKey && selected && visible.length) {
+      const a = visible.findIndex((x) => x.id === selected);
       const [s, t] = a < i ? [a, i] : [i, a];
-      setMulti(new Set(files.data.slice(s, t + 1).map((x) => x.id)));
+      setMulti(new Set(visible.slice(s, t + 1).map((x) => x.id)));
     } else {
       setMulti(new Set());
       setSelected(f.id);
@@ -173,16 +195,17 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
 
 
   const keyNav = (e: React.KeyboardEvent) => {
-    if (!files.data?.length) return;
-    const i = files.data.findIndex((x) => x.id === selected);
-    if (e.key === 'ArrowDown') { e.preventDefault(); setSelected(files.data[Math.min(files.data.length - 1, i + 1)].id); }
-    if (e.key === 'ArrowUp') { e.preventDefault(); setSelected(files.data[Math.max(0, i - 1)].id); }
+    if (!visible.length) return;
+    const list = visible;
+    const i = list.findIndex((x) => x.id === selected);
+    if (e.key === 'ArrowDown') { e.preventDefault(); setSelected(list[Math.min(list.length - 1, i + 1)].id); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); setSelected(list[Math.max(0, i - 1)].id); }
     if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && i >= 0) {
       e.preventDefault();
       const r = (document.querySelector('.filerow.sel') as HTMLElement | null)?.getBoundingClientRect();
-      fileMenu({ clientX: (r?.left ?? 200) + 60, clientY: r?.bottom ?? 200, preventDefault() {} }, files.data[i]);
+      fileMenu({ clientX: (r?.left ?? 200) + 60, clientY: r?.bottom ?? 200, preventDefault() {} }, list[i]);
     }
-    if (e.key === 'Enter' && i >= 0 && canEdit(files.data[i]) && !editing) { e.preventDefault(); setEditing(files.data[i].id); }
+    if (e.key === 'Enter' && i >= 0 && canEdit(list[i]) && !editing) { e.preventDefault(); setEditing(list[i].id); }
   };
 
   const renderDir = (n: DirNode, depth: number): React.ReactNode => {
@@ -213,9 +236,8 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
         <div className="panehead" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6, background: 'var(--bg0)' }}>
           {(groups.data || []).length > 0 && (
             <div className="chips">
-              <button className={cx('chip', group === 'key' && 'on')} onClick={() => setGroup('key')} title="Files that matter for this project type">Key files <span>{groups.data!.reduce((a, g) => a + g.count, 0)}</span></button>
-              {groups.data!.map((g) => <button key={g.id} className={cx('chip', group === g.id && 'on')} onClick={() => setGroup(g.id)} title={`${g.hint}${g.hint ? ' — ' : ''}${g.exts.map((e) => '.' + e).join(' ')}`} disabled={!g.count}>{g.label} <span>{g.count}</span></button>)}
               <button className={cx('chip', group === 'all' && 'on')} onClick={() => setGroup('all')}>All files <span>{ctx.project.fileCount}</span></button>
+              {groups.data!.filter((g) => g.count > 0 || group === g.id).map((g) => <button key={g.id} className={cx('chip', group === g.id && 'on')} onClick={() => setGroup(g.id)} title={`${g.hint ? g.hint + ' — ' : ''}${(g.found || []).map((f) => `${f.ext ? '.' + f.ext : '(no extension)'} ${f.count}`).join(' · ')}`}>{g.label} <span>{g.count}</span></button>)}
             </div>
           )}
           <div className="row">
@@ -224,25 +246,33 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
               { title: 'Show', items: ([['all', 'All files'], ['changed', 'Changed since reviewed'], ['undocumented', 'Without notes'], ['missing', 'Missing from disk'], ['deleted', 'Deleted (restorable)']] as const).map(([k, l]) => ({ key: k, label: l, checked: show === k, onSelect: () => setShow(k) })) },
               ...(!(groups.data || []).length ? [{ title: 'Type', items: KINDS.map((k) => ({ key: k, label: k, checked: kind === k, onSelect: () => setKind(kind === k ? '' : k) })) }] : []),
             ]} />
-            <Dropdown label={<>Sort: {FILE_SORTS.find((x) => x[0] === sort)?.[1]}</>} align="right" width={170} sections={[{ items: FILE_SORTS.map(([k, l]) => ({ key: k, label: l, checked: sort === k, onSelect: () => setSort(k) })) }]} />
+            <Dropdown label={<>Sort: {FILE_SORTS.find((x) => x[0] === sort)?.[1]}{groupBy !== 'none' && <> · by {GROUP_BYS.find((x) => x[0] === groupBy)?.[1].toLowerCase()}</>}</>} align="right" width={190} sections={[
+              { title: 'Sort by', items: FILE_SORTS.map(([k, l]) => ({ key: k, label: l, checked: sort === k, onSelect: () => setSort(k) })) },
+              { title: 'Group by', items: GROUP_BYS.map(([k, l]) => ({ key: 'g' + k, label: l, checked: groupBy === k, onSelect: () => setGroupBy(k) })) },
+            ]} />
           </div>
           <div className="small dim">{files.data ? `${files.data.length}${files.data.length >= 5000 ? '+' : ''} files${dir ? ` in ${dir}/` : ''}${exts ? ' (filtered by type)' : ''}` : 'Loading…'}{multi.size > 1 && ` · ${multi.size} selected`}</div>
         </div>
         <div style={{ overflow: 'auto', flex: 1 }} tabIndex={0} onKeyDown={keyNav}>
-          {files.data?.map((f, i) => (
+          {fileSections.map((sec) => <Fragment key={sec.key}>
+            {sec.label && <button className="filesec" aria-expanded={!closedSecs.includes(sec.key)} onClick={() => setClosedSecs((c) => (c.includes(sec.key) ? c.filter((x) => x !== sec.key) : [...c, sec.key]))}>
+              {closedSecs.includes(sec.key) ? <LuChevronRight /> : <LuChevronDown />}<span className={cx('grow', groupBy !== 'type' && 'mono')}>{sec.label}</span><span className="count">{sec.items.length}</span>
+            </button>}
+            {!closedSecs.includes(sec.key) && sec.items.map((f) => { const i = visible.indexOf(f); return (
             <div key={f.id} data-fid={f.id} className={cx('filerow', (selected === f.id || multi.has(f.id)) && 'sel', f.state !== 'present' && 'missing')}
               onClick={(e) => onRowClick(e, f, i)} onDoubleClick={() => f.state === 'present' && isTauri && call<FileDetail>('files.get', { id: f.id }).then((d) => openPath(d.absPath)).catch((e) => toast(e.message, 'error'))}
               onContextMenu={(e) => fileMenu(e, f)}>
               <KindIcon kind={f.kind} />
               <div style={{ minWidth: 0 }}>
                 <div className="fname" title={f.path}>{f.name} {f.versions > 1 && <span className="badge" title={`${f.versions} stored versions`}>v{f.versions}</span>} {f.changedSinceReview && <span className="badge warn" title="Changed outside Project Vault since last reviewed">changed</span>} {f.state === 'missing' && <span className="badge bad">missing</span>}</div>
-                <div className="fpurpose">{f.purpose || (dir ? f.path.slice(dir.length + 1) : f.path)}</div>
+                <div className="fpurpose">{f.purpose || (() => { const rel = dir ? f.path.slice(dir.length + 1) : f.path; return rel !== f.name && groupBy !== 'folder' ? rel : ''; })()}</div>
               </div>
               <span className="small dim" style={{ textAlign: 'right' }}>{bytes(f.size)}</span>
               <span className="small dim" style={{ textAlign: 'right' }}>{ago(f.lastChanged)}</span>
             </div>
-          ))}
-          {files.data && !files.data.length && group !== 'auto' && <Empty icon={<LuFileQuestion />} title={ctx.project.fileCount ? 'No files match' : 'No files yet'}>
+          ); })}
+          </Fragment>)}
+          {files.data && !files.data.length && <Empty icon={<LuFileQuestion />} title={ctx.project.fileCount ? 'No files match' : 'No files yet'}>
             {ctx.project.fileCount > 0 && exts && <button className="btn sm" onClick={() => setGroup('all')}>Show all files</button>}
             {!ctx.project.fileCount && <p>{ctx.project.mode === 'managed' ? 'Import files or drag them onto the window.' : 'Click Rescan to index the folder.'}</p>}
           </Empty>}
@@ -272,6 +302,8 @@ function FileDetailPanel({ fileId, ctx, onChanged, onEdit, highlightVersion }: {
   const [tags, setTags] = useState<string[]>([]);
   const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [linking, setLinking] = useState(false);
+  // empty sections stay out of the way until asked for
+  const [show, setShow] = useState({ warn: false, tags: false, custom: false });
   const act = useAction();
   const toast = useToast();
   const docsRef = useRef<{ docs: FileDocs | null; tags: string[] }>({ docs: null, tags: [] });
@@ -281,7 +313,6 @@ function FileDetailPanel({ fileId, ctx, onChanged, onEdit, highlightVersion }: {
     if (d.data && !docs) {
       setDocs(d.data.docs);
       setTags(d.data.tags);
-      if (!d.data.docs.purpose && !d.data.docs.notes) setMode('edit');
     }
   }, [d.data, docs]);
 
@@ -304,7 +335,7 @@ function FileDetailPanel({ fileId, ctx, onChanged, onEdit, highlightVersion }: {
         <KindIcon kind={f.kind} />
         <div className="grow" style={{ minWidth: 0 }}>
           <h2 style={{ wordBreak: 'break-all' }}>{f.name}</h2>
-          <div className="small dim mono" style={{ wordBreak: 'break-all' }}>{f.path}</div>
+          <div className="small dim mono" style={{ wordBreak: 'break-all' }}>{f.path.includes('/') ? f.path : 'in the project root'}</div>
         </div>
         <SaveState state={save.state} />
         {canEdit(f) && <button className="btn primary sm" onClick={onEdit} title="Edit this file in Project Vault"><LuCode /> Edit file</button>}
@@ -327,48 +358,67 @@ function FileDetailPanel({ fileId, ctx, onChanged, onEdit, highlightVersion }: {
         <div className="alert warn"><LuTriangleAlert /><div className="grow">The file's content changed after this documentation was last written. Check that the notes still apply.</div>
           <button className="btn sm" onClick={() => { save.schedule(); setTimeout(save.flush, 0); }}>Notes still accurate</button></div>
       )}
-      {docs.warnings && mode === 'view' && <div className="alert warn"><LuTriangleAlert /><div style={{ whiteSpace: 'pre-wrap' }}>{docs.warnings}</div></div>}
+      {docs.warnings && !show.warn && <div className="alert warn"><LuTriangleAlert /><div className="grow" style={{ whiteSpace: 'pre-wrap' }}>{docs.warnings}</div><button className="btn ghost sm icon" title="Edit warning" onClick={() => setShow((x) => ({ ...x, warn: true }))}><LuPencil /></button></div>}
       {f.duplicates.length > 0 && <div className="alert info"><LuCopyCheck /><div>Identical content: {f.duplicates.map((x) => <a key={x.id} href="#" onClick={(e) => { e.preventDefault(); ctx.openFile(x.id); }} className="mono" style={{ marginRight: 8 }}>{x.path}</a>)}</div></div>}
 
       <div className="field" style={{ margin: 0 }}>
-        <label>Purpose — what this file does</label>
-        <input className="input" value={docs.purpose} placeholder="What is this file for? e.g. Handles weapon-specific tuning and behavior" onChange={(e) => upd({ purpose: e.target.value })} onBlur={save.flush} />
+        <label>What this file does</label>
+        <input className="input" value={docs.purpose} placeholder="One line, e.g. Handles weapon-specific tuning and behavior" onChange={(e) => upd({ purpose: e.target.value })} onBlur={save.flush} />
       </div>
 
-      <div>
-        <div className="row" style={{ marginBottom: 6 }}>
-          <h3 className="grow">Notes</h3>
-          <div className="seg"><button className={cx(mode === 'view' && 'on')} onClick={() => { save.flush(); setMode('view'); }}><LuEye /> View</button><button className={cx(mode === 'edit' && 'on')} onClick={() => setMode('edit')}><LuPencil /> Edit</button></div>
+      {(docs.notes || mode === 'edit') && (
+        <div>
+          <div className="row" style={{ marginBottom: 6 }}>
+            <h3 className="grow">Notes</h3>
+            {mode === 'edit'
+              ? <button className="btn sm" onClick={() => { save.flush(); setMode('view'); }}><LuEye /> Done</button>
+              : <button className="btn ghost sm" onClick={() => setMode('edit')}><LuPencil /> Edit</button>}
+          </div>
+          {mode === 'edit'
+            ? <textarea className="input code" rows={8} autoFocus value={docs.notes} onChange={(e) => upd({ notes: e.target.value })} onBlur={save.flush}
+                placeholder={'How it works, what depends on it, gotchas, how to test it (Markdown).\nLink with [[Note title]], [[file:path/to/other.file]] or [[task:Bug title]].'} />
+            : <Markdown text={docs.notes} onInternalLink={(k, t) => resolveInternal(ctx, k, t, toast)} />}
         </div>
-        {mode === 'edit' ? <>
-          <textarea className="input code" rows={10} value={docs.notes} onChange={(e) => upd({ notes: e.target.value })} onBlur={save.flush}
-            placeholder={'Markdown notes: how it works, what depends on it, gotchas, how to test it.\n\nLink with [[Note title]], [[file:path/to/other.file]] or [[task:Bug title]].'} />
-          <div className="field" style={{ marginTop: 10 }}><label>Important warnings</label><textarea className="input" rows={2} value={docs.warnings} onChange={(e) => upd({ warnings: e.target.value })} onBlur={save.flush} placeholder="e.g. Never edit while the server is running" /></div>
-        </> : (docs.notes ? <Markdown text={docs.notes} onInternalLink={(k, t) => resolveInternal(ctx, k, t, toast)} /> : <div className="muted small">No notes yet. <a href="#" onClick={(e) => { e.preventDefault(); setMode('edit'); }}>Write some</a>.</div>)}
-      </div>
+      )}
 
-      <div className="docsec"><h3>Tags</h3><TagInput value={tags} onChange={(t) => { setTags(t); save.schedule(); }} /></div>
+      {show.warn && (
+        <div className="field" style={{ margin: 0 }}><label>Important warning</label><textarea className="input" rows={2} autoFocus={show.warn} value={docs.warnings} onChange={(e) => upd({ warnings: e.target.value })} onBlur={() => { save.flush(); if (!docs.warnings) setShow((x) => ({ ...x, warn: false })); }} placeholder="e.g. Never edit while the server is running" /></div>
+      )}
 
-      <div className="docsec">
-        <h3><LuLink2 /> Related files, notes & bugs <button className="btn sm right" onClick={() => setLinking(true)}>Add link</button></h3>
-        <LinkList links={f.links} ctx={ctx} onRemoved={d.reload} />
-      </div>
+      {(tags.length > 0 || show.tags) && (
+        <div className="row" style={{ alignItems: 'center' }}><span className="small dim" style={{ width: 60 }}>Tags</span><div className="grow"><TagInput value={tags} onChange={(t) => { setTags(t); save.schedule(); }} /></div></div>
+      )}
 
-      <div className="docsec">
-        <CustomFields value={docs.custom || {}} onChange={(custom) => upd({ custom })} />
-      </div>
+      {f.links.length > 0 && (
+        <div>
+          <div className="row" style={{ marginBottom: 6 }}><h3 className="grow"><LuLink2 /> Related</h3><button className="btn ghost sm" onClick={() => setLinking(true)}><LuPlus /> Link</button></div>
+          <LinkList links={f.links} ctx={ctx} onRemoved={d.reload} />
+        </div>
+      )}
+
+      {(Object.keys(docs.custom || {}).length > 0 || show.custom) && <CustomFields value={docs.custom || {}} onChange={(custom) => upd({ custom })} compact />}
+
+      {(() => {
+        const add = [
+          !docs.notes && mode !== 'edit' && { label: 'Notes', on: () => setMode('edit') },
+          !docs.warnings && !show.warn && { label: 'Warning', on: () => setShow((x) => ({ ...x, warn: true })) },
+          !tags.length && !show.tags && { label: 'Tags', on: () => setShow((x) => ({ ...x, tags: true })) },
+          { label: f.links.length ? 'Another link' : 'Link to a file, note or bug', on: () => setLinking(true) },
+          !Object.keys(docs.custom || {}).length && !show.custom && { label: 'Custom field', on: () => setShow((x) => ({ ...x, custom: true })) },
+        ].filter(Boolean) as { label: string; on: () => void }[];
+        return add.length > 0 && <div className="addrow">{add.map((x) => <button key={x.label} className="chip" onClick={x.on}><LuPlus /> {x.label}</button>)}</div>;
+      })()}
 
       <FilePreview f={f} />
 
       <div className="docsec">
         <h3>Details</h3>
         <div className="kv">
-          <span>Type</span><span>{f.kind}{f.ext ? ` (.${f.ext})` : ''}</span>
-          <span>Size</span><span>{bytes(f.size)}</span>
+          <span>Type</span><span>{f.kind}{f.ext ? ` (.${f.ext})` : ''} · {bytes(f.size)}</span>
           {f.meshDimensionsMm && <><span>Mesh bounds</span><span>{f.meshDimensionsMm.join(' × ')} mm</span></>}
           <span>Modified</span><span>{dateTime(f.mtime)}</span>
           <span>First indexed</span><span>{dateTime(f.firstSeen)}</span>
-          <span>SHA-256</span><span className="mono small">{f.sha256 || '—'}</span>
+          <span>SHA-256</span><span className="mono small" title={f.sha256 || ''} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', wordBreak: 'normal' }}>{f.sha256 || '—'}</span>
         </div>
       </div>
 
@@ -398,7 +448,7 @@ export async function resolveInternal(ctx: ProjectCtx, kind: 'note' | 'file' | '
 }
 
 function FilePreview({ f }: { f: FileDetail }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(() => f.kind !== 'image' && canEdit(f) && f.size <= 64 * 1024);
   const [content, setContent] = useState<{ text?: string; img?: string; binary?: boolean; truncated?: boolean; error?: string } | null>(null);
   useEffect(() => {
     if (!open || f.state !== 'present') return;
@@ -442,7 +492,7 @@ function FileHistory({ f, ctx, highlight }: { f: FileDetail; ctx: ProjectCtx; hi
           <button className={cx(tab === 'versions' && 'on')} onClick={() => setTab('versions')}>Backups &amp; versions{f.versions ? ` (${f.versions})` : ''}</button>
           <button className={cx(tab === 'changes' && 'on')} onClick={() => setTab('changes')}>Activity</button>
           <button className={cx(tab === 'git' && 'on')} onClick={() => setTab('git')}>Git commits</button>
-          <button className={cx(tab === 'revisions' && 'on')} onClick={() => setTab('revisions')}>Note revisions</button>
+          <button className={cx(tab === 'revisions' && 'on')} onClick={() => setTab('revisions')}>Note edits</button>
         </div>
       </div>
       <p className="small dim" style={{ marginTop: 0 }}>

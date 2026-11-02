@@ -5,14 +5,14 @@ or not yet verified on Windows · ⛔ not implemented yet
 
 ## How this was verified
 
-* `cargo test` for `vault-core`: 31 unit/integration tests (reconciliation
+* `cargo test` for `vault-core`: 36 unit/integration tests (reconciliation
   cases, imports + undo import, move between projects, remove from vault,
   Smart Save backups + names, dedup, restore, storage location changes and
   unavailable storage, snapshots, retention dry run, notes, tasks, search, git,
   backup/tamper detection, Print Vault import, JSON parser, SHA-256 vectors,
-  path traversal, v1→v3 database upgrade).
+  path traversal, v1→v4 database upgrade).
 * `scripts/ui-smoke.mjs`: headless Chromium drives the real UI against the
-  real core — 39 steps, no console errors — including Smart Save (cancel
+  real core — 42 steps, no console errors — including Smart Save (cancel
   writes nothing, neutral/descriptive names, backup recorded, conflict
   prompt), version search/compare/restore with keep-current, backups in
   global search with backup-only actions, snapshots (preview, restore, newer
@@ -74,6 +74,9 @@ or not yet verified on Windows · ⛔ not implemented yet
 | Project Backups tab | ✅ | browse every backup in a project by text, date range or quick range; project snapshots (create, details, preview, restore that never deletes newer files and snapshots the current state first, delete) |
 | Retention | ✅ | nothing is deleted automatically; “Clean up…” previews the count and asks first; named backups only with an explicit tick |
 | Backup storage location | ✅ | Settings: shows path and availability; change copies + verifies, keeps the old folder; clear error when the drive is missing (🟡 folder picker untested on Windows) |
+| Project groups | ✅ | your own groups (e.g. “MW2 mods”): dashboard sections (collapsible, drag a card onto a heading, rename/remove group), Filter by → Group, sidebar sections; Recent is listed A→Z so opening a project doesn't reshuffle it; dashboard sorts by name by default and remembers your choice |
+| File list grouping | ✅ | Sort ▸ Group by folder / file type / extension, collapsible headers; the Files tab always opens on All files; type chips only show types that exist plus “Other files”, so nothing is hidden (game projects now count .gsc/.csc/.menu, .iwi, .ff/.iwd) |
+| Import operations | ✅ | Copy (default), Move (Undo moves files back, never overwriting), or “Edit them where they are” — turns a managed project into a linked one on your folder, copying its existing files there first without overwriting anything |
 | Import safety | ✅ | preview shows project + destination folder, copy (never move), per-file conflicts renamed; Undo import from the toast or the Timeline removes only unchanged copies; move files between projects keeps notes and history |
 | Project-type file focus | ✅ | Files view groups by role (e.g. Print projects / Meshes / Source models), import picker filters by type |
 | Backups | 🟡 | verified, portable; ⛔ scheduled backups, ⛔ optional inclusion of project files, ⛔ in-app restore with preview, ⛔ ZIP export |
