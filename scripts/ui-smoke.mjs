@@ -802,6 +802,25 @@ await step('Dashboard: project groups', async () => {
   if (before.join('|') !== after.join('|')) throw new Error('sidebar reordered: ' + before + ' -> ' + after);
 });
 
+await step('Dashboard: remove a managed project and delete its folder', async () => {
+  const pr = (await api('projects.create', { name: 'Scratch To Delete', category: 'game' })).data;
+  await page.evaluate(() => location.reload());
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  const card = page.locator('.pcard').filter({ hasText: 'Scratch To Delete' });
+  await card.click({ button: 'right' });
+  await page.locator('.ctx button').filter({ hasText: 'Remove from vault…' }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Remove “Scratch To Delete”?' });
+  await m.getByRole('button', { name: 'Remove project' }).waitFor();
+  await m.locator('.confirm-check input').check();
+  if (shots) await page.screenshot({ path: join(shots, 'x-remove-delete.png') });
+  await m.getByRole('button', { name: 'Remove and delete files' }).click();
+  await m.waitFor({ state: 'detached' });
+  await card.waitFor({ state: 'detached' });
+  if (!pr.rootPath) throw new Error('no rootPath from projects.create');
+  if ((await import('node:fs')).existsSync(pr.rootPath)) throw new Error('managed folder still on disk');
+  await toastGone();
+});
+
 await browser.close();
 srv.kill();
 if (errors.length) { console.error('Browser errors:\n' + errors.join('\n')); process.exit(1); }

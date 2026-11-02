@@ -540,21 +540,29 @@ pub fn use_folder(v: &Vault, id: &str, folder: &Path) -> DbResult<Json> {
 }
 
 /// Removes the project from the vault. Never touches a linked folder.
-/// Managed storage is deleted only if `delete_managed_files` is true.
+/// With `delete_managed_files`, a managed project's folder is sent to the
+/// Recycle Bin first; if that fails nothing is removed, so the project and
+/// its folder never get out of step.
 pub fn remove(v: &Vault, id: &str, delete_managed_files: bool) -> DbResult<Json> {
     let r = v.db.one("SELECT mode, root_path FROM projects WHERE id=?", p![id])?.ok_or("Project not found")?;
     let root = PathBuf::from(r.s("root_path"));
+    let mut deleted = false;
+    if delete_managed_files && r.s("mode") == "managed" {
+        if !root.starts_with(v.managed_root()) || root == v.managed_root() {
+            return Err(format!("Refusing to delete {}: it is not a project folder inside the vault's managed storage", root.display()));
+        }
+        if root.exists() {
+            crate::files::to_recycle_bin(&root)
+                .map_err(|e| format!("The folder couldn't be moved to the Recycle Bin ({e}). Nothing was removed."))?;
+            deleted = true;
+        }
+    }
     v.db.tx(|db| {
         search::unindex_project(v, id)?;
         db.exec("DELETE FROM entity_tags WHERE entity_id IN (SELECT id FROM files WHERE project_id=?) OR entity_id=?", p![id, id])?;
         db.exec("DELETE FROM projects WHERE id=?", p![id])?;
         Ok(())
     })?;
-    let mut deleted = false;
-    if r.s("mode") == "managed" && delete_managed_files && root.starts_with(v.managed_root()) && root != v.managed_root() {
-        std::fs::remove_dir_all(&root).map_err(|e| format!("Project removed, but its managed folder could not be deleted: {e}"))?;
-        deleted = true;
-    }
     Ok(Json::obj().with("removed", true).with("filesDeleted", deleted))
 }
 
@@ -592,6 +600,28 @@ mod tests {
         assert!(thumbnail_candidates(&v, &id).unwrap().as_arr().unwrap().len() == 2);
         let pj = get(&v, &id).unwrap();
         assert!(pj.str_of("lastFile").is_some());
+    }
+
+    #[test]
+    fn remove_can_delete_managed_folder_only() {
+        let (t, v) = vault();
+        let keep = create(&v, NewProject { name: "Keep".into(), description: "".into(), category: "game".into(), status: "".into(), link_path: None, module: Json::obj() }).unwrap();
+        let gone = create(&v, NewProject { name: "Gone".into(), description: "".into(), category: "game".into(), status: "".into(), link_path: None, module: Json::obj() }).unwrap();
+        let keep_root = PathBuf::from(keep.str_of("rootPath").unwrap());
+        let gone_root = PathBuf::from(gone.str_of("rootPath").unwrap());
+        std::fs::write(gone_root.join("a.txt"), "x").unwrap();
+        let r = remove(&v, &keep.str_of("id").unwrap(), false).unwrap();
+        assert_eq!(r.get("filesDeleted").unwrap().as_bool(), Some(false));
+        assert!(keep_root.exists(), "folder kept unless asked");
+        let r = remove(&v, &gone.str_of("id").unwrap(), true).unwrap();
+        assert_eq!(r.get("filesDeleted").unwrap().as_bool(), Some(true));
+        assert!(!gone_root.exists());
+        // a linked folder is never deleted, even when asked
+        let d = t.path().join("mine");
+        std::fs::create_dir_all(&d).unwrap();
+        let l = create(&v, NewProject { name: "L".into(), description: "".into(), category: "game".into(), status: "".into(), link_path: Some(d.clone()), module: Json::obj() }).unwrap();
+        remove(&v, &l.str_of("id").unwrap(), true).unwrap();
+        assert!(d.exists());
     }
 
     #[test]

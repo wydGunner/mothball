@@ -1316,16 +1316,13 @@ pub fn rename(v: &Vault, file_id: &str, new_name: &str) -> DbResult<Json> {
 }
 
 #[cfg(windows)]
-fn to_recycle_bin(path: &Path) -> Result<(), String> {
+pub(crate) fn to_recycle_bin(path: &Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
+    let method = if path.is_dir() { "DeleteDirectory" } else { "DeleteFile" };
     // Path goes through an environment variable, never into the script text.
+    let script = format!("Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::{method}($env:PV_TARGET, 'OnlyErrorDialogs', 'SendToRecycleBin')");
     let out = std::process::Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($env:PV_TARGET, 'OnlyErrorDialogs', 'SendToRecycleBin')",
-        ])
+        .args(["-NoProfile", "-NonInteractive", "-Command", script.as_str()])
         .env("PV_TARGET", path)
         .creation_flags(0x0800_0000)
         .output()
@@ -1337,9 +1334,9 @@ fn to_recycle_bin(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn to_recycle_bin(path: &Path) -> Result<(), String> {
-    // No system trash here; a verified copy is already in the version store.
-    std::fs::remove_file(path).map_err(|e| e.to_string())
+pub(crate) fn to_recycle_bin(path: &Path) -> Result<(), String> {
+    // No system trash here (tests and the dev server only).
+    if path.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) }.map_err(|e| e.to_string())
 }
 
 /// Deletes files: keeps a verified copy in the version store, then moves the

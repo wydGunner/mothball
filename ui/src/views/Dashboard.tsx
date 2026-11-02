@@ -85,6 +85,26 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
 
   const setMode2 = (m: 'grid' | 'list') => { setMode(m); localStorage.setItem('pv.dash', m); };
   const toggleFav = async (p: Project) => { await act(() => call('projects.update', { id: p.id, patch: { favorite: !p.favorite } })); nav.refreshProjects(); };
+  const removeProject = async (p: Project) => {
+    let deleteFiles = false;
+    const managed = p.mode === 'managed';
+    const ok = await confirm({
+      title: `Remove “${p.name}”?`, danger: true, confirm: 'Remove project',
+      body: managed
+        ? <>The project, its notes, file documentation and tasks are removed from Project Vault. Its files are stored by the app at <span className="mono">{p.rootPath}</span>.</>
+        : <>The project, its notes, file documentation and tasks are removed from Project Vault. <b>Your folder {p.rootPath} is not touched.</b> Make a backup first if you may want this metadata back.</>,
+      checkbox: managed ? {
+        label: 'Also delete the project’s files',
+        hint: 'The folder goes to the Recycle Bin. Leave this off to keep the files on disk.',
+        confirmChecked: 'Remove and delete files',
+        onChange: (on) => { deleteFiles = on; },
+      } : undefined,
+    });
+    if (!ok) return;
+    await act(() => call('projects.remove', { id: p.id, deleteManagedFiles: deleteFiles }),
+      deleteFiles ? 'Project removed; its folder was moved to the Recycle Bin' : 'Project removed');
+    nav.refreshProjects();
+  };
   const ctx = (e: React.MouseEvent, p: Project) => menu(e, [
     { label: 'Open', icon: <LuFolderOpen />, onClick: () => nav.go({ view: 'project', id: p.id }) },
     { label: p.favorite ? 'Remove from favorites' : 'Add to favorites', icon: <LuStar />, onClick: () => toggleFav(p) },
@@ -94,13 +114,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
     { label: 'Show folder in Explorer', icon: <LuHardDrive />, onClick: () => act(() => revealPath(p.rootPath)), disabled: !isTauri },
     { label: 'Project notes', onClick: () => nav.go({ view: 'project', id: p.id, tab: 'notes' }) },
     { sep: true, label: '' },
-    { label: 'Remove from vault…', danger: true, onClick: async () => {
-      const ok = await confirm({ title: `Remove “${p.name}”?`, danger: true, confirm: 'Remove project',
-        body: p.mode === 'linked'
-          ? <>The project, its notes, file documentation and tasks are removed from Project Vault. <b>Your folder {p.rootPath} is not touched.</b> Make a backup first if you may want this metadata back.</>
-          : <>The project is removed from Project Vault. Its managed folder is <b>kept</b> on disk at {p.rootPath}; delete it yourself if you no longer need it.</> });
-      if (ok) { await act(() => call('projects.remove', { id: p.id, deleteManagedFiles: false }), 'Project removed'); nav.refreshProjects(); }
-    } },
+    { label: 'Remove from vault…', danger: true, onClick: () => removeProject(p) },
   ]);
 
   if (!nav.projects.length) {

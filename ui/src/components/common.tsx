@@ -89,22 +89,35 @@ export function Modal({ title, onClose, children, footer, wide }: { title: React
   );
 }
 
-/** Promise-based confirmation dialog. */
-const ConfirmCtx = createContext<(o: { title: string; body: ReactNode; confirm?: string; danger?: boolean }) => Promise<boolean>>(async () => false);
+/** Promise-based confirmation dialog. An optional checkbox reports its
+ *  final state through `checkbox.onChange` before the promise resolves. */
+type ConfirmOpts = {
+  title: string; body: ReactNode; confirm?: string; danger?: boolean;
+  checkbox?: { label: ReactNode; hint?: ReactNode; confirmChecked?: string; onChange: (on: boolean) => void };
+};
+const ConfirmCtx = createContext<(o: ConfirmOpts) => Promise<boolean>>(async () => false);
 export const useConfirm = () => useContext(ConfirmCtx);
 export function ConfirmProvider({ children }: { children: ReactNode }) {
-  const [req, setReq] = useState<null | { title: string; body: ReactNode; confirm?: string; danger?: boolean; resolve: (b: boolean) => void }>(null);
-  const ask = useCallback((o: any) => new Promise<boolean>((resolve) => setReq({ ...o, resolve })), []);
-  const done = (b: boolean) => { req?.resolve(b); setReq(null); };
+  const [req, setReq] = useState<null | (ConfirmOpts & { resolve: (b: boolean) => void })>(null);
+  const [checked, setChecked] = useState(false);
+  const ask = useCallback((o: ConfirmOpts) => new Promise<boolean>((resolve) => { setChecked(false); setReq({ ...o, resolve }); }), []);
+  const done = (b: boolean) => { req?.checkbox?.onChange(b && checked); req?.resolve(b); setReq(null); };
+  const label = (checked && req?.checkbox?.confirmChecked) || req?.confirm || 'Confirm';
   return (
     <ConfirmCtx.Provider value={ask}>
       {children}
       {req && (
         <Modal title={req.title} onClose={() => done(false)} footer={<>
           <button className="btn" onClick={() => done(false)}>Cancel</button>
-          <button className={cx('btn', req.danger ? 'danger' : 'primary')} autoFocus onClick={() => done(true)}>{req.confirm || 'Confirm'}</button>
+          <button className={cx('btn', req.danger ? 'danger' : 'primary')} autoFocus onClick={() => done(true)}>{label}</button>
         </>}>
           <div className="muted">{req.body}</div>
+          {req.checkbox && (
+            <label className={cx('confirm-check', checked && 'on')}>
+              <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
+              <span><span className="cc-label">{req.checkbox.label}</span>{req.checkbox.hint && <span className="cc-hint">{req.checkbox.hint}</span>}</span>
+            </label>
+          )}
         </Modal>
       )}
     </ConfirmCtx.Provider>

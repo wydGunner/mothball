@@ -67,7 +67,8 @@ code, pre, .mono { font-family: var(--mono); font-size: 12px; }
 .btn:disabled { opacity: .5; cursor: default; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
 .btn.primary:hover { filter: brightness(1.1); }
-.btn.danger { color: var(--bad); }
+.btn.danger { color: color-mix(in srgb, var(--bad) 55%, var(--fg0)); background: var(--bad-bg); border-color: color-mix(in srgb, var(--bad) 45%, transparent); font-weight: 600; }
+.btn.danger:hover { background: color-mix(in srgb, var(--bad) 24%, transparent); }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--fg1); }
 .btn.ghost:hover { background: var(--bg3); color: var(--fg0); }
 .btn.sm { height: 24px; padding: 2px 8px; font-size: 12px; }
@@ -550,3 +551,10 @@ input[type=checkbox] { accent-color: var(--accent); }
 .winctl button:hover { background: #ffffff14; color: var(--fg0); }
 .winctl button.close:hover { background: #c42b1c; color: #fff; }
 .topbar:has(.winctl) > .searchbox { margin-right: 6px; }
+
+/* checkbox inside a confirmation dialog */
+.confirm-check { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; padding: 10px 12px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--bg2); cursor: pointer; }
+.confirm-check input { margin-top: 2px; accent-color: var(--accent3); }
+.confirm-check.on { border-color: color-mix(in srgb, var(--bad) 50%, transparent); background: var(--bad-bg); }
+.confirm-check .cc-label { display: block; color: var(--fg0); font-weight: 600; }
+.confirm-check .cc-hint { display: block; color: var(--fg2); font-size: 12px; margin-top: 2px; }
