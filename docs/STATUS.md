@@ -26,9 +26,10 @@ or not yet verified on Windows · ⛔ not implemented yet
   backup, staging/cancelling a database restore, scheduled backups, the 3D
   preview (WebGL) on a generated test model, the GSC function list, F12
   go-to-definition and `@function` search.
-* **Verified by you on Windows:** the app builds and runs (Nov 1).
+* **Verified by you on Windows:** the app builds and runs (Nov 1); the v0.2.0 release installer installs (Nov 2).
+* **Verified in CI (Linux):** `tsc` type-checking and the full UI test with the Monaco editor build (the built-in fallback editor is covered by local runs).
 * **Still unverified on Windows (added Nov 1 evening):** the background watcher thread in the desktop shell (its exact code was type-checked against vault-core, but the shell itself can't be built here), folder-to-Recycle-Bin when removing a managed project, Launch (starting a game .exe detached), deploying into Program Files (may need the folder to be writable), and Monaco hover/go-to-definition for Lua.
-* **Still unverified on Windows:** the Monaco diff editor (the tests here use the built-in diff fallback), the Recycle Bin path for Delete / Undo import / Move to another project, the folder picker for backup storage, Explorer “reveal”, the new GitHub panel's sign-in flow, OneDrive online-only file detection, the import picker's type filters, and `tsc` type-checking. Previously unverified: the Tauri shell (`src-tauri/`) and the Windows
+* **Still unverified on Windows:** the Recycle Bin path for Delete / Undo import / Move to another project, the folder picker for backup storage, Explorer “reveal”, the new GitHub panel's sign-in flow, OneDrive online-only file detection, the import picker's type filters. Previously unverified: the Tauri shell (`src-tauri/`) and the Windows
   installer have not been compiled, and `tsc` type-checking has not run. The
   build environment had no access to crates.io or the npm registry. The first
   `npm install` + `npm run dev` on Windows (or the CI workflow) is the first
@@ -90,5 +91,5 @@ or not yet verified on Windows · ⛔ not implemented yet
 | GSC / CSC scripting | ✅ | syntax highlighting (Monaco), function index per project (refreshed by content hash), F12 / Ctrl+click go to definition (honours `path::function`), hover shows signature + location (Monaco), per-file function list with #include links and “Uses” (call sites), `@name` function search in Ctrl+K. 🟡 the Monaco parts (highlighting, Ctrl+click, hover) are untested here — the tests use the plain editor, where F12 works |
 | 3MF print info | ✅ | own ZIP/inflate reader: printer, process, layer height, nozzle, infill, walls, supports, plate, filaments (type/colour), sliced plates (time, grams), slicer's plate thumbnail, title/designer/description — Bambu Studio, OrcaSlicer and PrusaSlicer formats; “Fill empty fields from a .3mf” in a print project's details. Checked against a real Bambu X2D project |
 | Multiple projects open as tabs | ⛔ | one project at a time with tabbed sections |
-| OS file watcher | ⛔ | polling chosen deliberately (no handles held on project folders); a watcher can be added on top |
+| Background change watcher | ✅ | polls with a fingerprint per project (no handles held on project folders); also catches changes made while the app was closed |
 | Installer | 🟡 | NSIS + MSI config, icons; built by CI, not yet run |
