@@ -637,3 +637,20 @@ input[type=checkbox] { accent-color: var(--accent); }
 .ds-empty { display: flex; align-items: center; gap: 8px; padding: 8px; color: var(--fg2); font-size: 13px; }
 .ds-empty svg { color: var(--accent); flex: none; }
 @media (max-width: 1000px) { .dash-sum { grid-template-columns: 1fr; } }
+
+/* editor tabs */
+.edtabs { display: flex; align-items: stretch; gap: 0; border-bottom: 1px solid var(--line); background: var(--bg1); overflow-x: auto; flex: none; scrollbar-width: thin; }
+.edtab { display: inline-flex; align-items: center; gap: 6px; padding: 0 6px 0 12px; height: 32px; max-width: 220px; border: 0; border-right: 1px solid var(--line); background: none; color: var(--fg2); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap; position: relative; }
+.edtab > span:first-of-type { overflow: hidden; text-overflow: ellipsis; }
+.edtab:hover { color: var(--fg0); background: var(--bg2); }
+.edtab.on { color: var(--fg0); background: var(--bg0); }
+.edtab.on::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--accent); }
+.edtab.info { padding-right: 12px; font-style: italic; }
+.edtab.info svg { color: var(--fg3); flex: none; }
+.edtab-x { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: 4px; background: none; color: var(--fg3); cursor: pointer; opacity: 0; flex: none; }
+.edtab:hover .edtab-x, .edtab.on .edtab-x, .edtab-x:focus-visible { opacity: 1; }
+.edtab-x:hover { background: var(--bg4); color: var(--fg0); }
+.edslot { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pane.filepane { display: flex; flex-direction: column; overflow: hidden; }
+.panescroll { flex: 1; min-height: 0; overflow: auto; }
+.edslot > .editor-pane { height: auto; flex: 1; min-height: 0; }

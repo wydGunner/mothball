@@ -261,9 +261,44 @@ await step('Edit a file in the built-in editor', async () => {
   await page.getByText('File changed on disk').waitFor();
   await page.locator('.modal').getByRole('button', { name: 'Cancel' }).click();
   if (!readFileSync(join(omen, 'scripts/mp/_util.gsc'), 'utf8').includes('// external')) throw new Error('external change was overwritten');
-  page.once('dialog', (d) => d.accept());
-  await page.locator('[title="Back to file notes"], [data-tip="Back to file notes"]').click();
+  // closing a tab with unsaved changes asks first
+  const tab = page.locator('.edtab').filter({ hasText: '_util.gsc' });
+  let asked = '';
+  page.once('dialog', (d) => { asked = d.message(); d.accept(); });
+  await tab.locator('.edtab-x').click();
+  await tab.waitFor({ state: 'detached' });
+  if (!/Discard unsaved changes/.test(asked)) throw new Error('no discard prompt: ' + asked);
   await page.getByRole('button', { name: /^Backups & versions/ }).waitFor();
+});
+
+await step('Editor tabs keep unsaved edits while switching files', async () => {
+  await page.locator('.filerow').filter({ hasText: '_util.gsc' }).click();
+  await page.getByRole('button', { name: 'Edit file' }).click();
+  await page.locator('.edtab.on').filter({ hasText: '_util.gsc' }).waitFor();
+  await page.locator('.edslot:visible .pv-editor textarea').first().focus();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type('// tab test');
+  await page.locator('.edtab').filter({ hasText: '_util.gsc' }).locator('.dirty-dot').waitFor();
+  // open a second file in its own tab
+  const other = page.locator('.filerow').filter({ hasText: '.gsc' }).filter({ hasNotText: '_util.gsc' }).first();
+  await other.click();
+  await page.getByRole('button', { name: 'Edit file' }).click();
+  await page.locator('.edtab').nth(1).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-editor-tabs.png') });
+  // other project tab and back: the unsaved edit is still there
+  await page.getByRole('tab', { name: /Overview/ }).click();
+  await page.getByRole('tab', { name: /Files/ }).click();
+  await page.locator('.edtab').filter({ hasText: '_util.gsc' }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.edslot')].some((e) => e.style.display !== 'none' && ((e.textContent || '').includes('tab test') || [...e.querySelectorAll('textarea')].some((t) => t.value.includes('tab test')))));
+  // leaving the project asks about unsaved changes; cancel stays
+  page.once('dialog', (d) => d.dismiss());
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  await page.locator('.edtab').filter({ hasText: '_util.gsc' }).waitFor();
+  // close both tabs (discarding)
+  page.once('dialog', (d) => d.accept());
+  await page.locator('.edtab').filter({ hasText: '_util.gsc' }).locator('.edtab-x').click();
+  await page.locator('.edtab .edtab-x').first().click();
+  await page.locator('.edtab').first().waitFor({ state: 'detached' }).catch(() => {});
 });
 
 await step('Timeline: expand an edit to see what changed', async () => {
@@ -745,8 +780,9 @@ await step('GSC: functions list, go to definition, function search', async () =>
   await page.keyboard.press('F12');
   await page.locator('.editor-pane .panehead b').filter({ hasText: '_util.gsc' }).waitFor();
   // uses of util() are listed from the defining file
-  page.once('dialog', (d) => d.accept());
-  await page.locator('[title="Back to file notes"], [data-tip="Back to file notes"]').click();
+  // go-to-definition opened _util.gsc in a second tab
+  await page.locator('.edtab').filter({ hasText: '_hud.gsc' }).waitFor();
+  await page.locator('.edslot:visible').locator('[title="Back to file notes"], [data-tip="Back to file notes"]').click();
   const o2 = page.locator('.docsec').filter({ hasText: 'Functions' });
   await o2.locator('.symrow').filter({ hasText: 'util()' }).getByRole('button', { name: 'Uses' }).click();
   await o2.locator('.refrow').filter({ hasText: '_hud.gsc:5' }).waitFor();
@@ -755,8 +791,8 @@ await step('GSC: functions list, go to definition, function search', async () =>
   await page.locator('.palette input').fill('@util');
   await page.locator('.palette .item').filter({ hasText: 'util()' }).first().click();
   await page.locator('.editor-pane .panehead b').filter({ hasText: '_util.gsc' }).waitFor();
-  page.once('dialog', (d) => d.accept());
-  await page.locator('[title="Back to file notes"], [data-tip="Back to file notes"]').click();
+  // close every editor tab (nothing unsaved)
+  while (await page.locator('.edtab .edtab-x').count()) await page.locator('.edtab .edtab-x').first().click();
 });
 
 await step('Files: group the list by folder', async () => {

@@ -5,8 +5,9 @@ import { ModelViewer } from '../components/ModelViewer';
 import { useFileActions, TEXT_EDITABLE, type FileRef } from '../fileActions';
 import {
   LuFolder, LuFolderOpen, LuChevronRight, LuChevronDown, LuSearch, LuExternalLink, LuFolderSearch, LuCopy, LuTriangleAlert,
-  LuUpload, LuEye, LuFilter, LuCode, LuSave, LuArrowLeft, LuMaximize2, LuMinimize2, LuTrash2, LuArchiveRestore, LuEllipsis, LuShieldCheck, LuPencil, LuLink2, LuX, LuHistory, LuGitCommitHorizontal, LuFileQuestion, LuCopyCheck, LuCircleCheck, LuPlus, LuImage,
+  LuUpload, LuEye, LuFilter, LuCode, LuSave, LuArrowLeft, LuMaximize2, LuMinimize2, LuTrash2, LuArchiveRestore, LuEllipsis, LuShieldCheck, LuPencil, LuLink2, LuX, LuHistory, LuGitCommitHorizontal, LuFileQuestion, LuCopyCheck, LuCircleCheck, LuPlus, LuImage, LuInfo,
 } from 'react-icons/lu';
+import { forgetEditor, markDirty } from '../unsaved';
 import { call, isTauri, openPath, pickFiles, revealPath, type FileDetail, type FileDocs, type VFile } from '../ipc';
 import { Dropdown, Empty, KindIcon, useConfirm, Markdown, SaveState, TagInput, useAction, useAutosave, useContextMenu, useLoad, useResizable, useToast } from '../components/common';
 import { ago, bytes, cx, dateTime } from '../format';
@@ -58,18 +59,42 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
     return g ? g.exts : null;
   }, [group, groups.data]);
   const [selected, setSelectedRaw] = useState<string | null>(ctx.focus?.type === 'file' ? ctx.focus.id : null);
-  const [editing, setEditing] = useState<string | null>(null);
+  // Editor tabs: every open editor stays mounted (hidden when not active), so
+  // switching files never loses unsaved changes. `editing` is the active tab,
+  // or null when the selected file's notes panel is showing.
+  const [tabs, setTabs] = useState<{ id: string; name: string }[]>([]);
+  const [editing, setEditingRaw] = useState<string | null>(null);
+  const [dirtyTabs, setDirtyTabs] = useState<Set<string>>(new Set());
+  const openEditor = (id: string | null, name?: string) => {
+    if (id) {
+      setTabs((t) => {
+        if (t.some((x) => x.id === id)) return t;
+        const n = [...t, { id, name: name || files.data?.find((f) => f.id === id)?.name || '…' }];
+        // keep at most 8 tabs: drop the oldest one without unsaved changes
+        if (n.length > 8) { const i = n.findIndex((x) => x.id !== id && !dirtyTabs.has(x.id)); if (i >= 0) { forgetEditor(n[i].id); n.splice(i, 1); } }
+        return n;
+      });
+      setSelectedRaw(id);
+    }
+    setEditingRaw(id);
+  };
+  const setEditing = (id: string | null) => openEditor(id);
+  const closeTab = (id: string) => {
+    if (dirtyTabs.has(id) && !window.confirm(`Discard unsaved changes in ${tabs.find((t) => t.id === id)?.name || 'this file'}?`)) return;
+    forgetEditor(id);
+    setDirtyTabs((d) => { const n = new Set(d); n.delete(id); return n; });
+    setTabs((t) => t.filter((x) => x.id !== id));
+    if (editing === id) setEditingRaw(null);
+  };
+  useEffect(() => () => { tabs.forEach((t) => forgetEditor(t.id)); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { ctx.keepFilesAlive(tabs.length > 0); /* eslint-disable-next-line */ }, [tabs.length]);
   const [importing, setImporting] = useState<string[] | null>(null);
   const [wide, setWide] = useState(() => localStorage.getItem('pv.editorWide') === '1');
   const toggleWide = () => setWide((w) => { localStorage.setItem('pv.editorWide', w ? '0' : '1'); return !w; });
   const full = wide && !!editing;
-  const dirtyRef = useRef(false);
-  const confirmLeave = () => !dirtyRef.current || window.confirm('You have unsaved changes in the editor. Discard them?');
   const setSelected = (id: string | null) => {
-    if (id === selected) return;
-    if (editing && !confirmLeave()) return;
-    dirtyRef.current = false;
-    setEditing(null);
+    if (id === selected && !editing) return;
+    setEditingRaw(null);
     setSelectedRaw(id);
   };
   const [multi, setMulti] = useState<Set<string>>(new Set());
@@ -85,25 +110,22 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   // hide the file, opens its folder, selects it, and scrolls it into view.
   const pendingReveal = useRef<string | null>(null);
   const [highlightV, setHighlightV] = useState<string | undefined>(undefined);
-  const [gotoLine, setGotoLine] = useState<{ line: number; nonce: number } | undefined>(undefined);
+  const [gotoLine, setGotoLine] = useState<{ line: number; nonce: number; fileId: string } | undefined>(undefined);
   useEffect(() => {
     const fc = ctx.focus;
     if (fc?.type === 'folder') {
-      if (editing && !confirmLeave()) return;
-      setQuery(''); setKind(''); setGroup('all'); setShow('all'); setDir(fc.id); setSelectedRaw(null); setEditing(null); setHighlightV(undefined);
+      setQuery(''); setKind(''); setGroup('all'); setShow('all'); setDir(fc.id); setSelectedRaw(null); setEditingRaw(null); setHighlightV(undefined);
       return;
     }
     if (fc?.type !== 'file' || !fc.id) return;
-    if (editing && editing !== fc.id && !confirmLeave()) return;
-    dirtyRef.current = false;
     call<FileDetail>('files.get', { id: fc.id }).then((f) => {
       const parent = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
       setQuery(''); setKind(''); setGroup('all');
       setShow(f.state === 'deleted' ? 'deleted' : f.state === 'missing' ? 'missing' : 'all');
       setDir(fc.action === 'reveal' ? parent : '');
       setSelectedRaw(f.id);
-      setEditing(fc.action === 'edit' && f.state === 'present' ? f.id : null);
-      if (fc.action === 'edit' && fc.line) setGotoLine({ line: fc.line, nonce: Date.now() });
+      if (fc.action === 'edit' && f.state === 'present') openEditor(f.id, f.name); else setEditingRaw(null);
+      if (fc.action === 'edit' && fc.line) setGotoLine({ line: fc.line, nonce: Date.now(), fileId: f.id });
       setHighlightV(fc.action === 'history' ? fc.versionId || '' : undefined);
       pendingReveal.current = f.id;
     }).catch(() => setSelectedRaw(fc.id));
@@ -189,8 +211,8 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
     try { abs = (await call<FileDetail>('files.get', { id: f.id })).absPath; } catch { /* project root unreachable */ }
     menu(pos, fileActions.menuItems(toRef(f, abs), {
       selection: sel.map((x) => toRef(x)),
-      onEdit: () => { setSelected(f.id); setEditing(f.id); },
-      onHistory: () => { setEditing(null); setSelected(f.id); setHighlightV(''); setTimeout(() => setHighlightV(undefined), 400); },
+      onEdit: () => openEditor(f.id, f.name),
+      onHistory: () => { setEditingRaw(null); setSelectedRaw(f.id); setHighlightV(''); setTimeout(() => setHighlightV(undefined), 400); },
       onChanged: () => { files.reload(); dirs.reload(); ctx.reload(); },
       extra: [
         { label: sel.length > 1 ? `Mark ${sel.length} files reviewed` : 'Mark reviewed', icon: <LuCircleCheck />, onClick: async () => { await act(() => call('files.markReviewed', { ids: sel.map((x) => x.id) })); files.reload(); ctx.reload(); } },
@@ -212,7 +234,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
       const r = (document.querySelector('.filerow.sel') as HTMLElement | null)?.getBoundingClientRect();
       fileMenu({ clientX: (r?.left ?? 200) + 60, clientY: r?.bottom ?? 200, preventDefault() {} }, list[i]);
     }
-    if (e.key === 'Enter' && i >= 0 && canEdit(list[i]) && !editing) { e.preventDefault(); setEditing(list[i].id); }
+    if (e.key === 'Enter' && i >= 0 && canEdit(list[i]) && !editing) { e.preventDefault(); openEditor(list[i].id, list[i].name); }
   };
 
   const renderDir = (n: DirNode, depth: number): React.ReactNode => {
@@ -286,12 +308,36 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
         </div>
       </div>
       {!full && listW.handle}
-      <div className="pane grow">
-        {selected && editing === selected ? <EditorPane key={'ed' + selected} fileId={selected} ctx={ctx} gotoLine={gotoLine}
-            onDirty={(d) => { dirtyRef.current = d; }} wide={full} onToggleWide={toggleWide}
-            onClose={() => { if (confirmLeave()) { dirtyRef.current = false; setEditing(null); } }}
-            onSaved={() => { files.reload(); ctx.reload(); }} />
-          : selected ? <FileDetailPanel key={selected} fileId={selected} ctx={ctx} highlightVersion={highlightV} onEdit={() => setEditing(selected)} onChanged={() => { files.reload(); ctx.reload(); }} />
+      <div className="pane grow filepane">
+        {(tabs.length > 0) && (
+          <div className="edtabs" role="tablist" aria-label="Open files">
+            {selected && (!editing || !tabs.some((t) => t.id === selected)) && (
+              <button role="tab" aria-selected={!editing} className={cx('edtab', 'info', !editing && 'on')} onClick={() => setEditingRaw(null)} title="Notes and details of the selected file">
+                <LuInfo /><span>{files.data?.find((f) => f.id === selected)?.name || 'File'}</span>
+              </button>
+            )}
+            {tabs.map((t) => (
+              <div key={t.id} role="tab" aria-selected={editing === t.id} className={cx('edtab', editing === t.id && 'on')} title={t.name}
+                onClick={() => openEditor(t.id)} onAuxClick={(e) => { if (e.button === 1) closeTab(t.id); }}>
+                <span>{t.name}</span>
+                {dirtyTabs.has(t.id) ? <span className="dirty-dot" title="Unsaved changes" /> : null}
+                <button className="edtab-x" aria-label={`Close ${t.name}`} title="Close" onClick={(e) => { e.stopPropagation(); closeTab(t.id); }}><LuX /></button>
+              </div>
+            ))}
+          </div>
+        )}
+        {tabs.map((t) => (
+          <div key={'ed' + t.id} className="edslot" style={{ display: editing === t.id ? undefined : 'none' }}>
+            <EditorPane fileId={t.id} ctx={ctx} gotoLine={gotoLine?.fileId === t.id ? gotoLine : undefined}
+              onDirty={(d) => { markDirty(t.id, t.name, d); setDirtyTabs((s0) => { if (s0.has(t.id) === d) return s0; const n = new Set(s0); if (d) n.add(t.id); else n.delete(t.id); return n; }); }}
+              wide={full} onToggleWide={toggleWide}
+              onClose={() => closeTab(t.id)}
+              onDetails={() => { setEditingRaw(null); setSelectedRaw(t.id); }}
+              onSaved={() => { files.reload(); ctx.reload(); }} />
+          </div>
+        ))}
+        {editing ? null
+          : selected ? <div className="panescroll"><FileDetailPanel key={selected} fileId={selected} ctx={ctx} highlightVersion={highlightV} onEdit={() => openEditor(selected)} onChanged={() => { files.reload(); ctx.reload(); }} /></div>
           : <Empty icon={<LuPencil />} title="Select a file">Pick a file to see what it does, add notes and warnings, link related scripts, notes and bugs, and browse its history.</Empty>}
       </div>
     </div>
@@ -678,7 +724,7 @@ function FileHistory({ f, ctx, highlight }: { f: FileDetail; ctx: ProjectCtx; hi
 
 const SCRIPT_EXTS = new Set(['gsc', 'csc', 'gsh', 'lua']);
 
-function EditorPane({ fileId, ctx, onClose, onSaved, onDirty, wide, onToggleWide, gotoLine }: { fileId: string; ctx: ProjectCtx; onClose: () => void; onSaved: () => void; onDirty: (d: boolean) => void; wide: boolean; onToggleWide: () => void; gotoLine?: { line: number; nonce: number } }) {
+function EditorPane({ fileId, ctx, onClose, onDetails, onSaved, onDirty, wide, onToggleWide, gotoLine }: { fileId: string; ctx: ProjectCtx; onClose: () => void; onDetails: () => void; onSaved: () => void; onDirty: (d: boolean) => void; wide: boolean; onToggleWide: () => void; gotoLine?: { line: number; nonce: number } }) {
   const doc = useLoad(() => call<any>('files.readText', { id: fileId }), [fileId]);
   const info = useLoad(() => call<FileDetail>('files.get', { id: fileId }), [fileId]);
   const [text, setText] = useState<string | null>(null);
@@ -779,7 +825,7 @@ function EditorPane({ fileId, ctx, onClose, onSaved, onDirty, wide, onToggleWide
   return (
     <div className="editor-pane">
       <div className="panehead">
-        <button className="btn ghost sm" onClick={onClose} title="Back to file notes"><LuArrowLeft /></button>
+        <button className="btn ghost sm" onClick={onDetails} title="Back to file notes"><LuArrowLeft /></button>
         <div className="grow" style={{ minWidth: 110 }}>
           <div className="row" style={{ gap: 6 }}><b>{info.data?.name || doc.data.path.split('/').pop()}</b>{dirty && <span className="dirty-dot" title="Unsaved changes" />}{doc.data.readonly && <span className="badge">read-only</span>}</div>
           <div className="small dim mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.data.path} · {doc.data.eol.toUpperCase()}{doc.data.bom ? ' · BOM' : ''}</div>

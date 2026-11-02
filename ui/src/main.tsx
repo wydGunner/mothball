@@ -7,6 +7,7 @@ import { Dashboard, NewProjectDialog } from './views/Dashboard';
 import { ProjectView, type Tab } from './views/Project';
 import { SearchView } from './views/Search';
 import { SettingsView } from './views/Settings';
+import { confirmDiscardAll } from './unsaved';
 import { CommandPalette } from './views/Palette';
 import { cx } from './format';
 import { checkForUpdate, type AvailableUpdate } from './updater';
@@ -74,8 +75,26 @@ function App() {
   useEffect(refreshProjects, [refreshProjects]);
   useEffect(() => { try { localStorage.setItem('pv.sidebar', collapsed ? '1' : '0'); } catch { /* ignore */ } }, [collapsed]);
 
-  const go = useCallback((r: Route) => { setRoute((cur) => { setHistory((h) => [...h.slice(-30), cur]); return r; }); }, []);
-  const back = useCallback(() => setHistory((h) => { if (h.length) setRoute(h[h.length - 1]); return h.slice(0, -1); }), []);
+  const routeRef = useRef(route);
+  routeRef.current = route;
+  const go = useCallback((r: Route) => {
+    const cur = routeRef.current;
+    // leaving a project closes its editors: ask if any have unsaved changes
+    const leaving = cur.view === 'project' && (r.view !== 'project' || (r as any).id !== (cur as any).id);
+    if (leaving && !confirmDiscardAll()) return;
+    setHistory((h) => [...h.slice(-30), cur]);
+    setRoute(r);
+  }, []);
+  const historyRef = useRef<Route[]>([]);
+  historyRef.current = history;
+  const back = useCallback(() => {
+    const h = historyRef.current;
+    if (!h.length) return;
+    const prev = h[h.length - 1], cur = routeRef.current;
+    if (cur.view === 'project' && (prev.view !== 'project' || (prev as any).id !== (cur as any).id) && !confirmDiscardAll()) return;
+    setRoute(prev);
+    setHistory(h.slice(0, -1));
+  }, []);
   const nav: Nav = useMemo(() => ({ go, refreshProjects, projects }), [go, refreshProjects, projects]);
 
   useEffect(() => {

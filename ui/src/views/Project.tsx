@@ -29,6 +29,7 @@ const TABS: { id: Tab; label: string; icon: ReactElement }[] = [
 const AUTO_SCAN_MS = 60_000;
 
 export interface ProjectCtx {
+  keepFilesAlive: (b: boolean) => void;
   project: Project;
   reload: () => Promise<void>;
   scan: (quiet?: boolean) => Promise<ScanReport | undefined>;
@@ -47,6 +48,8 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
   const [project, setProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>(initialTab || 'overview');
+  // the Files tab stays mounted while it has open editors, so unsaved edits survive tab switches
+  const [filesVisited, setFilesVisited] = useState(false);
   const [focus, setFocus] = useState(initialFocus);
   const [scanning, setScanning] = useState(false);
   const [scanTick, setScanTick] = useState(0);
@@ -137,6 +140,7 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
     openFiles: (g) => { setFocus(undefined); setFileGroup(g || 'all'); setTab('files'); },
     openTimeline: () => setTab('timeline'),
     fileGroup,
+    keepFilesAlive: setFilesVisited,
   };
 
   return (
@@ -167,7 +171,7 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
         {TABS.map((t, i) => (
           <button key={t.id} role="tab" className={cx(tab === t.id && 'on')} onClick={() => setTab(t.id)} title={`Alt+${i + 1}`}>
             {t.icon}{t.label}
-            {t.id === 'files' && (project.changedFiles + project.pendingReviews > 0) && <span className="badge warn">{project.changedFiles + project.pendingReviews}</span>}
+            {t.id === 'files' && (project.missingFiles + project.pendingReviews + (project.staleDocs || 0) > 0) && <span className="badge warn" title="Missing files, file matches to confirm, or notes that may be out of date">{project.missingFiles + project.pendingReviews + (project.staleDocs || 0)}</span>}
             {t.id === 'tasks' && project.openTasks > 0 && <span className="badge">{project.openTasks}</span>}
           </button>
         ))}
@@ -175,7 +179,8 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
       <FirstTips />
       <div style={{ flex: 1, minHeight: 0, overflow: tab === 'files' || tab === 'notes' ? 'hidden' : 'auto' }}>
         {tab === 'overview' && <Overview ctx={ctx} />}
-        {tab === 'files' && <FilesTab ctx={ctx} />}
+        {/* stays mounted while it has open editors */}
+        {(tab === 'files' || filesVisited) && <div style={{ display: tab === 'files' ? 'contents' : 'none' }}><FilesTab ctx={ctx} /></div>}
         {tab === 'notes' && <NotesTab ctx={ctx} />}
         {tab === 'tasks' && <TasksTab ctx={ctx} />}
         {tab === 'timeline' && <TimelineTab ctx={ctx} />}
