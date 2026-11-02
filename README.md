@@ -72,3 +72,19 @@ ui/                  React + TypeScript UI (esbuild)
 scripts/             end-to-end UI test
 docs/                architecture, status, recovery
 ```
+
+## License
+
+Copyright (C) 2026 wheresmeep
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. It is distributed WITHOUT ANY WARRANTY; see [LICENSE](LICENSE) for the
+full text.
+
+In short: you may use, share and change it for free. If you distribute a
+modified version, it must stay under the GPL with its full source code.
+
+The app's name and logo are not covered by this license; please don't
+distribute modified versions under the same name.

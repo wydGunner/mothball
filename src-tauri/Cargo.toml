@@ -3,7 +3,7 @@ name = "project-vault"
 version = "0.2.0"
 description = "Project Vault — local project, file and knowledge manager"
 edition = "2021"
-license = "MIT"
+license = "GPL-3.0-or-later"
 
 [lib]
 name = "project_vault_lib"

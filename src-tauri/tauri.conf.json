@@ -48,7 +48,9 @@
         "installMode": "currentUser"
       }
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "copyright": "Copyright (C) 2026 wheresmeep. Licensed under GPL-3.0-or-later.",
+    "license": "GPL-3.0-or-later"
   },
   "plugins": {
     "updater": {

@@ -3,7 +3,7 @@ name = "vault-core"
 version = "0.2.0"
 edition = "2021"
 description = "Project Vault core: storage, file reconciliation, notes, search, tasks, git."
-license = "MIT"
+license = "GPL-3.0-or-later"
 
 # Deliberately dependency-free. SQLite is reached through a small FFI layer
 # (src/db/ffi.rs). Where the symbols come from is decided at link time:
