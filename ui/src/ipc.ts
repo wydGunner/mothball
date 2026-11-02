@@ -77,7 +77,7 @@ export interface Project {
 }
 export interface VFile {
   id: string; path: string; name: string; ext: string; kind: string; size: number; mtime: number;
-  sha256?: string; state: 'present' | 'missing'; firstSeen: number; lastChanged: number;
+  sha256?: string; state: 'present' | 'missing' | 'deleted'; firstSeen: number; lastChanged: number;
   changedSinceReview: boolean; hasDocs: boolean; purpose: string; versions: number;
 }
 export interface LinkRef { linkId: string; type: 'file' | 'note' | 'task'; id: string; title: string; state: string; label: string }
