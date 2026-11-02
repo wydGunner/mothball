@@ -21,7 +21,7 @@ export function loadEditor(): Promise<EditorModule> {
 
 const LANG: Record<string, string> = {
   ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript', json: 'json',
-  rs: 'rust', py: 'python', cs: 'csharp', c: 'c', h: 'cpp', cpp: 'cpp', hpp: 'cpp', cc: 'cpp', ino: 'cpp', gsc: 'cpp', csc: 'cpp',
+  rs: 'rust', py: 'python', cs: 'csharp', c: 'c', h: 'cpp', cpp: 'cpp', hpp: 'cpp', cc: 'cpp', ino: 'cpp', gsc: 'gsc', csc: 'gsc', gsh: 'gsc',
   go: 'go', java: 'java', kt: 'kotlin', lua: 'lua', rb: 'ruby', php: 'php', swift: 'swift', sql: 'sql', sh: 'shell', bat: 'bat',
   cmd: 'bat', ps1: 'powershell', css: 'css', scss: 'scss', less: 'less', html: 'html', htm: 'html', xml: 'xml', svg: 'xml',
   yaml: 'yaml', yml: 'yaml', toml: 'ini', ini: 'ini', cfg: 'ini', conf: 'ini', md: 'markdown', markdown: 'markdown',
@@ -29,13 +29,15 @@ const LANG: Record<string, string> = {
 };
 export const languageFor = (ext: string) => LANG[ext.toLowerCase()] || 'plaintext';
 
-export function CodeEditor({ value, ext, readOnly, onChange, onSave, onSaveWithBackup, onReady }: {
+export function CodeEditor({ value, ext, readOnly, onChange, onSave, onSaveWithBackup, onReady, onGoToDefinition, onHover }: {
   value: string; ext: string; readOnly?: boolean; onChange: (v: string) => void; onSave: () => void; onSaveWithBackup?: () => void; onReady?: (h: EditorHandle) => void;
+  onGoToDefinition?: (word: string, qualifier: string) => void; onHover?: (word: string, qualifier: string) => Promise<string | null>;
 }) {
   const el = useRef<HTMLDivElement>(null);
   const handle = useRef<EditorHandle | null>(null);
-  const cb = useRef({ onChange, onSave, onSaveWithBackup });
-  cb.current = { onChange, onSave, onSaveWithBackup };
+  const cb = useRef({ onChange, onSave, onSaveWithBackup, onGoToDefinition, onHover });
+  cb.current = { onChange, onSave, onSaveWithBackup, onGoToDefinition, onHover };
+  const hasDef = !!onGoToDefinition, hasHover = !!onHover;
 
   useEffect(() => {
     let disposed = false;
@@ -45,6 +47,8 @@ export function CodeEditor({ value, ext, readOnly, onChange, onSave, onSaveWithB
       handle.current = m.create(el.current, {
         value, language: languageFor(ext), readOnly, palette: { a1: t.a1, a2: t.a2, a3: t.a3 },
         onChange: (v: string) => cb.current.onChange(v), onSave: () => cb.current.onSave(), onSaveWithBackup: () => cb.current.onSaveWithBackup?.(),
+        onGoToDefinition: hasDef ? (w: string, q: string) => cb.current.onGoToDefinition?.(w, q) : undefined,
+        onHover: hasHover ? (w: string, q: string) => cb.current.onHover?.(w, q) ?? Promise.resolve(null) : undefined,
       });
       handle.current.focus();
       onReady?.(handle.current);

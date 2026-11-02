@@ -13,16 +13,19 @@ pub mod files;
 pub mod git;
 pub mod json;
 pub mod knowledge;
+pub mod models;
 pub mod legacy;
 pub mod profiles;
 pub mod projects;
 pub mod schema;
 pub mod search;
 pub mod snapshots;
+pub mod symbols;
 pub mod tasks;
 pub mod timeline;
 pub mod util;
 pub mod versions;
+pub mod zip;
 
 use db::{Db, DbResult};
 use std::path::{Path, PathBuf};
@@ -40,6 +43,8 @@ impl Vault {
     pub fn open(data_dir: &Path) -> DbResult<Vault> {
         std::fs::create_dir_all(data_dir.join("managed")).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(data_dir.join("backups")).map_err(|e| e.to_string())?;
+        // a database restore staged from Settings is applied before opening
+        backup::apply_pending_restore(data_dir)?;
         let db_path = data_dir.join("vault.db");
         let existed = db_path.exists();
         let db = Db::open(&db_path)?;

@@ -280,6 +280,7 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
       </>}
 
       {tab === 'details' && <>
+        {f.category === '3d-printing' && <FillFrom3mf projectId={p.id} module={module} onFill={setModule} />}
         {mod ? <>
           <div className="grid2">
             {mod.fields.filter((x) => !x.multiline).map((x) => (
@@ -335,6 +336,53 @@ function PrintLog({ log, onChange }: { log: any[]; onChange: (l: any[]) => void 
         <input className="input" style={{ width: 70 }} placeholder="g" value={draft.grams} onChange={(e) => setDraft({ ...draft, grams: e.target.value })} />
         <input className="input" style={{ width: 80 }} placeholder="time" value={draft.time} onChange={(e) => setDraft({ ...draft, time: e.target.value })} />
         <button className="btn" onClick={() => { onChange([...log, draft]); setDraft({ ...draft, notes: '', grams: '', time: '' }); }}><LuPlus /> Log</button>
+      </div>
+    </div>
+  );
+}
+
+/** Fills empty print fields from what a .3mf in the project says (only empty fields; nothing is saved until Save). */
+function FillFrom3mf({ projectId, module, onFill }: { projectId: string; module: Record<string, any>; onFill: (m: Record<string, any>) => void }) {
+  const files = useLoad(() => call<any[]>('files.list', { projectId, exts: ['3mf'], limit: 200 }), [projectId]);
+  const [pick, setPick] = useState('');
+  const [msg, setMsg] = useState('');
+  const act = useAction();
+  if (!files.data?.length) return null;
+  const fill = async () => {
+    const id = pick || files.data![0].id;
+    const d: any = await act(() => call('files.threemfInfo', { id }));
+    if (!d) return;
+    const s = d.settings || {};
+    const fil: any[] = s.filaments || [];
+    const plates: any[] = d.plates || [];
+    const secs = plates.reduce((a, p) => a + (p.printSeconds || 0), 0);
+    const grams = plates.reduce((a, p) => a + (p.weightG || 0), 0);
+    const found: Record<string, string> = {
+      material: [...new Set(fil.map((x) => x.type).filter(Boolean))].join(', '),
+      filamentColor: fil.map((x) => x.color).filter(Boolean).join(', '),
+      filamentGrams: grams ? grams.toFixed(1) : '',
+      printTime: secs ? `${Math.floor(secs / 3600)}h ${Math.round((secs % 3600) / 60)}m` : '',
+      printer: s.printerModel || s.printer || '',
+      nozzle: s.nozzle ? `${s.nozzle} mm` : '',
+      layerHeight: s.layerHeight ? `${s.layerHeight} mm` : '',
+      slicer: d.application || '',
+      slicerProfile: s.process || '',
+    };
+    const next = { ...module };
+    const filled: string[] = [];
+    for (const [k, v] of Object.entries(found)) if (v && !String(next[k] || '').trim()) { next[k] = v; filled.push(k); }
+    onFill(next);
+    setMsg(filled.length ? `Filled ${filled.length} empty field(s). Check them, then Save.` : 'Nothing new: every field the .3mf has is already filled in.');
+  };
+  return (
+    <div className="alert info" style={{ marginBottom: 12 }}>
+      <div className="grow">
+        <div className="row" style={{ flexWrap: 'wrap' }}>
+          <span>Fill empty fields from</span>
+          <select className="input" style={{ width: 'auto', maxWidth: 320 }} value={pick || files.data[0].id} onChange={(e) => setPick(e.target.value)}>{files.data.map((x) => <option key={x.id} value={x.id}>{x.path}</option>)}</select>
+          <button className="btn sm" onClick={fill}>Fill</button>
+        </div>
+        {msg && <div className="small" style={{ marginTop: 4 }}>{msg}</div>}
       </div>
     </div>
   );

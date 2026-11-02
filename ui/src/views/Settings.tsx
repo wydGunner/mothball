@@ -1,9 +1,9 @@
-import { useState } from 'react';
-import { LuFolderOpen, LuShieldCheck, LuDatabaseBackup, LuRefreshCw, LuInfo, LuTriangleAlert } from 'react-icons/lu';
-import { call, pickFolder, revealPath, isTauri } from '../ipc';
-import { useAction, useConfirm, useLoad, useToast } from '../components/common';
+import { useEffect, useState } from 'react';
+import { LuFolderOpen, LuShieldCheck, LuDatabaseBackup, LuRefreshCw, LuInfo, LuTriangleAlert, LuClock, LuArchiveRestore } from 'react-icons/lu';
+import { call, pickFolder, pickFiles, revealPath, isTauri } from '../ipc';
+import { Modal, useAction, useConfirm, useLoad, useToast } from '../components/common';
 import { getSaveMode, setSaveMode, getLargeThreshold, setLargeThreshold, type SaveMode } from './SmartSave';
-import { bytes } from '../format';
+import { bytes, dateTime } from '../format';
 import type { Nav } from '../main';
 import { THEMES, applyTheme, getTheme, themeFromColor } from '../theme';
 
@@ -99,6 +99,192 @@ function BackupStorage() {
   );
 }
 
+const BackupDest = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
+  <div className="row"><input className="input mono" value={value} onChange={(e) => onChange(e.target.value)} placeholder="E:\Backups\ProjectVault" /><button className="btn" onClick={async () => { const p = await pickFolder('Backup destination'); if (p) onChange(p); }}><LuFolderOpen /> Browse…</button></div>
+);
+
+function BackupCard({ nav, dataDir }: { nav: Nav; dataDir?: string }) {
+  const [dest, setDest] = useState(() => localStorage.getItem('pv.backupDest') || '');
+  const [scope, setScope] = useState('');
+  const [files, setFiles] = useState(() => localStorage.getItem('pv.backupFiles') === '1');
+  const [zip, setZip] = useState(() => localStorage.getItem('pv.backupZip') === '1');
+  const [maxMb, setMaxMb] = useState(500);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const act = useAction();
+  const run = async () => {
+    setBusy(true);
+    localStorage.setItem('pv.backupDest', dest); localStorage.setItem('pv.backupFiles', files ? '1' : '0'); localStorage.setItem('pv.backupZip', zip ? '1' : '0');
+    const r = await act(() => call('backup.create', { dest, projectId: scope || null, includeFiles: files, zip, maxFileMb: maxMb }), 'Backup created and verified');
+    setBusy(false);
+    if (r) setResult(r);
+  };
+  return (
+    <div className="card pad" style={{ marginBottom: 16 }}>
+      <h2 className="row" style={{ marginBottom: 8 }}><LuDatabaseBackup /> Back up</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>A consistent copy of the vault database, a readable export of every project (notes as Markdown, file documentation, tasks, timeline) and a manifest with checksums. Verified right after it's written, and readable without Project Vault.</p>
+      <div className="field"><label>Destination folder (e.g. an external drive)</label><BackupDest value={dest} onChange={setDest} /></div>
+      <div className="grid2">
+        <div className="field"><label>Scope</label>
+          <select className="input" value={scope} onChange={(e) => setScope(e.target.value)}><option value="">Entire vault</option>{nav.projects.map((p) => <option key={p.id} value={p.id}>Only: {p.name}</option>)}</select>
+        </div>
+        <div className="field"><label>Format</label>
+          <select className="input" value={zip ? 'zip' : 'folder'} onChange={(e) => setZip(e.target.value === 'zip')}><option value="folder">Folder</option><option value="zip">Single .zip file (uncompressed)</option></select>
+        </div>
+      </div>
+      <label className="row" style={{ alignItems: 'flex-start', marginBottom: 6 }}><input type="checkbox" checked={files} onChange={(e) => setFiles(e.target.checked)} style={{ marginTop: 3 }} />
+        <span><b>Include the project files themselves</b><div className="small dim">Copies every tracked file (your scripts, models, prints…) so the backup alone can bring a project back. Skip files larger than <input className="input" type="number" min={1} style={{ width: 80, padding: '1px 6px' }} value={maxMb} onChange={(e) => setMaxMb(Math.max(1, Number(e.target.value) || 1))} /> MB.</div></span></label>
+      {!files && <div className="alert warn small" style={{ marginBottom: 10 }}><LuTriangleAlert /><div>Without this, project files aren't copied: linked projects are saved as references to their folders. Managed project files live in <span className="mono">{dataDir}{dataDir?.includes('\\') ? '\\' : '/'}managed</span>.</div></div>}
+      <button className="btn primary" disabled={!dest || busy} onClick={run}>{busy ? 'Backing up…' : 'Create backup now'}</button>
+      {result && <div className="alert info" style={{ marginTop: 12 }}><LuShieldCheck /><div className="grow">Backup written to <span className="mono" style={{ wordBreak: 'break-all' }}>{result.path}</span> — {result.verification.checkedFiles} files verified{result.projectFiles ? `, including ${result.projectFiles} project files (${bytes(result.projectBytes)})` : ''}.{result.skipped?.length > 0 && <> {result.skipped.length} project file(s) skipped: {result.skipped.slice(0, 3).map((x: any) => `${x.path || x.project} (${x.reason})`).join(', ')}{result.skipped.length > 3 ? '…' : ''}</>}</div>
+        {isTauri && <button className="btn sm" onClick={() => act(() => revealPath(result.path))}>Show</button>}</div>}
+    </div>
+  );
+}
+
+function ScheduleCard() {
+  const sched = useLoad(() => call<any>('backup.schedule'), []);
+  const [s, setS] = useState<any>(null);
+  const act = useAction();
+  const confirm = useConfirm();
+  const toast = useToast();
+  useEffect(() => { if (sched.data && !s) setS(sched.data); }, [sched.data, s]);
+  if (!s) return null;
+  const save = async (patch: any) => {
+    const next = { ...s, ...patch };
+    if (patch.keep > 0 && patch.keep !== s.keep && !(await confirm({ title: `Keep only the newest ${patch.keep} scheduled backups?`, confirm: 'Turn on cleanup', danger: true,
+      body: <>After each scheduled backup, older <b>scheduled</b> backups in <span className="mono">{next.dest || 'the backup folder'}</span> beyond the newest {patch.keep} are deleted. Backups you made with “Create backup now” are never deleted.</> }))) return;
+    const prev = s;
+    setS(next); // optimistic, so toggles respond immediately
+    const r = await act(() => call('backup.setSchedule', { schedule: next }));
+    if (r) { setS(r); toast('Backup schedule saved', 'success'); } else setS(prev);
+  };
+  const runNow = async () => {
+    const r: any = await act(() => call('backup.runDue', { force: true }));
+    if (r?.result?.ok) toast(`Scheduled backup written: ${r.result.path}`, 'success'); else if (r) toast(`Scheduled backup failed: ${r.result?.error}`, 'error');
+    try { setS(await call<any>('backup.schedule')); } catch { /* keep what's shown */ }
+  };
+  const every = s.everyDays >= 1 ? `${s.everyDays}` : 'h';
+  return (
+    <div className="card pad" style={{ marginBottom: 16 }}>
+      <h2 className="row" style={{ marginBottom: 8 }}><LuClock /> Scheduled backups</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>Runs automatically while Project Vault is open (checked at start-up and every 30 minutes). If the app was closed when one was due, it runs the next time you open it.</p>
+      <label className="row" style={{ marginBottom: 10 }}><input type="checkbox" checked={!!s.enabled} onChange={(e) => save({ enabled: e.target.checked })} /> <b>Back up automatically</b></label>
+      <div className="field"><label>Destination folder</label><BackupDest value={s.dest} onChange={(dest) => setS({ ...s, dest })} /></div>
+      <div className="grid2">
+        <div className="field"><label>How often</label>
+          <select className="input" value={every} onChange={(e) => setS({ ...s, everyDays: e.target.value === 'h' ? 1 / 24 : Number(e.target.value) })}>
+            <option value="h">Every hour</option><option value="1">Every day</option><option value="3">Every 3 days</option><option value="7">Every week</option><option value="30">Every month</option>
+          </select></div>
+        <div className="field"><label>Keep</label>
+          <select className="input" value={s.keep} onChange={(e) => setS({ ...s, keep: Number(e.target.value) })}>
+            <option value={0}>Every scheduled backup (never delete)</option>{[3, 5, 10, 20, 50].map((n) => <option key={n} value={n}>Newest {n} scheduled backups</option>)}
+          </select></div>
+      </div>
+      <label className="row small" style={{ marginBottom: 4 }}><input type="checkbox" checked={!!s.includeFiles} onChange={(e) => setS({ ...s, includeFiles: e.target.checked })} /> Include project files (up to {s.maxFileMb} MB each)</label>
+      <label className="row small" style={{ marginBottom: 10 }}><input type="checkbox" checked={!!s.zip} onChange={(e) => setS({ ...s, zip: e.target.checked })} /> Save as a single .zip</label>
+      <div className="row">
+        <button className="btn primary" onClick={() => save({ dest: s.dest, everyDays: s.everyDays, keep: s.keep, includeFiles: s.includeFiles, zip: s.zip })}>Save schedule</button>
+        <button className="btn" disabled={!s.dest} onClick={runNow}>Run now</button>
+        <span className="small dim right">{s.lastRun ? <>Last run {dateTime(s.lastRun)} — {s.lastResult?.ok ? 'OK' : <span style={{ color: 'var(--bad)' }}>failed: {s.lastResult?.error}</span>}</> : 'Never run'}{s.enabled && s.nextRun ? ` · next ${dateTime(s.nextRun)}` : ''}</span>
+      </div>
+    </div>
+  );
+}
+
+function RestoreCard({ nav }: { nav: Nav }) {
+  const [path, setPath] = useState('');
+  const [info, setInfo] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [restoring, setRestoring] = useState<any>(null);
+  const pending = useLoad(() => call<{ pending: boolean }>('backup.pendingRestore'), []);
+  const act = useAction();
+  const confirm = useConfirm();
+  const toast = useToast();
+  const open = async (p: string) => {
+    setPath(p); setInfo(null); setLoading(true);
+    const r = await act(() => call('backup.inspect', { path: p }));
+    setLoading(false);
+    if (r) setInfo(r);
+  };
+  const restoreDb = async () => {
+    if (!(await confirm({ title: 'Restore the vault database from this backup?', confirm: 'Restore on next start', danger: true,
+      body: <>Every project, note, task, file description and setting goes back to how it was on <b>{dateTime(info.createdAt)}</b>. Changes made since then are not lost: the current database is kept in the data folder's <span className="mono">backups</span> folder as <span className="mono">before-restore-….db</span>. Your project files aren't touched. The restore happens when Project Vault restarts.</> }))) return;
+    const r = await act(() => call('backup.restoreDatabase', { path }));
+    if (r) {
+      pending.reload();
+      if (isTauri) {
+        if (await confirm({ title: 'Restart now?', confirm: 'Restart', body: 'The restored database is ready and will be used after a restart.' })) {
+          const { relaunch } = await import('@tauri-apps/plugin-process');
+          await relaunch();
+        }
+      } else toast('Staged. Restart Project Vault to finish the restore.', 'success');
+    }
+  };
+  return (
+    <div className="card pad" style={{ marginBottom: 16 }}>
+      <h2 className="row" style={{ marginBottom: 8 }}><LuArchiveRestore /> Check or restore a backup</h2>
+      {pending.data?.pending && <div className="alert warn" style={{ marginBottom: 10 }}><LuTriangleAlert /><div className="grow">A database restore is waiting and will be applied the next time Project Vault starts.</div><button className="btn sm" onClick={async () => { await act(() => call('backup.cancelDatabaseRestore')); pending.reload(); }}>Cancel it</button></div>}
+      <p className="muted small" style={{ marginTop: 0 }}>Choose a backup folder or .zip. It's verified (every checksum plus a database integrity check) before anything is offered.</p>
+      <div className="row"><input className="input mono" value={path} onChange={(e) => setPath(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && path && open(path)} placeholder="E:\Backups\ProjectVault\ProjectVault-backup-…" />
+        <button className="btn" title="Choose a backup folder" onClick={async () => { const p = await pickFolder('Backup folder'); if (p) open(p); }}><LuFolderOpen /> Folder…</button>
+        <button className="btn" title="Choose a .zip backup" onClick={async () => { const p = await pickFiles('Backup .zip', [{ name: 'Project Vault backup', extensions: ['zip'] }]); if (p[0]) open(p[0]); }}>.zip…</button>
+        <button className="btn primary" disabled={!path || loading} onClick={() => open(path)}>{loading ? 'Checking…' : 'Check'}</button></div>
+      {info && <div style={{ marginTop: 12 }}>
+        {info.verification.ok
+          ? <div className="alert info"><LuShieldCheck /><div>Verified — {info.verification.checkedFiles} files match their checksums; database integrity check passed.</div></div>
+          : <div className="alert bad"><LuTriangleAlert /><div>Problems found, so restoring is disabled:<ul>{info.verification.problems.map((p: string, i: number) => <li key={i}>{p}</li>)}</ul></div></div>}
+        <div className="kv" style={{ margin: '10px 0' }}>
+          <span>Made</span><span>{dateTime(info.createdAt)}{info.automatic ? ' (scheduled)' : ''} · app {info.appVersion}</span>
+          <span>Contains</span><span>{info.projects.length} project(s){info.includesProjectFiles ? ' with copies of their files' : ' — metadata only, no project files'}</span>
+        </div>
+        <table className="list"><tbody>{info.projects.map((p: any) => (
+          <tr key={p.id}>
+            <td><b>{p.name}</b>{!p.existsNow && <span className="badge warn" style={{ marginLeft: 6 }}>not in the vault now</span>}<div className="small dim mono" style={{ wordBreak: 'break-all' }}>{p.restoreTo}</div></td>
+            <td className="small dim" style={{ whiteSpace: 'nowrap' }}>{p.fileCopies ? `${p.fileCopies} files` : 'no file copies'}</td>
+            <td style={{ textAlign: 'right' }}>{p.fileCopies > 0 && <button className="btn sm" disabled={!info.verification.ok} onClick={() => setRestoring(p)}><LuArchiveRestore /> Restore files…</button>}</td>
+          </tr>))}</tbody></table>
+        <div className="row" style={{ marginTop: 12 }}>
+          <button className="btn" disabled={!info.verification.ok} onClick={restoreDb}><LuDatabaseBackup /> Restore the vault database…</button>
+          <span className="small dim">Brings back projects, notes, tasks and file descriptions as they were.</span>
+        </div>
+      </div>}
+      {restoring && <RestoreFilesDialog path={path} p={restoring} onClose={() => setRestoring(null)} onDone={() => { setRestoring(null); nav.refreshProjects(); }} />}
+    </div>
+  );
+}
+
+function RestoreFilesDialog({ path, p, onClose, onDone }: { path: string; p: any; onClose: () => void; onDone: () => void }) {
+  const pv = useLoad(() => call<any>('backup.restorePreview', { path, projectId: p.id }), [path, p.id]);
+  const [overwrite, setOverwrite] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<any>(null);
+  const act = useAction();
+  const n = pv.data ? pv.data.recreate + (overwrite ? pv.data.differs : 0) : 0;
+  if (res) return (
+    <Modal title="Files restored" onClose={onDone} footer={<button className="btn primary" onClick={onDone}>Done</button>}>
+      <p>{res.restored.length} file(s) restored into <span className="mono">{res.root}</span> and verified.{res.keptDifferent ? ` ${res.keptDifferent} file(s) that differ were left as they are.` : ''}</p>
+      {res.errors.length > 0 && <div className="alert bad"><div><b>{res.errors.length} could not be restored:</b><ul className="small">{res.errors.map((e: string) => <li key={e}>{e}</li>)}</ul></div></div>}
+    </Modal>
+  );
+  return (
+    <Modal wide title={`Restore files of “${p.name}”`} onClose={onClose} footer={<><button className="btn" onClick={onClose}>Cancel</button>
+      <button className="btn primary" disabled={!pv.data || !n || busy} onClick={async () => { setBusy(true); const r = await act(() => call('backup.restoreFiles', { path, projectId: p.id, overwrite })); setBusy(false); if (r) setRes(r); }}>{busy ? 'Restoring…' : `Restore ${n} file(s)`}</button></>}>
+      {pv.error ? <div className="alert bad">{pv.error}</div> : !pv.data ? <div className="muted">Comparing with the files on disk…</div> : <>
+        <p style={{ marginTop: 0 }}>Into <span className="mono" style={{ wordBreak: 'break-all' }}>{pv.data.root}</span>{!pv.data.rootExists && ' (this folder will be created)'}:</p>
+        <ul className="small">
+          <li><b>{pv.data.recreate}</b> missing file(s) will be recreated</li>
+          <li><b>{pv.data.differs}</b> file(s) differ from the backup — {overwrite ? <b>they'll be replaced</b> : 'left as they are'}</li>
+          <li><b>{pv.data.unchanged}</b> already match</li>
+          <li>Files that aren't in the backup are never touched or deleted</li>
+        </ul>
+        {pv.data.differs > 0 && <label className="row"><input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} /> Also replace the {pv.data.differs} file(s) that differ (their current content is kept in each file's history first)</label>}
+        {pv.data.items.length > 0 && <details><summary className="small">Show files</summary><ul className="small mono">{pv.data.items.slice(0, 300).map((x: any) => <li key={x.path}>{x.action === 'recreate' ? 'recreate' : 'differs'} · {x.path}</li>)}</ul></details>}
+      </>}
+    </Modal>
+  );
+}
+
 function UpdateCheck() {
   const [state, setState] = useState<string>('');
   return (
@@ -115,21 +301,8 @@ function UpdateCheck() {
 
 export function SettingsView({ nav }: { nav: Nav }) {
   const info = useLoad(() => call<any>('app.info'), []);
-  const [dest, setDest] = useState(() => localStorage.getItem('pv.backupDest') || '');
-  const [scope, setScope] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<any>(null);
-  const [verifyPath, setVerifyPath] = useState('');
-  const [verifyRes, setVerifyRes] = useState<any>(null);
   const act = useAction();
 
-  const backup = async () => {
-    setBusy(true);
-    localStorage.setItem('pv.backupDest', dest);
-    const r = await act(() => call('backup.create', { dest, projectId: scope || null }), 'Backup created and verified');
-    setBusy(false);
-    if (r) { setResult(r); setVerifyPath((r as any).path); }
-  };
 
   return (
     <div className="page" style={{ maxWidth: 900 }}>
@@ -137,34 +310,9 @@ export function SettingsView({ nav }: { nav: Nav }) {
       <Appearance />
       <EditorSaving />
       <BackupStorage />
-      <div className="card pad" style={{ marginBottom: 16 }}>
-        <h2 className="row" style={{ marginBottom: 8 }}><LuDatabaseBackup /> Back up</h2>
-        <p className="muted small" style={{ marginTop: 0 }}>
-          Creates a folder containing a consistent copy of the vault database plus a readable export of every project — notes as Markdown, file documentation, tasks and timeline —
-          and a manifest with checksums. The backup is verified right after it is written. It can be read without Project Vault.
-        </p>
-        <div className="alert warn" style={{ marginBottom: 12 }}><LuTriangleAlert /><div><b>Project files are not copied.</b> Linked projects are backed up as references to their folders plus all metadata. Back up the folders themselves (or keep them in Git) for full recovery. Managed project files live in <span className="mono">{info.data?.dataDir}\managed</span>.</div></div>
-        <div className="field"><label>Destination folder (e.g. an external drive)</label>
-          <div className="row"><input className="input mono" value={dest} onChange={(e) => setDest(e.target.value)} placeholder="E:\Backups\ProjectVault" /><button className="btn" onClick={async () => { const p = await pickFolder('Backup destination'); if (p) setDest(p); }}><LuFolderOpen /> Browse…</button></div>
-        </div>
-        <div className="field"><label>Scope</label>
-          <select className="input" value={scope} onChange={(e) => setScope(e.target.value)}><option value="">Entire vault</option>{nav.projects.map((p) => <option key={p.id} value={p.id}>Only: {p.name}</option>)}</select>
-        </div>
-        <button className="btn primary" disabled={!dest || busy} onClick={backup}>{busy ? 'Backing up…' : 'Create backup now'}</button>
-        {result && <div className="alert info" style={{ marginTop: 12 }}><LuShieldCheck /><div className="grow">Backup written to <span className="mono">{result.path}</span> — {result.verification.checkedFiles} files verified.</div>
-          {isTauri && <button className="btn sm" onClick={() => act(() => revealPath(result.path))}>Show</button>}</div>}
-      </div>
-
-      <div className="card pad" style={{ marginBottom: 16 }}>
-        <h2 className="row" style={{ marginBottom: 8 }}><LuShieldCheck /> Verify a backup</h2>
-        <p className="muted small" style={{ marginTop: 0 }}>Re-checks every file against the manifest checksums and runs an integrity check on the backed-up database.</p>
-        <div className="row"><input className="input mono" value={verifyPath} onChange={(e) => setVerifyPath(e.target.value)} placeholder="E:\Backups\ProjectVault\ProjectVault-backup-…" /><button className="btn" onClick={async () => { const p = await pickFolder('Backup folder'); if (p) setVerifyPath(p); }}><LuFolderOpen /></button>
-          <button className="btn" disabled={!verifyPath} onClick={async () => setVerifyRes(await act(() => call('backup.verify', { path: verifyPath })))}>Verify</button></div>
-        {verifyRes && (verifyRes.ok
-          ? <div className="alert info" style={{ marginTop: 10 }}><LuShieldCheck /><div>OK — {verifyRes.checkedFiles} files match their checksums; database integrity check passed.</div></div>
-          : <div className="alert bad" style={{ marginTop: 10 }}><LuTriangleAlert /><div>Problems found:<ul>{verifyRes.problems.map((p: string, i: number) => <li key={i}>{p}</li>)}</ul></div></div>)}
-        <p className="small dim">Restoring: close Project Vault, then replace <span className="mono">vault.db</span> in the data folder with the one from the backup (keep the old one). See docs/RECOVERY.md. An in-app restore is not implemented yet.</p>
-      </div>
+      <BackupCard nav={nav} dataDir={info.data?.dataDir} />
+      <ScheduleCard />
+      <RestoreCard nav={nav} />
 
       <div className="card pad" style={{ marginBottom: 16 }}>
         <h2 className="row" style={{ marginBottom: 8 }}><LuRefreshCw /> Maintenance</h2>

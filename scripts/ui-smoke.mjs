@@ -54,7 +54,7 @@ const srv = spawn(exe, [join(tmp, 'data'), join(root, 'ui/dist'), String(port)],
 await new Promise((r) => setTimeout(r, 700));
 const base = `http://127.0.0.1:${port}`;
 
-const browser = await chromium.launch();
+const browser = await chromium.launch({ args: ['--use-gl=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist'] }); // WebGL for the 3D preview
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 const page = await context.newPage();
@@ -513,6 +513,21 @@ await step('Import Print Vault', async () => {
     await page.locator('.filerow').filter({ hasText: 'fixed cat.stl' }).click();
     await page.getByText('Mesh bounds').waitFor();
     if (await page.locator('.filerow').filter({ hasText: 'README.md' }).count()) throw new Error('type filter not applied');
+    // 3D preview (large files load on request)
+    const show = page.getByRole('button', { name: 'Show 3D preview' });
+    await show.or(page.locator('.mv-bar')).first().waitFor({ timeout: 30000 });
+    if (await show.count()) await show.click();
+    await page.locator('.mv-bar').getByText(/triangles/).waitFor({ timeout: 60000 });
+    if (shots) await page.locator('.modelview').screenshot({ path: join(shots, 'x-3d-preview.png') });
+    await page.locator('.chip').filter({ hasText: 'All files' }).click();
+    const tmf = page.locator('.filerow').filter({ hasText: '.3mf' });
+    await tmf.first().waitFor();
+    {
+      await tmf.first().click();
+      await page.locator('.printinfo').getByText('Bambu Lab X2D 0.4 nozzle').waitFor({ timeout: 30000 });
+      await page.locator('.printinfo').waitFor({ timeout: 30000 });
+      if (shots) await page.locator('.printinfo').screenshot({ path: join(shots, 'x-3mf-info.png') });
+    }
     await page.getByRole('button', { name: /^Backups & versions/ }).click();
     await page.locator('.verrow').first().waitFor();
     if (shots) await page.screenshot({ path: join(shots, 'x-3d-files.png') });
@@ -619,15 +634,90 @@ await step('Settings: save behaviour and backup storage location', async () => {
   await toastGone();
 });
 
-await step('Backup and verify', async () => {
+await step('Backup with project files as .zip, verify', async () => {
   await page.getByRole('button', { name: /Settings/ }).click();
-  await page.getByPlaceholder('E:\\Backups\\ProjectVault', { exact: true }).fill(backups);
-  await page.getByRole('button', { name: 'Create backup now' }).click();
-  await page.getByText(/files verified/).waitFor({ timeout: 30000 });
-  await page.getByRole('button', { name: 'Verify', exact: true }).click();
-  await page.getByText(/files match their checksums/).waitFor();
-  const dirs = readdirSync(backups);
-  if (dirs.length !== 1) throw new Error('expected one backup folder');
+  const card = page.locator('.card').filter({ hasText: 'Create backup now' });
+  await card.getByPlaceholder('E:\\Backups\\ProjectVault', { exact: true }).fill(backups);
+  await card.locator('select').nth(1).selectOption('zip');
+  await card.locator('label').filter({ hasText: 'Include the project files themselves' }).locator('input[type=checkbox]').check();
+  await card.getByRole('button', { name: 'Create backup now' }).click();
+  await card.getByText(/files verified, including \d+ project files/).waitFor({ timeout: 60000 });
+  const zips = readdirSync(backups).filter((f) => f.endsWith('.zip'));
+  if (zips.length !== 1) throw new Error('expected one .zip backup: ' + readdirSync(backups));
+  await toastGone();
+});
+
+await step('Restore: check a backup, restore a deleted project file', async () => {
+  const zip = join(backups, readdirSync(backups).find((f) => f.endsWith('.zip')));
+  const target = join(omen, 'configs/weapons.json');
+  const before = readFileSync(target, 'utf8');
+  const { rmSync } = await import('node:fs');
+  rmSync(target);
+  const card = page.locator('.card').filter({ hasText: 'Check or restore a backup' });
+  await card.getByPlaceholder(/ProjectVault-backup-/).fill(zip);
+  await card.getByRole('button', { name: 'Check', exact: true }).click();
+  await card.getByText(/Verified — \d+ files match/).waitFor({ timeout: 60000 });
+  await card.locator('tr').filter({ hasText: 'OMEN v2' }).getByRole('button', { name: /Restore files/ }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Restore files of' });
+  await m.getByText(/missing file\(s\) will be recreated/).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-restore-files.png') });
+  await m.getByRole('button', { name: /Restore \d+ file/ }).click();
+  await page.locator('.modal').filter({ hasText: 'Files restored' }).getByRole('button', { name: 'Done' }).click();
+  if (readFileSync(target, 'utf8') !== before) throw new Error('file not restored');
+  // the database restore is staged, then can be cancelled
+  await card.getByRole('button', { name: /Restore the vault database/ }).click();
+  await page.locator('.modal').getByRole('button', { name: 'Restore on next start' }).click();
+  await card.getByText(/will be applied the next time/).waitFor();
+  await card.getByRole('button', { name: 'Cancel it' }).click();
+  await card.getByText(/will be applied the next time/).waitFor({ state: 'detached' });
+  await toastGone();
+});
+
+await step('Scheduled backups', async () => {
+  const card = page.locator('.card').filter({ hasText: 'Scheduled backups' });
+  const sched = join(tmp, 'scheduled'); mkdirSync(sched);
+  await card.getByPlaceholder('E:\\Backups\\ProjectVault', { exact: true }).fill(sched);
+  await card.getByRole('button', { name: 'Save schedule' }).click();
+  await card.locator('label').filter({ hasText: 'Back up automatically' }).locator('input').check();
+  await page.getByText('Backup schedule saved').first().waitFor();
+  await card.getByRole('button', { name: 'Run now' }).click();
+  await page.getByText(/Scheduled backup written/).waitFor({ timeout: 60000 });
+  if (!readdirSync(sched).some((f) => f.includes('-auto'))) throw new Error('no scheduled backup written');
+  await card.getByText(/Last run .* OK/).waitFor();
+  await toastGone();
+});
+
+await step('GSC: functions list, go to definition, function search', async () => {
+  writeFileSync(join(omen, 'scripts/mp/_hud.gsc'), '#include scripts\\mp\\_util;\n\ninit()\n{\n    level thread scripts\\mp\\_util::util();\n}\n');
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  await page.locator('.pcard').filter({ hasText: 'OMEN v2' }).click();
+  await page.getByRole('tab', { name: /Files/ }).click();
+  await page.getByRole('button', { name: 'Rescan' }).click();
+  await page.locator('.filerow').filter({ hasText: '_hud.gsc' }).click();
+  const outline = page.locator('.docsec').filter({ hasText: 'Functions' });
+  await outline.locator('.symname').filter({ hasText: 'init()' }).waitFor();
+  await outline.locator('.chip').filter({ hasText: 'scripts\\mp\\_util' }).waitFor();
+  if (shots) await outline.screenshot({ path: join(shots, 'x-gsc-outline.png') });
+  // editor: F12 on the call jumps to _util.gsc
+  await page.getByRole('button', { name: 'Edit file' }).click();
+  const ed = page.locator('.pv-editor textarea').first();
+  await ed.waitFor();
+  await ed.evaluate((ta) => { const i = ta.value.indexOf('::util') + 4; ta.focus(); ta.setSelectionRange(i, i); });
+  await page.keyboard.press('F12');
+  await page.locator('.editor-pane .panehead b').filter({ hasText: '_util.gsc' }).waitFor();
+  // uses of util() are listed from the defining file
+  page.once('dialog', (d) => d.accept());
+  await page.getByTitle('Back to file notes').click();
+  const o2 = page.locator('.docsec').filter({ hasText: 'Functions' });
+  await o2.locator('.symrow').filter({ hasText: 'util()' }).getByRole('button', { name: 'Uses' }).click();
+  await o2.locator('.refrow').filter({ hasText: '_hud.gsc:5' }).waitFor();
+  // Ctrl+K "@util" finds the function and opens it
+  await page.keyboard.press('Control+K');
+  await page.locator('.palette input').fill('@util');
+  await page.locator('.palette .item').filter({ hasText: 'util()' }).first().click();
+  await page.locator('.editor-pane .panehead b').filter({ hasText: '_util.gsc' }).waitFor();
+  page.once('dialog', (d) => d.accept());
+  await page.getByTitle('Back to file notes').click();
 });
 
 await step('Files: group the list by folder', async () => {

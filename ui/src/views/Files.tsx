@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { CodeEditor } from '../components/CodeEditor';
 import type { EditorHandle } from '../../editor/api';
+import { ModelViewer } from '../components/ModelViewer';
 import { useFileActions, TEXT_EDITABLE, type FileRef } from '../fileActions';
 import {
   LuFolder, LuFolderOpen, LuChevronRight, LuChevronDown, LuSearch, LuExternalLink, LuFolderSearch, LuCopy, LuTriangleAlert,
@@ -84,6 +85,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   // hide the file, opens its folder, selects it, and scrolls it into view.
   const pendingReveal = useRef<string | null>(null);
   const [highlightV, setHighlightV] = useState<string | undefined>(undefined);
+  const [gotoLine, setGotoLine] = useState<{ line: number; nonce: number } | undefined>(undefined);
   useEffect(() => {
     const fc = ctx.focus;
     if (fc?.type === 'folder') {
@@ -101,6 +103,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
       setDir(fc.action === 'reveal' ? parent : '');
       setSelectedRaw(f.id);
       setEditing(fc.action === 'edit' && f.state === 'present' ? f.id : null);
+      if (fc.action === 'edit' && fc.line) setGotoLine({ line: fc.line, nonce: Date.now() });
       setHighlightV(fc.action === 'history' ? fc.versionId || '' : undefined);
       pendingReveal.current = f.id;
     }).catch(() => setSelectedRaw(fc.id));
@@ -280,7 +283,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
       </div>
       {!full && listW.handle}
       <div className="pane grow">
-        {selected && editing === selected ? <EditorPane key={'ed' + selected} fileId={selected} ctx={ctx}
+        {selected && editing === selected ? <EditorPane key={'ed' + selected} fileId={selected} ctx={ctx} gotoLine={gotoLine}
             onDirty={(d) => { dirtyRef.current = d; }} wide={full} onToggleWide={toggleWide}
             onClose={() => { if (confirmLeave()) { dirtyRef.current = false; setEditing(null); } }}
             onSaved={() => { files.reload(); ctx.reload(); }} />
@@ -409,6 +412,8 @@ function FileDetailPanel({ fileId, ctx, onChanged, onEdit, highlightVersion }: {
         return add.length > 0 && <div className="addrow">{add.map((x) => <button key={x.label} className="chip" onClick={x.on}><LuPlus /> {x.label}</button>)}</div>;
       })()}
 
+      {SCRIPT_EXTS.has(f.ext) && f.state === 'present' && <ScriptOutline f={f} ctx={ctx} />}
+
       <FilePreview f={f} />
 
       <div className="docsec">
@@ -447,7 +452,112 @@ export async function resolveInternal(ctx: ProjectCtx, kind: 'note' | 'file' | '
   } catch (e: any) { toast(e.message, 'error'); }
 }
 
+/** Functions defined in a script, its #includes, and where each function is used. */
+function ScriptOutline({ f, ctx }: { f: FileDetail; ctx: ProjectCtx }) {
+  const syms = useLoad(() => call<any[]>('symbols.inFile', { fileId: f.id }), [f.id, f.sha256]);
+  const [open, setOpen] = useState(true);
+  const [q, setQ] = useState('');
+  const [refs, setRefs] = useState<{ name: string; items: any[] | null } | null>(null);
+  const go = (fileId: string, line?: number) => ctx.nav.go({ view: 'project', id: ctx.project.id, tab: 'files', focus: { type: 'file', id: fileId, action: line ? 'edit' : 'reveal', line, nonce: Date.now() } });
+  const fns = (syms.data || []).filter((s) => s.kind === 'function' && (!q || s.name.toLowerCase().includes(q.toLowerCase())));
+  const incs = (syms.data || []).filter((s) => s.kind === 'include');
+  const showRefs = async (name: string) => {
+    setRefs({ name, items: null });
+    try { setRefs({ name, items: await call<any[]>('symbols.references', { projectId: ctx.project.id, name }) }); } catch { setRefs({ name, items: [] }); }
+  };
+  return (
+    <div className="docsec">
+      <h3 style={{ cursor: 'pointer' }} onClick={() => setOpen(!open)}>{open ? <LuChevronDown /> : <LuChevronRight />} Functions <span className="small dim" style={{ fontWeight: 400 }}>{syms.data ? `${(syms.data || []).filter((s) => s.kind === 'function').length} defined${incs.length ? ` · ${incs.length} include${incs.length === 1 ? '' : 's'}` : ''}` : ''}</span></h3>
+      {open && (syms.error ? <div className="small muted">{syms.error}</div> : !syms.data ? <div className="small muted">Indexing…</div> : <>
+        {incs.length > 0 && <div className="row wrap small" style={{ gap: 4, marginBottom: 8 }}>
+          {incs.map((i) => i.targetId
+            ? <button key={i.line} className="chip" title={`Line ${i.line} — open ${i.targetPath}`} onClick={() => go(i.targetId)}>#{i.signature.replace(/^#\w+\s*/, '')}</button>
+            : <span key={i.line} className="chip" style={{ opacity: 0.6 }} title="Not in this project (engine or another mod)">#{i.signature.replace(/^#\w+\s*/, '')}</span>)}
+        </div>}
+        {(syms.data || []).some((s) => s.kind === 'function') ? <>
+          {fns.length > 8 || q ? <div className="searchinput" style={{ width: '100%', marginBottom: 6 }}><LuSearch /><input className="input" placeholder="Filter functions…" value={q} onChange={(e) => setQ(e.target.value)} /></div> : null}
+          <div className="symlist">
+            {fns.map((s) => (
+              <div key={s.line} className="symrow">
+                <button className="symname mono" title={`Open in the editor at line ${s.line}`} onClick={() => go(f.id, s.line)}>{s.signature}</button>
+                <span className="dim small">:{s.line}</span>
+                <button className="btn ghost sm right" title="Where this function is called" onClick={() => showRefs(s.name)}>Uses</button>
+              </div>
+            ))}
+            {!fns.length && <div className="small muted">No functions match.</div>}
+          </div>
+        </> : <div className="small muted">No function definitions in this file.</div>}
+        {refs && <div className="refs">
+          <div className="row small"><b className="grow">Calls to <span className="mono">{refs.name}</span></b><button className="btn ghost sm icon" onClick={() => setRefs(null)}><LuX /></button></div>
+          {!refs.items ? <div className="small muted">Searching the project…</div> : !refs.items.length ? <div className="small muted">Not called anywhere in this project's scripts.</div>
+            : refs.items.map((r, i) => <button key={i} className="refrow" onClick={() => go(r.fileId, r.line)}><span className="mono small">{r.path}:{r.line}</span><span className="mono small dim">{r.text}</span></button>)}
+        </div>}
+        <p className="small dim" style={{ marginBottom: 0 }}>In the editor, press F12 or Ctrl+click a function name to jump to where it's defined.</p>
+      </>)}
+    </div>
+  );
+}
+
+const MODEL_EXTS = new Set(['stl', 'obj', '3mf']);
+
 function FilePreview({ f }: { f: FileDetail }) {
+  if (MODEL_EXTS.has(f.ext) && f.state === 'present') return <ModelPreview f={f} />;
+  return <TextImagePreview f={f} />;
+}
+
+function ModelPreview({ f }: { f: FileDetail }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <>
+      {f.ext === '3mf' && <PrintInfo f={f} />}
+      <div className="docsec">
+        <h3 style={{ cursor: 'pointer' }} onClick={() => setOpen(!open)}>{open ? <LuChevronDown /> : <LuChevronRight />} 3D preview</h3>
+        {open && <ModelViewer key={f.id + f.sha256} fileId={f.id} size={f.size} auto={f.size <= 40 * 1024 * 1024} />}
+      </div>
+    </>
+  );
+}
+
+const fmtDuration = (s: number) => { const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h ? `${h} h ${m} min` : `${m} min`; };
+
+/** What the slicer stored inside a .3mf — only fields the file actually has. */
+function PrintInfo({ f }: { f: FileDetail }) {
+  const info = useLoad(() => call<any>('files.threemfInfo', { id: f.id }), [f.id, f.sha256]);
+  if (info.error) return <div className="docsec"><h3>Print settings</h3><div className="small muted">{info.error}</div></div>;
+  if (!info.data) return <div className="docsec"><h3>Print settings</h3><div className="small muted">Reading the .3mf…</div></div>;
+  const d = info.data, s = d.settings || {};
+  const rows: [string, string | undefined][] = [
+    ['Printer', s.printer || s.printerModel], ['Process', s.process], ['Layer height', s.layerHeight && `${s.layerHeight} mm${s.firstLayerHeight ? ` (first ${s.firstLayerHeight} mm)` : ''}`],
+    ['Nozzle', s.nozzle && `${s.nozzle} mm`], ['Infill', s.infill && `${s.infill}${s.infillPattern ? ` · ${s.infillPattern}` : ''}`], ['Walls', s.walls],
+    ['Supports', s.supports !== undefined ? (s.supports === '1' || s.supports === 'true' ? `on${s.supportType ? ` · ${s.supportType}` : ''}` : 'off') : undefined], ['Plate', s.bed], ['Brim', s.brim],
+  ];
+  const known = rows.filter(([, v]) => v);
+  const plates = (d.plates || []).filter((p: any) => p.printSeconds || p.weightG);
+  return (
+    <div className="docsec">
+      <h3>Print settings <span className="small dim" style={{ fontWeight: 400 }}>from the .3mf{d.source ? ` (${d.source})` : ''}</span></h3>
+      <div className="printinfo">
+        {d.thumbnail && <img className="pi-thumb" src={d.thumbnail} alt="Plate preview saved by the slicer" />}
+        <div className="grow" style={{ minWidth: 0 }}>
+          {(d.title || d.designer) && <div style={{ marginBottom: 6 }}>{d.title && <b>{d.title}</b>}{d.designer && <span className="small dim"> by {d.designer}</span>}</div>}
+          {known.length > 0 ? <div className="kv">{known.map(([k, v]) => <Fragment key={k}><span>{k}</span><span>{v}</span></Fragment>)}</div>
+            : <div className="small muted">No slicer settings are stored in this file.</div>}
+          {s.filaments?.length > 0 && <div style={{ marginTop: 8 }}>
+            <div className="small dim" style={{ marginBottom: 4 }}>Filaments</div>
+            {s.filaments.map((x: any, i: number) => <div key={i} className="row small" style={{ gap: 6 }}><span className="swatch" style={{ background: /^#[0-9a-f]{6}/i.test(x.color) ? x.color.slice(0, 7) : 'transparent' }} /><span>{x.type}</span><span className="dim">{x.name}</span></div>)}
+          </div>}
+          {plates.length > 0 && <div style={{ marginTop: 8 }}>
+            {plates.map((p: any, i: number) => <div key={i} className="small">Plate {p.index || i + 1}: {p.printSeconds ? fmtDuration(p.printSeconds) : ''}{p.weightG ? ` · ${p.weightG.toFixed(1)} g` : ''}</div>)}
+          </div>}
+          {!d.sliced && <div className="small dim" style={{ marginTop: 6 }}>Not sliced yet — print time and filament use appear after slicing and saving the project.</div>}
+          {d.description && <details style={{ marginTop: 6 }}><summary className="small">Model description</summary><div className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{d.description}</div></details>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TextImagePreview({ f }: { f: FileDetail }) {
   const [open, setOpen] = useState(() => f.kind !== 'image' && canEdit(f) && f.size <= 64 * 1024);
   const [content, setContent] = useState<{ text?: string; img?: string; binary?: boolean; truncated?: boolean; error?: string } | null>(null);
   useEffect(() => {
@@ -519,7 +629,9 @@ function FileHistory({ f, ctx, highlight }: { f: FileDetail; ctx: ProjectCtx; hi
   );
 }
 
-function EditorPane({ fileId, ctx, onClose, onSaved, onDirty, wide, onToggleWide }: { fileId: string; ctx: ProjectCtx; onClose: () => void; onSaved: () => void; onDirty: (d: boolean) => void; wide: boolean; onToggleWide: () => void }) {
+const SCRIPT_EXTS = new Set(['gsc', 'csc', 'gsh']);
+
+function EditorPane({ fileId, ctx, onClose, onSaved, onDirty, wide, onToggleWide, gotoLine }: { fileId: string; ctx: ProjectCtx; onClose: () => void; onSaved: () => void; onDirty: (d: boolean) => void; wide: boolean; onToggleWide: () => void; gotoLine?: { line: number; nonce: number } }) {
   const doc = useLoad(() => call<any>('files.readText', { id: fileId }), [fileId]);
   const info = useLoad(() => call<FileDetail>('files.get', { id: fileId }), [fileId]);
   const [text, setText] = useState<string | null>(null);
@@ -543,6 +655,40 @@ function EditorPane({ fileId, ctx, onClose, onSaved, onDirty, wide, onToggleWide
   const edHandle = useRef<EditorHandle | null>(null);
   // keep typing after the Smart Save dialog closes
   const refocus = () => setTimeout(() => edHandle.current?.focus(), 0);
+  // jump to a line once the editor exists (from search, go-to-definition, the function list)
+  const pendingLine = useRef<number | null>(null);
+  useEffect(() => {
+    if (!gotoLine) return;
+    if (edHandle.current) edHandle.current.revealLine(gotoLine.line); else pendingLine.current = gotoLine.line;
+  }, [gotoLine]);
+  const menu = useContextMenu();
+  const isScript = SCRIPT_EXTS.has((info.data?.ext || doc.data?.path?.split('.').pop() || '').toLowerCase());
+  const openDef = (d: { fileId: string; line: number }) => {
+    if (d.fileId === fileId) edHandle.current?.revealLine(d.line);
+    else ctx.nav.go({ view: 'project', id: ctx.project.id, tab: 'files', focus: { type: 'file', id: d.fileId, action: 'edit', line: d.line, nonce: Date.now() } });
+  };
+  const goToDefinition = async (word: string, qualifier: string) => {
+    let defs: any[] = [];
+    try { defs = await call<any[]>('symbols.find', { projectId: ctx.project.id, name: word, qualifier }); } catch (e: any) { toast(e.message, 'error'); return; }
+    if (!defs.length) { toast(`No function “${word}” is defined in this project's scripts — it may be a built-in engine function or come from another mod.`, 'info'); return; }
+    const preferred = qualifier ? defs.filter((d) => { const stem = d.path.replace(/\.[^.]+$/, '').toLowerCase(); const q = qualifier.replace(/\\/g, '/').toLowerCase(); return stem === q || stem.endsWith('/' + q); }) : [];
+    if (defs.length === 1 || preferred.length === 1) return openDef(preferred[0] || defs[0]);
+    const box = document.querySelector('.editor-pane .panehead')?.getBoundingClientRect();
+    menu({ clientX: (box?.left || 300) + 60, clientY: (box?.bottom || 120) + 4, preventDefault() {} },
+      defs.slice(0, 20).map((d) => ({ label: `${d.signature} — ${d.path}:${d.line}`, onClick: () => openDef(d) })));
+  };
+  const hoverCache = useRef(new Map<string, string | null>());
+  const hover = async (word: string, qualifier: string) => {
+    const k = `${qualifier}::${word}`.toLowerCase();
+    if (hoverCache.current.has(k)) return hoverCache.current.get(k)!;
+    let text: string | null = null;
+    try {
+      const defs = await call<any[]>('symbols.find', { projectId: ctx.project.id, name: word, qualifier });
+      if (defs.length) text = defs.slice(0, 3).map((d) => '```gsc\n' + d.signature + '\n```\n' + `${d.path}:${d.line}`).join('\n\n') + (defs.length > 3 ? `\n\n…and ${defs.length - 3} more` : '') + '\n\nF12 or Ctrl+click to go there';
+    } catch { /* not indexed */ }
+    hoverCache.current.set(k, text);
+    return text;
+  };
   // Ctrl+S: follows the Smart Save setting. Ctrl+Shift+S / button: always the dialog.
   const requestSave = () => {
     const { text: t, saved: s0 } = latest.current;
@@ -595,7 +741,8 @@ function EditorPane({ fileId, ctx, onClose, onSaved, onDirty, wide, onToggleWide
         <button className="btn ghost sm icon" title={wide ? 'Show file list' : 'Full width'} onClick={onToggleWide}>{wide ? <LuMinimize2 /> : <LuMaximize2 />}</button>
         <button className="btn primary sm" disabled={!dirty || saving || doc.data.readonly} onClick={requestSave}><LuSave /> Save</button>
       </div>
-      <CodeEditor value={text} ext={info.data?.ext || doc.data.path.split('.').pop() || ''} readOnly={doc.data.readonly} onChange={setText} onSave={requestSave} onReady={(h) => { edHandle.current = h; }} onSaveWithBackup={() => { if (latest.current.text !== latest.current.saved) setSmart(true); }} />
+      <CodeEditor value={text} ext={info.data?.ext || doc.data.path.split('.').pop() || ''} readOnly={doc.data.readonly} onChange={setText} onSave={requestSave} onReady={(h) => { edHandle.current = h; if (pendingLine.current) { h.revealLine(pendingLine.current); pendingLine.current = null; } }}
+        onGoToDefinition={isScript ? goToDefinition : undefined} onHover={isScript ? hover : undefined} onSaveWithBackup={() => { if (latest.current.text !== latest.current.saved) setSmart(true); }} />
       {smart && <SmartSaveDialog fileId={fileId} fileName={info.data?.name || doc.data.path.split('/').pop()} projectName={ctx.project.name} projectId={ctx.project.id}
         relDir={doc.data.path.includes('/') ? doc.data.path.slice(0, doc.data.path.lastIndexOf('/')) : ''} linesChanged={changedLines(saved, text)}
         onCancel={() => { setSmart(false); refocus(); }} onSaveNormally={() => { setSmart(false); save().then(refocus); }} onSaveWithBackup={(c) => { setSmart(false); save(undefined, c).then(refocus); }} />}

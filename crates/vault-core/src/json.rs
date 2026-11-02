@@ -33,6 +33,11 @@ impl Json {
             m.insert(k.to_string(), v.into());
         }
     }
+    pub fn remove(&mut self, k: &str) {
+        if let Json::Obj(m) = self {
+            m.remove(k);
+        }
+    }
     pub fn get(&self, k: &str) -> Option<&Json> {
         match self {
             Json::Obj(m) => m.get(k).filter(|v| !matches!(v, Json::Null)),

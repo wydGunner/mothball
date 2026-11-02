@@ -5,7 +5,7 @@
 use crate::db::DbResult;
 use crate::json::Json;
 use crate::projects::NewProject;
-use crate::{backup, files, git, knowledge, legacy, profiles, projects, search, snapshots, tasks, timeline, versions, Vault};
+use crate::{backup, files, git, knowledge, legacy, profiles, projects, search, snapshots, symbols, tasks, timeline, versions, Vault};
 use std::path::PathBuf;
 
 fn s(a: &Json, k: &str) -> DbResult<String> {
@@ -60,6 +60,12 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "files.get" => files::get(v, &s(a, "id")?),
         "files.preview" => files::preview_text(v, &s(a, "id")?, 256 * 1024),
         "files.image" => files::read_base64(v, &s(a, "id")?, 15 * 1024 * 1024),
+        "files.mesh" => files::mesh(v, &s(a, "id")?),
+        "symbols.find" => symbols::find(v, &s(a, "projectId")?, &s(a, "name")?, &os(a, "qualifier").unwrap_or_default()),
+        "symbols.inFile" => symbols::in_file(v, &s(a, "fileId")?),
+        "symbols.search" => symbols::search(v, os(a, "projectId").as_deref(), &s(a, "query")?, a.get("limit").and_then(|x| x.as_i64()).unwrap_or(20)),
+        "symbols.references" => symbols::references(v, &s(a, "projectId")?, &s(a, "name")?, 200),
+        "files.threemfInfo" => files::threemf_info(v, &s(a, "id")?),
         "files.import" => files::import_op(
             v,
             &s(a, "projectId")?,
@@ -224,7 +230,26 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         ),
 
         // backup & import
-        "backup.create" => backup::create(v, &PathBuf::from(s(a, "dest")?), os(a, "projectId").as_deref()),
+        "backup.create" => backup::create_opts(
+            v,
+            &PathBuf::from(s(a, "dest")?),
+            os(a, "projectId").as_deref(),
+            backup::Opts {
+                include_files: a.get("includeFiles").and_then(|x| x.as_bool()).unwrap_or(false),
+                max_file_mb: a.get("maxFileMb").and_then(|x| x.as_f64()).unwrap_or(500.0),
+                zip: a.get("zip").and_then(|x| x.as_bool()).unwrap_or(false),
+                auto: false,
+            },
+        ),
+        "backup.inspect" => backup::inspect(v, &PathBuf::from(s(a, "path")?)),
+        "backup.restorePreview" => backup::restore_preview(v, &PathBuf::from(s(a, "path")?), &s(a, "projectId")?),
+        "backup.restoreFiles" => backup::restore_files(v, &PathBuf::from(s(a, "path")?), &s(a, "projectId")?, a.get("overwrite").and_then(|x| x.as_bool()).unwrap_or(false)),
+        "backup.restoreDatabase" => backup::stage_database_restore(v, &PathBuf::from(s(a, "path")?)),
+        "backup.cancelDatabaseRestore" => backup::cancel_database_restore(v),
+        "backup.pendingRestore" => Ok(Json::obj().with("pending", v.data_dir.join(backup::PENDING_DB).exists())),
+        "backup.schedule" => backup::schedule_get(v),
+        "backup.setSchedule" => backup::schedule_set(v, a.get("schedule").unwrap_or(&Json::obj())),
+        "backup.runDue" => backup::run_due(v, a.get("force").and_then(|x| x.as_bool()).unwrap_or(false)),
         "backup.verify" => backup::verify(&PathBuf::from(s(a, "path")?)),
         "legacy.importPrintVault" => legacy::import_print_vault(v, &PathBuf::from(s(a, "path")?)),
 

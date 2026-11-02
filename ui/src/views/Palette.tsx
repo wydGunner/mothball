@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
-import { LuPlus, LuLayoutDashboard, LuSearch, LuSettings, LuFolder, LuRefreshCw, LuNotebookPen, LuListTodo, LuHistory, LuGitBranch, LuFiles, LuShieldCheck, LuCamera, LuGitCompareArrows, LuUndo2, LuDownload, LuCopy, LuFileSearch } from 'react-icons/lu';
+import { LuPlus, LuLayoutDashboard, LuSearch, LuSettings, LuFolder, LuRefreshCw, LuNotebookPen, LuListTodo, LuHistory, LuGitBranch, LuFiles, LuShieldCheck, LuCamera, LuGitCompareArrows, LuUndo2, LuDownload, LuCopy, LuFileSearch, LuSquareFunction } from 'react-icons/lu';
 import { call, pickFolder, isTauri, revealPath } from '../ipc';
 import { cx, ago, dateTime } from '../format';
 import { KindIcon, useAction, useContextMenu, useContextMenuOpen, useToast, type MenuItem } from '../components/common';
@@ -33,6 +33,7 @@ export function CommandPalette({ nav, route, onClose, onNewProject }: { nav: Nav
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
   const [hits, setHits] = useState<Hit[]>([]);
+  const [syms, setSyms] = useState<any[]>([]);
   const [tick, setTick] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -57,9 +58,15 @@ export function CommandPalette({ nav, route, onClose, onNewProject }: { nav: Nav
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('click', refocus); };
   }, [menuOpen, onClose]);
   useEffect(() => {
-    if (q.trim().length < 2) { setHits([]); return; }
+    if (q.trim().length < 2) { setHits([]); setSyms([]); return; }
     let alive = true;
-    const t = setTimeout(() => call<Hit[]>('search', { query: q, limit: 25 }).then((h) => alive && setHits(h)).catch(() => alive && setHits([])), 120);
+    const symOnly = q.trim().startsWith('@');
+    const t = setTimeout(() => {
+      if (!symOnly) call<Hit[]>('search', { query: q, limit: 25 }).then((h) => alive && setHits(h)).catch(() => alive && setHits([]));
+      else setHits([]);
+      // script functions (GSC/CSC): "@name" searches only functions
+      call<any[]>('symbols.search', { query: q.trim(), limit: symOnly ? 30 : 6, projectId: route.view === 'project' && symOnly ? route.id : null }).then((r) => alive && setSyms(r)).catch(() => alive && setSyms([]));
+    }, 120);
     return () => { alive = false; clearTimeout(t); };
   }, [q, tick]);
 
@@ -151,8 +158,16 @@ export function CommandPalette({ nav, route, onClose, onNewProject }: { nav: Nav
       }
       return { key: h.type + h.id, icon: HIT_ICON[h.type], label: <Highlight text={h.title} terms={terms} />, sub: `${h.type} · ${h.projectName || ''}`, snippet: h.snippet, run: () => { onClose(); openHit(nav, h); } };
     });
-    return [...local, ...remote].slice(0, 50);
-  }, [q, hits, nav, route, onNewProject, terms, goFile, goHistory, goFolder, onClose]);
+    const fnTerm = q.trim().replace(/^@/, '');
+    const symItems: Item[] = syms.map((d) => ({
+      key: 'sym' + d.fileId + ':' + d.line,
+      icon: <LuSquareFunction />,
+      label: <><span className="kindtag">function</span><span className="mono"><Highlight text={d.signature} terms={[fnTerm]} /></span></>,
+      sub: `${d.projectName} / ${d.path}:${d.line}`,
+      run: () => { onClose(); nav.go({ view: 'project', id: d.projectId, tab: 'files', focus: { type: 'file', id: d.fileId, action: 'edit', line: d.line, nonce: Date.now() } }); },
+    }));
+    return (q.trim().startsWith('@') ? symItems : [...local, ...remote, ...symItems]).slice(0, 60);
+  }, [q, hits, syms, nav, route, onNewProject, terms, goFile, goHistory, goFolder, onClose]);
 
   useEffect(() => setSel(0), [q]);
   useEffect(() => { (list.current?.querySelector('.item.on') as HTMLElement | null)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [sel]);
@@ -196,7 +211,7 @@ export function CommandPalette({ nav, route, onClose, onNewProject }: { nav: Nav
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal palette" role="dialog" aria-label="Search and commands">
-        <input ref={input} value={q} placeholder="Search files, notes, tasks, projects — or type a command…" onChange={(e) => setQ(e.target.value)}
+        <input ref={input} value={q} placeholder="Search files, notes, tasks, projects, functions (@name) — or type a command…" onChange={(e) => setQ(e.target.value)}
           role="combobox" aria-expanded="true" aria-controls="pv-palette-list" aria-activedescendant={items[sel] ? `pv-item-${sel}` : undefined}
           onKeyDown={(e) => {
             if (e.key === 'Escape') { if (!menuOpen()) onClose(); }

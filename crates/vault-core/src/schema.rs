@@ -279,6 +279,25 @@ CREATE TABLE import_batches (
 -- Project groups (e.g. "MW2 mods", "3D prints"): a plain label, '' = ungrouped.
 ALTER TABLE projects ADD COLUMN group_name TEXT NOT NULL DEFAULT '';
 "#,
+), (
+    5,
+    r#"
+-- Script function index (GSC/CSC), refreshed per file by content hash.
+CREATE TABLE symbol_files (
+  file_id TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+  sha256 TEXT
+);
+CREATE TABLE symbols (
+  file_id TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  line INTEGER NOT NULL,
+  signature TEXT NOT NULL
+);
+CREATE INDEX symbols_name ON symbols(project_id, name COLLATE NOCASE);
+CREATE INDEX symbols_file ON symbols(file_id);
+"#,
 )];
 
 pub fn current_version(db: &Db) -> DbResult<i64> {

@@ -1,8 +1,8 @@
-import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react';
+import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LuLayoutDashboard, LuSearch, LuSettings, LuPanelLeftClose, LuPanelLeftOpen, LuStar, LuClock, LuPlus, LuChevronRight, LuChevronDown } from 'react-icons/lu';
 import { call, type Project } from './ipc';
-import { ToastProvider, ConfirmProvider, ContextMenuProvider, PromptProvider, ProjectIcon } from './components/common';
+import { ToastProvider, ConfirmProvider, ContextMenuProvider, PromptProvider, ProjectIcon, useToast } from './components/common';
 import { Dashboard, NewProjectDialog } from './views/Dashboard';
 import { ProjectView, type Tab } from './views/Project';
 import { SearchView } from './views/Search';
@@ -24,7 +24,7 @@ export type Route =
 
 /** What to show in a project. `action` + `nonce` let the same file be revealed/opened again. */
 /** What a project view should bring into view. type 'folder': id is the folder's relative path ('' = project root). action 'history': open the file's history, highlighting versionId when given. */
-export interface Focus { type: 'file' | 'note' | 'task' | 'folder'; id: string; action?: 'reveal' | 'edit' | 'history'; versionId?: string; nonce?: number }
+export interface Focus { type: 'file' | 'note' | 'task' | 'folder'; id: string; action?: 'reveal' | 'edit' | 'history'; versionId?: string; /** with action 'edit': 1-based line to show */ line?: number; nonce?: number }
 
 export interface Nav { go: (r: Route) => void; refreshProjects: () => void; projects: Project[] }
 
@@ -68,6 +68,22 @@ function App() {
   }, [go, back]);
 
   const byName = (a: Project, b: Project) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
+  // Scheduled backups: checked at start-up and every 30 minutes while the app is open.
+  const toastFn = useToast();
+  const toastRef = useRef(toastFn);
+  toastRef.current = toastFn;
+  useEffect(() => {
+    const toast = (m: string, k: any) => toastRef.current(m, k);
+    const tick = () => call<any>('backup.runDue').then((r) => {
+      if (!r.ran) return;
+      if (r.result.ok) toast(`Scheduled backup saved${r.removed?.length ? ` (${r.removed.length} older scheduled backup(s) removed as configured)` : ''}`, 'success');
+      else toast(`Scheduled backup failed: ${r.result.error}`, 'error');
+    }).catch(() => {});
+    const first = setTimeout(tick, 8000);
+    const t = setInterval(tick, 30 * 60 * 1000);
+    return () => { clearTimeout(first); clearInterval(t); };
+  }, []);
+
   const favorites = projects.filter((p) => p.favorite).sort(byName);
   // Groups list all their projects A→Z (collapsible); Recent covers the rest.
   const groupNames = [...new Set(projects.filter((p) => !p.favorite && p.group).map((p) => p.group))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));

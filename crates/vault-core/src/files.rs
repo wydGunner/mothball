@@ -787,6 +787,30 @@ pub fn read_base64(v: &Vault, file_id: &str, max_bytes: u64) -> DbResult<Json> {
     Ok(Json::obj().with("mime", mime).with("base64", base64(&data)))
 }
 
+fn model_path(v: &Vault, file_id: &str) -> DbResult<(std::path::PathBuf, String)> {
+    let r = v.db.one("SELECT project_id, rel_path, ext, state FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
+    if r.s("state") != "present" {
+        return Err("The file is not on disk".into());
+    }
+    let root = projects::root_of(v, &r.s("project_id"))?;
+    Ok((safe_join(&root, &r.s("rel_path"))?, r.s("ext")))
+}
+
+/// Triangles for the 3D preview (STL, OBJ, 3MF).
+pub fn mesh(v: &Vault, file_id: &str) -> DbResult<Json> {
+    let (path, ext) = model_path(v, file_id)?;
+    crate::models::preview_mesh(&path, &ext)
+}
+
+/// Print information stored in a .3mf (printer, filaments, time, thumbnail…).
+pub fn threemf_info(v: &Vault, file_id: &str) -> DbResult<Json> {
+    let (path, ext) = model_path(v, file_id)?;
+    if ext != "3mf" {
+        return Err("Not a .3mf file".into());
+    }
+    crate::models::threemf_info(&path)
+}
+
 pub fn base64(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut s = String::with_capacity(data.len().div_ceil(3) * 4);

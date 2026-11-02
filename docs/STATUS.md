@@ -5,7 +5,10 @@ or not yet verified on Windows · ⛔ not implemented yet
 
 ## How this was verified
 
-* `cargo test` for `vault-core`: 34 unit/integration tests (reconciliation
+* `cargo test` for `vault-core`: 42 unit/integration tests (ZIP read/write +
+  inflate vectors, backups with project files / .zip / restore / schedule
+  retention / staged database restore, 3MF meshes + print info, STL/OBJ,
+  GSC function parsing, go-to-definition and call sites, reconciliation
   cases, imports + undo import, move between projects, remove from vault,
   Smart Save backups + names, dedup, restore, storage location changes and
   unavailable storage, snapshots, retention dry run, notes, tasks, search, git,
@@ -19,7 +22,11 @@ or not yet verified on Windows · ⛔ not implemented yet
   files kept, automatic undo snapshot), import preview + Undo import (changed
   and unrelated files kept), Remove from Project Vault, keyboard context
   menus, clickable breadcrumbs, the save-mode setting and moving backup
-  storage, plus importing the real Print Vault database you supplied.
+  storage, .zip backups with project files, restoring a deleted file from a
+  backup, staging/cancelling a database restore, scheduled backups, the 3D
+  preview (WebGL) and 3MF print info on your real Bambu project, the GSC
+  function list, F12 go-to-definition and `@function` search, plus importing
+  the real Print Vault database you supplied.
 * **Verified by you on Windows:** the app builds and runs (Nov 1).
 * **Still unverified on Windows:** the Monaco diff editor (the tests here use the built-in diff fallback), the Recycle Bin path for Delete / Undo import / Move to another project, the folder picker for backup storage, Explorer “reveal”, the new GitHub panel's sign-in flow, OneDrive online-only file detection, the import picker's type filters, and `tsc` type-checking. Previously unverified: the Tauri shell (`src-tauri/`) and the Windows
   installer have not been compiled, and `tsc` type-checking has not run. The
@@ -41,7 +48,7 @@ or not yet verified on Windows · ⛔ not implemented yet
 | 7 | Git history when available | ✅ per-file (follows renames) and project log, diffs, status; plus Project Vault's own version history without Git |
 | 8 | Return months later and understand it | ✅ docs follow renames/moves, timeline, revisions |
 | 9 | Separate 3D printing project with models, materials, assembly notes | ✅ 3D module fields, print log, STL bounds, Print Vault import |
-| 10 | Back up and restore metadata and files reliably | 🟡 verified metadata backups + readable export; restore is a documented manual step; project files are not copied |
+| 10 | Back up and restore metadata and files reliably | ✅ verified backups (folder or .zip), optionally with the project files; scheduled backups; in-app restore of files (with preview) and of the database (staged, previous kept) |
 
 ## By area
 
@@ -55,7 +62,7 @@ or not yet verified on Windows · ⛔ not implemented yet
 | Linked / managed projects | ✅ | re-link moved folders, unreachable-drive handling |
 | File index & reconciliation | ✅ | stable ids, hash-based moves, review queue for ambiguity |
 | Imports | ✅ | file picker, OS drag-and-drop (🟡 desktop-only, untested), dedupe, never overwrite |
-| Previews | ✅ | text/code, images; 🟡 no 3D model viewer |
+| Previews | ✅ | text/code, images, 3D models (STL / OBJ / 3MF, WebGL: drag/arrow keys to rotate, wheel/± to zoom; huge models are simplified for display and say so) |
 | File docs history | ✅ | doc revisions, detected-change events |
 | Duplicates | ✅ | per-file and per-project (by SHA-256) |
 | Open with default app / reveal in Explorer | 🟡 | via Tauri opener plugin; untested on Windows |
@@ -79,9 +86,10 @@ or not yet verified on Windows · ⛔ not implemented yet
 | Import operations | ✅ | Copy (default), Move (Undo moves files back, never overwriting), or “Edit them where they are” — turns a managed project into a linked one on your folder, copying its existing files there first without overwriting anything |
 | Import safety | ✅ | preview shows project + destination folder, copy (never move), per-file conflicts renamed; Undo import from the toast or the Timeline removes only unchanged copies; move files between projects keeps notes and history |
 | Project-type file focus | ✅ | Files view groups by role (e.g. Print projects / Meshes / Source models), import picker filters by type |
-| Backups | 🟡 | verified, portable; ⛔ scheduled backups, ⛔ optional inclusion of project files, ⛔ in-app restore with preview, ⛔ ZIP export |
+| Backups | ✅ | verified, portable; optional project files (size limit); folder or .zip (uncompressed, read back and checked); scheduled backups while the app is open with opt-in retention of scheduled ones only; in-app restore with preview. 🟡 the Windows folder/file pickers and app restart after a database restore are untested |
+| GSC / CSC scripting | ✅ | syntax highlighting (Monaco), function index per project (refreshed by content hash), F12 / Ctrl+click go to definition (honours `path::function`), hover shows signature + location (Monaco), per-file function list with #include links and “Uses” (call sites), `@name` function search in Ctrl+K. 🟡 the Monaco parts (highlighting, Ctrl+click, hover) are untested here — the tests use the plain editor, where F12 works |
 | Print Vault import | ✅ | read-only; projects linked in place |
-| 3MF metadata extraction | ⛔ | Print Vault's 3MF parser needs ZIP inflate; STL bounds ported |
+| 3MF print info | ✅ | own ZIP/inflate reader: printer, process, layer height, nozzle, infill, walls, supports, plate, filaments (type/colour), sliced plates (time, grams), slicer's plate thumbnail, title/designer/description — Bambu Studio, OrcaSlicer and PrusaSlicer formats; “Fill empty fields from a .3mf” in a print project's details. Checked against a real Bambu X2D project |
 | Multiple projects open as tabs | ⛔ | one project at a time with tabbed sections |
 | Project thumbnails | 🟡 | emoji / category icon; no image thumbnails yet |
 | OS file watcher | ⛔ | polling chosen deliberately (no handles held on project folders); a watcher can be added on top |

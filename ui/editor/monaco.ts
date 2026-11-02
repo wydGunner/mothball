@@ -2,7 +2,49 @@
 // and loaded on first use. Workers are bundled next to it; nothing is fetched
 // from the internet.
 import * as monaco from 'monaco-editor';
-import type { DiffHandle, DiffOptions, EditorHandle, EditorOptions } from './api';
+import { wordAt, type DiffHandle, type DiffOptions, type EditorHandle, type EditorOptions } from './api';
+
+// ---- GSC / CSC (Call of Duty scripts)
+let gscReady = false;
+function registerGsc() {
+  if (gscReady) return;
+  gscReady = true;
+  monaco.languages.register({ id: 'gsc', extensions: ['.gsc', '.csc', '.gsh'], aliases: ['GSC', 'gsc'] });
+  monaco.languages.setLanguageConfiguration('gsc', {
+    comments: { lineComment: '//', blockComment: ['/*', '*/'] },
+    brackets: [['{', '}'], ['[', ']'], ['(', ')']],
+    autoClosingPairs: [{ open: '{', close: '}' }, { open: '[', close: ']' }, { open: '(', close: ')' }, { open: '"', close: '"', notIn: ['string'] }],
+    surroundingPairs: [{ open: '{', close: '}' }, { open: '(', close: ')' }, { open: '"', close: '"' }],
+    indentationRules: { increaseIndentPattern: /^.*\{[^}"']*$/, decreaseIndentPattern: /^\s*\}/ },
+  });
+  monaco.languages.setMonarchTokensProvider('gsc', {
+    ignoreCase: true,
+    keywords: ['if', 'else', 'for', 'foreach', 'in', 'while', 'do', 'switch', 'case', 'default', 'break', 'continue', 'return', 'function', 'private', 'autoexec', 'class', 'var', 'const'],
+    threading: ['thread', 'childthread', 'wait', 'waittill', 'waittillmatch', 'waittillframeend', 'waitframe', 'notify', 'endon', 'isdefined'],
+    builtins: ['self', 'level', 'game', 'anim', 'world', 'undefined', 'true', 'false'],
+    tokenizer: {
+      root: [
+        [/^\s*#\s*(include|using|insert|define|if|ifdef|ifndef|else|endif|using_animtree)\b.*$/, 'annotation'],
+        [/\/\/.*$/, 'comment'],
+        [/\/\*/, 'comment', '@comment'],
+        [/"([^"\\]|\\.)*$/, 'string.invalid'],
+        [/"/, 'string', '@string'],
+        [/&"/, 'string', '@string'],
+        [/%[A-Za-z0-9_]+/, 'type'],
+        [/#animtree/, 'type'],
+        [/\d+(\.\d+)?/, 'number'],
+        [/[A-Za-z_][\w\\]*::/, 'type'],
+        [/[A-Za-z_]\w*(?=\s*\()/, { cases: { '@keywords': 'keyword', '@threading': 'keyword.control', '@default': 'variable' } }],
+        [/[A-Za-z_]\w*/, { cases: { '@keywords': 'keyword', '@threading': 'keyword.control', '@builtins': 'storage', '@default': 'identifier' } }],
+        [/[{}()[\]]/, 'delimiter'],
+        [/[=><!~?:&|+\-*/^%]+/, 'operator'],
+        [/[;,.]/, 'delimiter'],
+      ],
+      comment: [[/[^/*]+/, 'comment'], [/\*\//, 'comment', '@pop'], [/[/*]/, 'comment']],
+      string: [[/[^\\"]+/, 'string'], [/\\./, 'string.escape'], [/"/, 'string', '@pop']],
+    },
+  } as any);
+}
 
 (self as any).MonacoEnvironment = {
   getWorkerUrl(_id: string, label: string) {
@@ -79,6 +121,7 @@ function defineTheme(p: { a1: string; a2: string; a3: string }) {
 
 export function create(el: HTMLElement, o: EditorOptions): EditorHandle {
   defineTheme(o.palette);
+  registerGsc();
   const ed = monaco.editor.create(el, {
     value: o.value,
     language: o.language,
@@ -99,12 +142,43 @@ export function create(el: HTMLElement, o: EditorOptions): EditorHandle {
   ed.onDidChangeModelContent(() => o.onChange(ed.getValue()));
   ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => o.onSave());
   ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyS, () => o.onSaveWithBackup?.());
+  // Go to definition (F12 / Ctrl+click) is answered by the app, which knows the project's files.
+  const wordAtPos = (pos: monaco.Position | null) => {
+    const m = ed.getModel();
+    if (!pos || !m) return null;
+    return wordAt(m.getLineContent(pos.lineNumber), pos.column - 1);
+  };
+  if (o.onGoToDefinition) {
+    ed.addAction({
+      id: 'pv.goToDefinition', label: 'Go to Definition', keybindings: [monaco.KeyCode.F12], contextMenuGroupId: 'navigation', contextMenuOrder: 0,
+      run: () => { const w = wordAtPos(ed.getPosition()); if (w) o.onGoToDefinition!(w.word, w.qualifier); },
+    });
+    ed.onMouseDown((e) => {
+      if ((e.event.ctrlKey || e.event.metaKey) && e.target.position) {
+        const w = wordAtPos(e.target.position);
+        if (w) { e.event.preventDefault(); o.onGoToDefinition!(w.word, w.qualifier); }
+      }
+    });
+  }
+  let hoverReg: monaco.IDisposable | null = null;
+  if (o.onHover) {
+    hoverReg = monaco.languages.registerHoverProvider(o.language, {
+      provideHover: async (model, pos) => {
+        if (model !== ed.getModel()) return null;
+        const w = wordAt(model.getLineContent(pos.lineNumber), pos.column - 1);
+        if (!w) return null;
+        const text = await o.onHover!(w.word, w.qualifier);
+        return text ? { contents: [{ value: text }] } : null;
+      },
+    });
+  }
   return {
+    revealLine: (line) => { ed.revealLineInCenter(line); ed.setPosition({ lineNumber: line, column: 1 }); ed.focus(); },
     getValue: () => ed.getValue(),
     setValue: (v) => ed.setValue(v),
     focus: () => ed.focus(),
     setPalette: (p) => { defineTheme(p); monaco.editor.setTheme('pv-black'); },
-    dispose: () => { ed.getModel()?.dispose(); ed.dispose(); },
+    dispose: () => { hoverReg?.dispose(); ed.getModel()?.dispose(); ed.dispose(); },
   };
 }
 

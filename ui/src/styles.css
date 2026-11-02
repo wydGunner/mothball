@@ -414,3 +414,23 @@ input[type=checkbox] { accent-color: var(--accent); }
 .filesec { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 12px; background: var(--bg1); border: 0; border-bottom: 1px solid var(--line); color: var(--fg1); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; text-align: left; position: sticky; top: 0; z-index: 1; }
 .filesec:hover { color: var(--fg0); }
 .filesec .count { color: var(--fg3); font-weight: 400; }
+.modelview { position: relative; height: 340px; border: 1px solid var(--line); border-radius: 8px; background: radial-gradient(circle at 50% 40%, var(--bg2), var(--bg0)); overflow: hidden; }
+.modelview canvas { width: 100%; height: calc(100% - 30px); display: block; cursor: grab; outline: none; }
+.modelview canvas:active { cursor: grabbing; }
+.modelview canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.modelview .mv-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 30px; display: flex; align-items: center; padding: 0 8px; border-top: 1px solid var(--line); background: var(--bg1); }
+.modelview .mv-loading { position: absolute; inset: 0; display: grid; place-items: center; }
+.modelview.empty { height: auto; display: flex; flex-direction: column; gap: 6px; align-items: center; padding: 20px; }
+.printinfo { display: flex; gap: 14px; align-items: flex-start; }
+.pi-thumb { width: 150px; height: 150px; object-fit: contain; border-radius: 8px; background: var(--bg2); border: 1px solid var(--line); flex: none; }
+.swatch { width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--line2); display: inline-block; flex: none; }
+@media (max-width: 1200px) { .printinfo { flex-direction: column; } }
+.symlist { display: grid; gap: 1px; max-height: 320px; overflow: auto; }
+.symrow { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; }
+.symrow:hover { background: var(--bg1); }
+.symname { background: none; border: 0; color: var(--fg0); cursor: pointer; padding: 2px 0; text-align: left; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.symname:hover { color: var(--accent-text); text-decoration: underline; }
+.refs { margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--bg1); display: grid; gap: 2px; max-height: 260px; overflow: auto; }
+.refrow { display: grid; gap: 1px; text-align: left; background: none; border: 0; padding: 4px 6px; border-radius: 4px; cursor: pointer; color: var(--fg1); }
+.refrow:hover { background: var(--bg2); }
+.refrow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
