@@ -5,7 +5,7 @@
 use crate::db::DbResult;
 use crate::json::Json;
 use crate::projects::NewProject;
-use crate::{backup, files, git, knowledge, legacy, profiles, projects, search, snapshots, symbols, tasks, timeline, versions, Vault};
+use crate::{backup, files, git, knowledge, legacy, profiles, projects, search, snapshots, symbols, tasks, timeline, versions, watch, Vault};
 use std::path::PathBuf;
 
 fn s(a: &Json, k: &str) -> DbResult<String> {
@@ -100,6 +100,9 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "files.duplicates" => files::duplicates(v, &s(a, "projectId")?),
         "files.groups" => files::groups(v, &s(a, "projectId")?),
         "profiles.groups" => Ok(profiles::groups_json(&s(a, "category")?)),
+        "watch.settings" => watch::settings(v),
+        "watch.setSettings" => watch::set_settings(v, a.get("patch").unwrap_or(&Json::obj())),
+        "watch.stamp" => watch::stamp(v),
         "profiles.info" => Ok(profiles::info_json(&s(a, "category")?)),
 
         // versions

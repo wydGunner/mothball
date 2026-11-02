@@ -108,6 +108,22 @@ function App() {
     return () => { clearTimeout(first); clearInterval(t); };
   }, []);
 
+  // Background change watching (desktop shell / dev server) bumps a stamp
+  // whenever it records changes; refresh what's on screen when it moves.
+  useEffect(() => {
+    let last: number | null = null;
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return;
+      call<{ stamp: number }>('watch.stamp').then(({ stamp }) => {
+        if (last !== null && stamp !== last) { refreshProjects(); window.dispatchEvent(new CustomEvent('pv:changed')); }
+        last = stamp;
+      }).catch(() => {});
+    };
+    tick();
+    const t = setInterval(tick, 4000);
+    return () => clearInterval(t);
+  }, [refreshProjects]);
+
   const favorites = projects.filter((p) => p.favorite).sort(byName);
   // Groups list all their projects A→Z (collapsible); Recent covers the rest.
   const groupNames = [...new Set(projects.filter((p) => !p.favorite && p.group).map((p) => p.group))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));

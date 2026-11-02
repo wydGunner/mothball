@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import { LuFolderOpen, LuShieldCheck, LuDatabaseBackup, LuRefreshCw, LuInfo, LuTriangleAlert, LuArchiveRestore, LuPalette, LuFileCode, LuHardDrive } from 'react-icons/lu';
+import { LuFolderOpen, LuShieldCheck, LuDatabaseBackup, LuRefreshCw, LuInfo, LuTriangleAlert, LuArchiveRestore, LuPalette, LuFileCode, LuHardDrive, LuRadar } from 'react-icons/lu';
 import { call, pickFolder, pickFiles, revealPath, isTauri } from '../ipc';
 import { Modal, useAction, useConfirm, useLoad, useToast } from '../components/common';
 import { getSaveMode, setSaveMode, getLargeThreshold, setLargeThreshold, type SaveMode } from './SmartSave';
@@ -299,10 +299,39 @@ function UpdateCheck() {
   );
 }
 
-type Section = 'appearance' | 'editor' | 'backups' | 'restore' | 'storage' | 'about';
+function WatchCard() {
+  const w = useLoad(() => call<{ enabled: boolean; seconds: number }>('watch.settings'), []);
+  const [cur, setCur] = useState<{ enabled: boolean; seconds: number } | null>(null);
+  useEffect(() => { if (w.data) setCur(w.data); }, [w.data]);
+  const act = useAction();
+  const save = async (patch: Partial<{ enabled: boolean; seconds: number }>) => {
+    if (!cur) return;
+    setCur({ ...cur, ...patch });
+    const r = await act(() => call<any>('watch.setSettings', { patch }));
+    if (r) setCur(r);
+  };
+  if (!cur) return null;
+  return (
+    <div className="card pad">
+      <h2>Watch project folders</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>Checks every project’s folder in the background, so edits you make in other programs (Blender, Vegas, your slicer, an IDE) land on the timeline within seconds, and the dashboard stays current. Only file sizes and dates are compared; contents are read only for files that changed. Projects whose folders are large are checked less often.</p>
+      <label className="row"><input type="checkbox" checked={cur.enabled} onChange={(e) => save({ enabled: e.target.checked })} /> Watch all projects for changes</label>
+      <div className="row small" style={{ marginTop: 10, opacity: cur.enabled ? 1 : 0.5 }}>
+        Check every
+        <select className="input" style={{ width: 'auto' }} disabled={!cur.enabled} value={cur.seconds} onChange={(e) => save({ seconds: Number(e.target.value) })}>
+          {[5, 10, 15, 30, 60, 120, 300].map((n) => <option key={n} value={n}>{n < 60 ? `${n} seconds` : `${n / 60} minute${n > 60 ? 's' : ''}`}</option>)}
+        </select>
+      </div>
+      {!cur.enabled && <p className="small dim" style={{ marginBottom: 0 }}>When off, only the open project is rescanned (every minute and when you switch back to the app). Other projects catch up when you open them.</p>}
+    </div>
+  );
+}
+
+type Section = 'appearance' | 'editor' | 'tracking' | 'backups' | 'restore' | 'storage' | 'about';
 const SECTIONS: { id: Section; label: string; icon: ReactElement; hint: string }[] = [
   { id: 'appearance', label: 'Appearance', icon: <LuPalette />, hint: 'Accent colors' },
   { id: 'editor', label: 'Editor & saving', icon: <LuFileCode />, hint: 'What Ctrl+S does' },
+  { id: 'tracking', label: 'Change tracking', icon: <LuRadar />, hint: 'Notice changes to project folders as they happen' },
   { id: 'backups', label: 'Backups', icon: <LuDatabaseBackup />, hint: 'Back up now, or on a schedule' },
   { id: 'restore', label: 'Restore', icon: <LuArchiveRestore />, hint: 'Check a backup and bring things back' },
   { id: 'storage', label: 'Version storage', icon: <LuHardDrive />, hint: 'Where file backups and snapshots live' },
@@ -327,6 +356,7 @@ export function SettingsView({ nav }: { nav: Nav }) {
         <h2 className="set-title">{cur.label}</h2>
         {sec === 'appearance' && <Appearance />}
         {sec === 'editor' && <EditorSaving />}
+        {sec === 'tracking' && <WatchCard />}
         {sec === 'backups' && <><BackupCard nav={nav} dataDir={info.data?.dataDir} /><ScheduleCard /></>}
         {sec === 'restore' && <RestoreCard nav={nav} />}
         {sec === 'storage' && <BackupStorage />}

@@ -50,7 +50,22 @@ pub fn run() {
                 Ok(v) => (Some(v), None),
                 Err(e) => (None, Some(e)),
             };
-            app.manage(AppState { vault: Arc::new(Mutex::new(vault)), open_error });
+            let vault = Arc::new(Mutex::new(vault));
+            // Background change watching for every project (see vault_core::watch).
+            let watched = vault.clone();
+            std::thread::spawn(move || {
+                let mut w = vault_core::watch::Watcher::default();
+                loop {
+                    let wait = vault_core::watch::pass(&mut w, |f| {
+                        let guard = watched.lock().unwrap_or_else(|p| p.into_inner());
+                        if let Some(v) = guard.as_ref() {
+                            f(v);
+                        }
+                    });
+                    std::thread::sleep(wait);
+                }
+            });
+            app.manage(AppState { vault, open_error });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![vault_call])

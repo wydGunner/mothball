@@ -90,12 +90,19 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
   useEffect(() => { reload().then(() => scan(true)); nav.refreshProjects(); /* eslint-disable-next-line */ }, [id]);
   // Detect external modifications: rescan on focus and periodically. Scans are
   // read-only and skip unchanged files, so they don't disturb other tools.
+  // The background watcher records changes as they happen; when it is
+  // switched off, fall back to a periodic rescan of the open project.
   useEffect(() => {
     const onFocus = () => scan(true);
     window.addEventListener('focus', onFocus);
-    const t = setInterval(() => { if (document.visibilityState === 'visible') scan(true); }, AUTO_SCAN_MS);
-    return () => { window.removeEventListener('focus', onFocus); clearInterval(t); };
-  }, [scan]);
+    const onChanged = () => { setScanTick((t) => t + 1); reload(); };
+    window.addEventListener('pv:changed', onChanged);
+    let t: ReturnType<typeof setInterval> | undefined;
+    call<{ enabled: boolean }>('watch.settings').then((w) => {
+      if (!w.enabled) t = setInterval(() => { if (document.visibilityState === 'visible') scan(true); }, AUTO_SCAN_MS);
+    }).catch(() => {});
+    return () => { window.removeEventListener('focus', onFocus); window.removeEventListener('pv:changed', onChanged); if (t) clearInterval(t); };
+  }, [scan, reload]);
 
   // OS drag-and-drop import (desktop app)
   useEffect(() => {

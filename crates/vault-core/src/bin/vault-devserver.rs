@@ -86,6 +86,17 @@ fn main() {
     let l = TcpListener::bind(format!("127.0.0.1:{port}")).expect("bind");
     eprintln!("Project Vault dev server on http://127.0.0.1:{port}");
     let vault = Arc::new(Mutex::new(vault));
+    {
+        // background change watching, same as the desktop app
+        let v = vault.clone();
+        std::thread::spawn(move || {
+            let mut w = vault_core::watch::Watcher::default();
+            loop {
+                let wait = vault_core::watch::pass(&mut w, |f| f(&v.lock().unwrap_or_else(|p| p.into_inner())));
+                std::thread::sleep(wait);
+            }
+        });
+    }
     for s in l.incoming().flatten() {
         let (v, ui) = (vault.clone(), ui.clone());
         std::thread::spawn(move || handle(s, &v, &ui));

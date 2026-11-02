@@ -25,6 +25,7 @@ pub mod tasks;
 pub mod timeline;
 pub mod util;
 pub mod versions;
+pub mod watch;
 pub mod zip;
 
 use db::{Db, DbResult};

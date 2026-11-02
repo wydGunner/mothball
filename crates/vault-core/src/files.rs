@@ -223,7 +223,7 @@ impl ScanReport {
             .with("errors", Json::Arr(self.errors.iter().take(50).map(|e| Json::from(e.as_str())).collect()))
             .with("errorCount", self.errors.len())
     }
-    fn changes(&self) -> usize {
+    pub fn changes(&self) -> usize {
         self.added + self.modified + self.moved + self.missing + self.restored
     }
 }
