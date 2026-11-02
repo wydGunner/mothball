@@ -5,7 +5,7 @@ or not yet verified on Windows · ⛔ not implemented yet
 
 ## How this was verified
 
-* `cargo test` for `vault-core`: 36 unit/integration tests (reconciliation
+* `cargo test` for `vault-core`: 34 unit/integration tests (reconciliation
   cases, imports + undo import, move between projects, remove from vault,
   Smart Save backups + names, dedup, restore, storage location changes and
   unavailable storage, snapshots, retention dry run, notes, tasks, search, git,
