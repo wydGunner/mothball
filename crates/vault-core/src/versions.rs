@@ -296,6 +296,21 @@ fn side(v: &Vault, file_id: &str, which: &str) -> DbResult<(PathBuf, String, i64
         }
         let root = projects::root_of(v, &f.s("project_id"))?;
         Ok((safe_join(&root, &f.s("rel_path"))?, f.os("sha256").unwrap_or_default(), f.i("size"), "Current file".into()))
+    } else if let Some(sha) = which.strip_prefix("sha:") {
+        // Content by hash: from the version store, or the file itself if it still has that content.
+        if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("Bad content hash".into());
+        }
+        let obj = object_path(v, sha)?;
+        if let Ok(m) = std::fs::metadata(&obj) {
+            return Ok((obj, sha.to_string(), m.len() as i64, "Stored copy".into()));
+        }
+        let f = v.db.one("SELECT * FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
+        if f.s("state") == "present" && f.os("sha256").as_deref() == Some(sha) {
+            let root = projects::root_of(v, &f.s("project_id"))?;
+            return Ok((safe_join(&root, &f.s("rel_path"))?, sha.to_string(), f.i("size"), "Current file".into()));
+        }
+        Err("NOT_KEPT:That version of the file wasn't kept, so the change can't be shown. Your version settings decide which files get copies.".into())
     } else {
         let r = v.db.one("SELECT * FROM file_versions WHERE id=? AND file_id=?", p![which, file_id])?.ok_or("Version not found")?;
         let label = if r.s("name").is_empty() { format!("Version from {}", crate::util::iso_utc(r.i("created_at"))) } else { format!("{} ({})", r.s("name"), crate::util::iso_utc(r.i("created_at"))) };

@@ -253,6 +253,21 @@ await step('Edit a file in the built-in editor', async () => {
   await page.getByRole('button', { name: /^Backups & versions/ }).waitFor();
 });
 
+await step('Timeline: expand an edit to see what changed', async () => {
+  await page.getByRole('tab', { name: /Timeline/ }).click();
+  const item = page.locator('.tlitem').filter({ hasText: 'Edited scripts/mp/_util.gsc' }).first();
+  await item.locator('.tl-toggle').click();
+  await item.locator('.tl-diff .dl.add').filter({ hasText: 'edited in Project Vault' }).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-timeline-diff.png') });
+  await item.getByRole('button', { name: 'Side by side…' }).click();
+  await page.locator('.modal').filter({ hasText: 'Changes in' }).waitFor();
+  await page.keyboard.press('Escape');
+  await item.locator('.tl-toggle').click();
+  await item.locator('.tl-detail').waitFor({ state: 'detached' });
+  await page.getByRole('tab', { name: /Files/ }).click();
+  await page.locator('.filerow').filter({ hasText: '_util.gsc' }).click();
+});
+
 await step('Version history: search, compare, restore', async () => {
   await page.getByRole('button', { name: /^Backups & versions/ }).click();
   const row = page.locator('.verrow').filter({ hasText: '_before.gsc' });

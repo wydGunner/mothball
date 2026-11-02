@@ -298,6 +298,13 @@ CREATE TABLE symbols (
 CREATE INDEX symbols_name ON symbols(project_id, name COLLATE NOCASE);
 CREATE INDEX symbols_file ON symbols(file_id);
 "#,
+), (
+    6,
+    r#"
+-- Structured detail for a timeline entry (which files changed, and the
+-- content hashes before/after) so the entry can show what changed.
+ALTER TABLE timeline ADD COLUMN data TEXT NOT NULL DEFAULT '';
+"#,
 )];
 
 pub fn current_version(db: &Db) -> DbResult<i64> {

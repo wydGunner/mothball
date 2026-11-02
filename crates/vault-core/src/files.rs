@@ -273,6 +273,9 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
         }
     };
 
+    // What this scan changed, for the timeline entry's "what changed" list.
+    let mut changes: Vec<Json> = Vec::new();
+    let change = |kind: &str, fid: &str, path: &str| Json::obj().with("change", kind).with("fileId", fid).with("path", path);
     v.db.tx(|db| {
         // 1. paths that exist both on disk and in the index
         for (rel, seen) in &w.files {
@@ -294,10 +297,14 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
             if was_missing {
                 rep.restored += 1;
                 event(v, project_id, &fid, "restored", "File is present again", h.as_deref())?;
+                changes.push(change("restored", &fid, rel));
             }
             if content_changed {
                 rep.modified += 1;
                 event(v, project_id, &fid, "modified", "Content changed outside Project Vault", h.as_deref())?;
+                let mut c = change("modified", &fid, rel).with("to", h.clone().unwrap_or_default());
+                if let Some(old) = r.os("sha256") { c.set("from", old); }
+                changes.push(c);
             }
         }
 
@@ -348,6 +355,7 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
                         p![n.0.clone(), file_name_of(&n.0), extension_of(&n.0), classify(&extension_of(&n.0)), n.1, n.2, now, fid.clone()],
                     )?;
                     event(v, project_id, &fid, "moved", &format!("{} → {}", g.s("rel_path"), n.0), Some(h))?;
+                    changes.push(change(if gone_present { "moved" } else { "restored" }, &fid, &n.0).with("fromPath", g.s("rel_path")));
                     if gone_present { rep.moved += 1 } else { rep.restored += 1 }
                     consumed_new.insert(ns[0]);
                     consumed_gone.insert(fid);
@@ -370,6 +378,7 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
             )?;
             if !first_scan {
                 event(v, project_id, &fid, "added", "", n.3.as_deref())?;
+                changes.push(change("added", &fid, &n.0).with("to", n.3.clone().unwrap_or_default()));
             }
             rep.added += 1;
             inserted.push((fid, i));
@@ -384,6 +393,7 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
             if g.s("state") == "present" {
                 db.exec("UPDATE files SET state='missing' WHERE id=?", p![gid.clone()])?;
                 event(v, project_id, &gid, "missing", &format!("No longer at {}", g.s("rel_path")), None)?;
+                changes.push(change("missing", &gid, &g.s("rel_path")));
                 rep.missing += 1;
             }
             let gname = g.s("name").to_lowercase();
@@ -417,7 +427,11 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
                     parts.push(format!("{n} {label}"));
                 }
             }
-            timeline::add(v, project_id, "files", &format!("File changes detected: {}", parts.join(", ")), "", None, false)?;
+            changes.sort_by(|a, b| a.str_of("path").cmp(&b.str_of("path")));
+            let total = changes.len();
+            changes.truncate(500);
+            let data = Json::obj().with("changes", Json::Arr(changes.clone())).with("total", total);
+            timeline::add_with_data(v, project_id, "files", &format!("File changes detected: {}", parts.join(", ")), "", None, false, Some(&data))?;
         }
         Ok(())
     })?;
@@ -1495,7 +1509,22 @@ pub fn write_text(v: &Vault, file_id: &str, text: &str, expected_sha: &str, eol:
         return Err(format!("Could not save (is the file open and locked in another program?): {e}"));
     }
     let new_sha = crate::util::sha256_bytes(&bytes);
-    timeline::add_coalesced(v, &pid, "edit", &format!("Edited {} in Project Vault", f.s("rel_path")), "file", file_id)?;
+    // Record the save on the file row, so the scan below sees it as already
+    // known instead of reporting it as a change made outside the app.
+    if let Ok(m) = std::fs::metadata(&path) {
+        let mtime = m.modified().map(system_time_ms).unwrap_or(0);
+        let now = now_ms();
+        v.db.exec(
+            "UPDATE files SET size=?, mtime=?, sha256=?, last_seen=?, last_changed=? WHERE id=?",
+            p![m.len() as i64, mtime, new_sha.clone(), now, now, file_id],
+        )?;
+        if current != new_sha {
+            event(v, &pid, file_id, "modified", "Edited in Project Vault", Some(&new_sha))?;
+        }
+    }
+    if current != new_sha {
+        timeline::add_file_edit(v, &pid, file_id, &f.s("rel_path"), &current, &new_sha)?;
+    }
     scan(v, &pid)?;
     v.db.exec("UPDATE files SET changed_since_review=0 WHERE id=?", p![file_id])?;
     Ok(Json::obj().with("sha256", new_sha))
@@ -1750,6 +1779,50 @@ mod tests {
         let e = write_text(&v, &fid, "mine", &w.str_of("sha256").unwrap(), "lf", false).unwrap_err();
         assert!(e.starts_with("CONFLICT:"));
         assert_eq!(fs::read_to_string(d.join("cfg.ini")).unwrap(), "external");
+    }
+
+    #[test]
+    fn timeline_records_what_changed() {
+        let (t, v) = vault();
+        let d = t.path().join("p");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("notes.txt"), "one\ntwo\n").unwrap();
+        let pid = linked(&v, &d);
+        scan(&v, &pid).unwrap();
+        let fid = id_at(&v, &pid, "notes.txt");
+        let tl = |kind: &str| -> Vec<Json> {
+            crate::timeline::list(&v, &pid, 100, None).unwrap().as_arr().unwrap().iter().filter(|e| e.str_of("kind").as_deref() == Some(kind)).cloned().collect()
+        };
+        // two saves in the editor: one entry spanning both, and no "changes detected" entry
+        let s0 = read_text(&v, &fid).unwrap().str_of("sha256").unwrap();
+        let s1 = write_text(&v, &fid, "one\nTWO\n", &s0, "lf", false).unwrap().str_of("sha256").unwrap();
+        let s2 = write_text(&v, &fid, "one\nTWO\nthree\n", &s1, "lf", false).unwrap().str_of("sha256").unwrap();
+        let edits = tl("edit");
+        assert_eq!(edits.len(), 1);
+        let dd = edits[0].get("data").unwrap();
+        assert_eq!((dd.str_of("from").unwrap(), dd.str_of("to").unwrap()), (s0.clone(), s2.clone()));
+        assert!(tl("files").iter().all(|e| !e.str_of("summary").unwrap().contains("modified")), "in-app edit isn't reported as an outside change");
+        let c = crate::versions::compare(&v, &fid, &format!("sha:{s0}"), &format!("sha:{s2}")).unwrap();
+        assert_eq!(c.get("diff").unwrap().get("added").unwrap().as_i64(), Some(2));
+        // an outside change, a new file and a removed file show up in one scan entry
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(d.join("notes.txt"), "outside\n").unwrap();
+        fs::write(d.join("new.cfg"), "x=1").unwrap();
+        let f = fs::File::options().write(true).open(d.join("notes.txt")).unwrap();
+        f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
+        scan(&v, &pid).unwrap();
+        let files = tl("files");
+        let ch = files[0].get("data").unwrap().get("changes").unwrap().as_arr().unwrap().clone();
+        let kinds: Vec<String> = ch.iter().map(|c| format!("{}:{}", c.str_of("change").unwrap(), c.str_of("path").unwrap())).collect();
+        assert_eq!(kinds, vec!["added:new.cfg", "modified:notes.txt"]);
+        assert_eq!(ch[1].str_of("from").unwrap(), s2);
+        // a further editor save after an outside change starts a new entry
+        let cur = read_text(&v, &fid).unwrap().str_of("sha256").unwrap();
+        write_text(&v, &fid, "outside\nmore\n", &cur, "lf", false).unwrap();
+        assert_eq!(tl("edit").len(), 2);
+        // content that was never kept gives a clear error
+        let e = crate::versions::compare(&v, &fid, &format!("sha:{}", "0".repeat(64)), "current").unwrap_err();
+        assert!(e.starts_with("NOT_KEPT:"));
     }
 
     #[test]
