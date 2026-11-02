@@ -58,6 +58,7 @@ const browser = await chromium.launch({ args: ['--use-gl=swiftshader', '--enable
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 const page = await context.newPage();
+if (process.env.PV_CPU_SLOW) { const cdp = await context.newCDPSession(page); await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.PV_CPU_SLOW) }); }
 const themeArg = arg('--theme'); // e.g. sunset, twilight — for screenshots
 if (themeArg) {
   const T = { sunset: ['#ff7a1a', '#ffb224', '#f0384b'], twilight: ['#8b5cf6', '#3b82f6', '#ec4899'], ocean: ['#38bdf8', '#6366f1', '#22d3ee'] }[themeArg];
@@ -70,7 +71,10 @@ let n = 0;
 const step = async (name, fn) => {
   process.stdout.write(`• ${name} … `);
   try { await fn(); console.log('ok'); if (shots) await page.screenshot({ path: join(shots, `${String(++n).padStart(2, '0')}-${name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.png`) }); }
-  catch (e) { console.log('FAILED'); console.error(e); console.error(errors.join('\n')); if (shots) await page.screenshot({ path: join(shots, 'FAILED.png') }); await browser.close(); srv.kill(); process.exit(1); }
+  catch (e) { console.log('FAILED'); console.error(e); console.error(errors.join('\n'));
+    // CI artifacts are not always reachable, so put what was on screen into the log too
+    try { console.error('--- page text at failure ---\n' + (await page.locator('main, body').first().innerText({ timeout: 2000 })).slice(0, 4000)); } catch {}
+    if (shots) await page.screenshot({ path: join(shots, 'FAILED.png') }); await browser.close(); srv.kill(); process.exit(1); }
 };
 const api = (cmd, args = {}) => page.evaluate(async ([c, a]) => (await (await fetch('/api/' + c, { method: 'POST', body: JSON.stringify(a) })).json()), [cmd, args]);
 const toastGone = async () => { while (await page.locator('.toast button').count()) await page.locator('.toast button').first().click(); };
@@ -822,7 +826,7 @@ await step('Tooltips', async () => {
   await page.locator('.pv-tip').waitFor({ state: 'detached' });
 });
 
-await step('Dashboard: change a project picture', async () => {
+if (pvDir) await step('Dashboard: change a project picture', async () => {
   await page.getByRole('button', { name: 'Dashboard' }).click();
   const card = page.locator('.pcard').filter({ hasText: 'Cat - Green And Yellow' });
   await card.locator('.pc-face .pc-img').waitFor();
