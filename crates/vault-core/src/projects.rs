@@ -569,6 +569,7 @@ pub fn remove(v: &Vault, id: &str, delete_managed_files: bool) -> DbResult<Json>
         db.exec("DELETE FROM projects WHERE id=?", p![id])?;
         Ok(())
     })?;
+    let _ = crate::deploy::forget(v, id);
     Ok(Json::obj().with("removed", true).with("filesDeleted", deleted))
 }
 

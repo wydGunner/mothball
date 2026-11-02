@@ -4,6 +4,7 @@ import { call, isTauri, pickFolder, revealPath, onFileDrop, type Project, type S
 import { Empty, ProjectIcon, StatusPill, useAction, useToast, useConfirm } from '../components/common';
 import { ago, cx } from '../format';
 import { FirstTips } from './Welcome';
+import { DeployButtons } from './Deploy';
 import type { Focus, Nav } from '../main';
 import { Overview } from './Overview';
 import { FilesTab } from './Files';
@@ -151,6 +152,7 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
           </div>
         </div>
         <span className="small dim">{project.lastScanAt ? `Checked ${ago(project.lastScanAt)}` : ''}</span>
+        <DeployButtons project={project} />
         <button className="btn" onClick={() => scan(false)} disabled={scanning} title="Re-scan for external changes (F5)"><LuRefreshCw className={scanning ? 'spin' : ''} /> {scanning ? 'Scanning…' : 'Rescan'}</button>
         {isTauri && <button className="btn icon" title="Open folder in Explorer" onClick={() => act(() => revealPath(project.rootPath))}><LuFolderOpen /></button>}
       </div>

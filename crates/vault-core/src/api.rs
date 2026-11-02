@@ -5,7 +5,7 @@
 use crate::db::DbResult;
 use crate::json::Json;
 use crate::projects::NewProject;
-use crate::{backup, files, git, knowledge, legacy, profiles, projects, search, snapshots, symbols, tasks, timeline, versions, watch, Vault};
+use crate::{backup, deploy, files, git, knowledge, legacy, profiles, projects, search, snapshots, symbols, tasks, timeline, versions, watch, Vault};
 use std::path::PathBuf;
 
 fn s(a: &Json, k: &str) -> DbResult<String> {
@@ -101,6 +101,11 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "files.duplicates" => files::duplicates(v, &s(a, "projectId")?),
         "files.groups" => files::groups(v, &s(a, "projectId")?),
         "profiles.groups" => Ok(profiles::groups_json(&s(a, "category")?)),
+        "deploy.get" => deploy::get(v, &s(a, "projectId")?),
+        "deploy.set" => deploy::set(v, &s(a, "projectId")?, a.get("patch").unwrap_or(&Json::obj())),
+        "deploy.preview" => deploy::preview(v, &s(a, "projectId")?),
+        "deploy.run" => deploy::run(v, &s(a, "projectId")?, a.get("force").and_then(|x| x.as_bool()).unwrap_or(false)),
+        "deploy.launch" => deploy::launch(v, &s(a, "projectId")?),
         "watch.settings" => watch::settings(v),
         "watch.setSettings" => watch::set_settings(v, a.get("patch").unwrap_or(&Json::obj())),
         "watch.stamp" => watch::stamp(v),

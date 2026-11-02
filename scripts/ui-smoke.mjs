@@ -855,6 +855,35 @@ await step('WoW addon: .toc panel and Lua functions', async () => {
   await page.locator('.refrow').filter({ hasText: 'Modules/Farm.lua:1' }).waitFor();
 });
 
+await step('Deploy a project to a game folder', async () => {
+  const dest = join(tmp, 'MW2', 'mods', 'omen');
+  await page.locator('.sidebar .navitem').filter({ hasText: 'OMEN v2' }).first().click();
+  await page.getByRole('button', { name: 'Set up deploy' }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Deploy & launch' });
+  await m.locator('input.mono').first().fill(dest);
+  await m.locator('textarea').fill('configs/');
+  await m.getByRole('button', { name: 'Preview' }).click();
+  await m.getByText(/new · .*already up to date/).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-deploy-setup.png') });
+  await m.getByRole('button', { name: 'Save' }).click();
+  await m.waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: 'Deploy', exact: true }).click();
+  await page.getByText(/Deployed: \d+ copied/).first().waitFor();
+  if (!existsSync(join(dest, 'scripts/mp/_util.gsc')) || existsSync(join(dest, 'configs'))) throw new Error('deploy result wrong');
+  // a file edited in the game folder is not overwritten without asking
+  writeFileSync(join(dest, 'scripts/mp/_util.gsc'), '// edited in game folder');
+  appendFileSync(join(omen, 'scripts/mp/_util.gsc'), '\n// newer\n');
+  await toastGone();
+  await page.getByRole('button', { name: 'Deploy', exact: true }).click();
+  const c = page.locator('.modal').filter({ hasText: 'Some files were changed in the destination' });
+  await c.getByText('scripts/mp/_util.gsc').waitFor();
+  if (readFileSync(join(dest, 'scripts/mp/_util.gsc'), 'utf8') !== '// edited in game folder') throw new Error('overwrote without asking');
+  await c.getByRole('button', { name: 'Overwrite and deploy' }).click();
+  await page.getByText(/Deployed: 1 copied/).first().waitFor();
+  if (!readFileSync(join(dest, 'scripts/mp/_util.gsc'), 'utf8').includes('// newer')) throw new Error('not overwritten');
+  await toastGone();
+});
+
 await step('Dashboard: remove a managed project and delete its folder', async () => {
   const pr = (await api('projects.create', { name: 'Scratch To Delete', category: 'game' })).data;
   await page.evaluate(() => location.reload());
