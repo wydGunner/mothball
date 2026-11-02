@@ -374,3 +374,70 @@ export function Dropdown({ label, icon, sections, badge, align = 'left', width =
     </div>
   );
 }
+
+// ---------------------------------------------------------------- tooltips
+/**
+ * App-wide tooltips: any element with a `title` (or `data-tip`) gets a styled
+ * tooltip after a short hover, or immediately on keyboard focus. The title is
+ * moved to data-tip on first use so the browser's own tooltip doesn't double up;
+ * an aria-label is added when the element has no other accessible name.
+ */
+export function TooltipLayer() {
+  const [tip, setTip] = useState<{ text: string; x: number; y: number; below: boolean } | null>(null);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let current: HTMLElement | null = null;
+    const adopt = (el: HTMLElement) => {
+      const t = el.getAttribute('title');
+      if (t) {
+        el.setAttribute('data-tip', t);
+        el.removeAttribute('title');
+        if (!el.getAttribute('aria-label') && !(el.textContent || '').trim()) el.setAttribute('aria-label', t);
+      }
+      return el.getAttribute('data-tip') || '';
+    };
+    const find = (n: EventTarget | null) => (n instanceof Element ? (n.closest('[title],[data-tip]') as HTMLElement | null) : null);
+    const show = (el: HTMLElement) => {
+      const text = adopt(el);
+      if (!text || !el.isConnected) return;
+      const r = el.getBoundingClientRect();
+      const below = r.top < 60 || r.bottom + 40 < window.innerHeight;
+      setTip({ text, x: Math.min(window.innerWidth - 12, Math.max(12, r.left + r.width / 2)), y: below ? r.bottom + 6 : r.top - 6, below });
+    };
+    const hide = () => { if (timer) clearTimeout(timer); timer = null; current = null; setTip(null); };
+    const over = (e: PointerEvent) => {
+      const el = find(e.target);
+      if (el === current) return;
+      hide();
+      if (!el) return;
+      current = el;
+      adopt(el);
+      timer = setTimeout(() => show(el), 450);
+    };
+    const focus = (e: FocusEvent) => {
+      const el = find(e.target);
+      if (!el || !(e.target as Element).matches?.(':focus-visible')) return;
+      hide(); current = el; show(el);
+    };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') hide(); };
+    window.addEventListener('pointerover', over);
+    window.addEventListener('pointerdown', hide, true);
+    window.addEventListener('scroll', hide, true);
+    window.addEventListener('focusin', focus);
+    window.addEventListener('focusout', hide);
+    window.addEventListener('keydown', key);
+    window.addEventListener('blur', hide);
+    return () => {
+      hide();
+      window.removeEventListener('pointerover', over);
+      window.removeEventListener('pointerdown', hide, true);
+      window.removeEventListener('scroll', hide, true);
+      window.removeEventListener('focusin', focus);
+      window.removeEventListener('focusout', hide);
+      window.removeEventListener('keydown', key);
+      window.removeEventListener('blur', hide);
+    };
+  }, []);
+  if (!tip) return null;
+  return <div className={cx('pv-tip', tip.below ? 'below' : 'above')} role="tooltip" style={{ left: tip.x, top: tip.y }}>{tip.text}</div>;
+}

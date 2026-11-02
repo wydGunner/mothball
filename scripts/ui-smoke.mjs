@@ -249,7 +249,7 @@ await step('Edit a file in the built-in editor', async () => {
   await page.locator('.modal').getByRole('button', { name: 'Cancel' }).click();
   if (!readFileSync(join(omen, 'scripts/mp/_util.gsc'), 'utf8').includes('// external')) throw new Error('external change was overwritten');
   page.once('dialog', (d) => d.accept());
-  await page.getByTitle('Back to file notes').click();
+  await page.locator('[title="Back to file notes"], [data-tip="Back to file notes"]').click();
   await page.getByRole('button', { name: /^Backups & versions/ }).waitFor();
 });
 
@@ -466,7 +466,7 @@ if (pvDir) {
   if ((await items.count()) !== 2) throw new Error('expected both identically named files');
   const subs = (await items.locator('.ppath').allTextContents()).map((t) => t.replace(/\s+/g, ' ').trim());
   if (!subs.some((t) => t.includes('OMEN v2 / scripts / mp / createserver.menu')) || !subs.some((t) => t.includes('OMEN v2 / menus / createserver.menu'))) throw new Error('paths: ' + JSON.stringify(subs));
-  const titles = await items.evaluateAll((els) => els.map((e) => e.getAttribute('title')));
+  const titles = await items.evaluateAll((els) => els.map((e) => e.getAttribute('title') || e.getAttribute('data-tip')));
   for (const t of titles) if (!existsSync(t)) throw new Error('absolute path does not exist: ' + t);
   await items.first().locator('mark').first().waitFor();
 });
@@ -621,10 +621,13 @@ await step('Global search: clickable folder breadcrumbs', async () => {
 
 await step('Settings: save behaviour and backup storage location', async () => {
   await page.getByRole('button', { name: /Settings/ }).click();
-  await page.getByText('Editor & saving').waitFor();
+  const section = (name) => page.locator('.set-link').filter({ hasText: name }).click();
+  await section('Editor & saving');
+  await page.locator('.set-title').filter({ hasText: 'Editor & saving' }).waitFor();
   await page.locator('label').filter({ hasText: 'Just save' }).locator('input').check();
   if (await page.evaluate(() => localStorage.getItem('pv.saveMode')) !== 'manual') throw new Error('save mode not stored');
   await page.locator('label').filter({ hasText: 'Ask every time' }).locator('input').check();
+  await section('Version storage');
   const card = page.locator('.card').filter({ hasText: 'Backup storage location' });
   await card.getByText('available').waitFor();
   const newRoot = join(tmp, 'ExternalDrive', 'PVBackups');
@@ -640,6 +643,7 @@ await step('Settings: save behaviour and backup storage location', async () => {
 
 await step('Backup with project files as .zip, verify', async () => {
   await page.getByRole('button', { name: /Settings/ }).click();
+  await page.locator('.set-link').filter({ hasText: 'Backups' }).click();
   const card = page.locator('.card').filter({ hasText: 'Create backup now' });
   await card.getByPlaceholder('E:\\Backups\\ProjectVault', { exact: true }).fill(backups);
   await card.locator('select').nth(1).selectOption('zip');
@@ -657,6 +661,7 @@ await step('Restore: check a backup, restore a deleted project file', async () =
   const before = readFileSync(target, 'utf8');
   const { rmSync } = await import('node:fs');
   rmSync(target);
+  await page.locator('.set-link').filter({ hasText: 'Restore' }).click();
   const card = page.locator('.card').filter({ hasText: 'Check or restore a backup' });
   await card.getByPlaceholder(/ProjectVault-backup-/).fill(zip);
   await card.getByRole('button', { name: 'Check', exact: true }).click();
@@ -678,6 +683,7 @@ await step('Restore: check a backup, restore a deleted project file', async () =
 });
 
 await step('Scheduled backups', async () => {
+  await page.locator('.set-link').filter({ hasText: 'Backups' }).click();
   const card = page.locator('.card').filter({ hasText: 'Scheduled backups' });
   const sched = join(tmp, 'scheduled'); mkdirSync(sched);
   await card.getByPlaceholder('E:\\Backups\\ProjectVault', { exact: true }).fill(sched);
@@ -711,7 +717,7 @@ await step('GSC: functions list, go to definition, function search', async () =>
   await page.locator('.editor-pane .panehead b').filter({ hasText: '_util.gsc' }).waitFor();
   // uses of util() are listed from the defining file
   page.once('dialog', (d) => d.accept());
-  await page.getByTitle('Back to file notes').click();
+  await page.locator('[title="Back to file notes"], [data-tip="Back to file notes"]').click();
   const o2 = page.locator('.docsec').filter({ hasText: 'Functions' });
   await o2.locator('.symrow').filter({ hasText: 'util()' }).getByRole('button', { name: 'Uses' }).click();
   await o2.locator('.refrow').filter({ hasText: '_hud.gsc:5' }).waitFor();
@@ -721,7 +727,7 @@ await step('GSC: functions list, go to definition, function search', async () =>
   await page.locator('.palette .item').filter({ hasText: 'util()' }).first().click();
   await page.locator('.editor-pane .panehead b').filter({ hasText: '_util.gsc' }).waitFor();
   page.once('dialog', (d) => d.accept());
-  await page.getByTitle('Back to file notes').click();
+  await page.locator('[title="Back to file notes"], [data-tip="Back to file notes"]').click();
 });
 
 await step('Files: group the list by folder', async () => {
@@ -741,6 +747,14 @@ await step('Files: group the list by folder', async () => {
   await page.locator('.dd-item').filter({ hasText: 'No grouping' }).click();
   await page.keyboard.press('Escape');
   await page.locator('.filesec').first().waitFor({ state: 'detached' });
+});
+
+await step('Tooltips', async () => {
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  await page.locator('[title="List"], [data-tip="List"]').first().hover();
+  await page.locator('.pv-tip').filter({ hasText: 'List' }).waitFor();
+  await page.mouse.move(5, 500);
+  await page.locator('.pv-tip').waitFor({ state: 'detached' });
 });
 
 await step('Dashboard: change a project picture', async () => {

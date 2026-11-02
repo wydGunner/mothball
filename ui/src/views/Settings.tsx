@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
-import { LuFolderOpen, LuShieldCheck, LuDatabaseBackup, LuRefreshCw, LuInfo, LuTriangleAlert, LuClock, LuArchiveRestore } from 'react-icons/lu';
+import { useEffect, useState, type ReactElement } from 'react';
+import { LuFolderOpen, LuShieldCheck, LuDatabaseBackup, LuRefreshCw, LuInfo, LuTriangleAlert, LuArchiveRestore, LuPalette, LuFileCode, LuHardDrive } from 'react-icons/lu';
 import { call, pickFolder, pickFiles, revealPath, isTauri } from '../ipc';
 import { Modal, useAction, useConfirm, useLoad, useToast } from '../components/common';
 import { getSaveMode, setSaveMode, getLargeThreshold, setLargeThreshold, type SaveMode } from './SmartSave';
-import { bytes, dateTime } from '../format';
+import { bytes, cx, dateTime } from '../format';
 import type { Nav } from '../main';
 import { THEMES, applyTheme, getTheme, themeFromColor } from '../theme';
 
@@ -12,11 +12,10 @@ function Appearance() {
   const pick = (t: typeof cur) => { applyTheme(t); setCur(t); };
   return (
     <div className="card pad" style={{ marginBottom: 16 }}>
-      <h2 style={{ marginBottom: 4 }}>Appearance</h2>
-      <p className="muted small" style={{ marginTop: 0 }}>Black background with one color family: either shades of a single color, or neighbouring colors that go together.</p>
+      <p className="muted small" style={{ marginTop: 0 }}>The background is always black. Pick one color family for highlights: shades of one color, or neighbouring colors that go together.</p>
       <div className="row wrap" style={{ gap: 10 }}>
         {THEMES.map((t) => (
-          <button key={t.id} className={'theme-card' + (cur.id === t.id ? ' on' : '')} onClick={() => pick(t)} aria-label={t.name}>
+          <button key={t.id} className={'theme-card' + (cur.id === t.id ? ' on' : '')} onClick={() => pick(t)} aria-label={t.name} aria-pressed={cur.id === t.id} title={`Use the ${t.name} colors`}>
             <div className="bars"><span style={{ background: t.a1 }} /><span style={{ background: t.a2 }} /><span style={{ background: t.a3 }} /></div>
             <small>{t.name}</small>
           </button>
@@ -30,8 +29,9 @@ function Appearance() {
         </label>
       </div>
       <div className="row" style={{ marginTop: 14, gap: 10 }}>
-        <button className="btn primary sm">Primary</button>
-        <span className="pill"><span className="dot on" />Active</span>
+        <span className="small dim">Preview</span>
+        <button className="btn primary sm" tabIndex={-1}>Button</button>
+        <span className="pill"><span className="dot on" />Paused</span>
         <span className="badge warn">changed</span>
         <span className="prio p3">urgent</span>
         <div className="progress" style={{ width: 120 }}><div style={{ width: '60%' }} /></div>
@@ -52,8 +52,8 @@ function EditorSaving() {
   const [lines, setLines] = useState(getLargeThreshold);
   return (
     <div className="card pad" style={{ marginBottom: 16 }}>
-      <h2 style={{ marginBottom: 4 }}>Editor &amp; saving</h2>
-      <p className="muted small" style={{ marginTop: 0 }}>What happens when you press Ctrl+S in Project Vault’s editor. Ctrl+Shift+S always opens the Smart Save dialog.</p>
+      <h2>When you press Ctrl+S</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>In the built-in editor. Ctrl+Shift+S always opens the save-with-backup dialog.</p>
       {SAVE_MODES.map((m) => (
         <label key={m.id} className="row" style={{ alignItems: 'flex-start', marginBottom: 6 }}>
           <input type="radio" name="savemode" checked={mode === m.id} onChange={() => { setMode(m.id); setSaveMode(m.id); }} style={{ marginTop: 3 }} />
@@ -83,7 +83,7 @@ function BackupStorage() {
   };
   return (
     <div className="card pad" style={{ marginBottom: 16 }}>
-      <h2 style={{ marginBottom: 4 }}>Backup storage location</h2>
+      <h2>Backup storage location</h2>
       <p className="muted small" style={{ marginTop: 0 }}>Where file backups, automatic versions and project snapshots are stored. Each backup also gets a readable <code>.json</code> description next to it, so the folder makes sense even without Project Vault.</p>
       {st.error ? <div className="alert bad">{st.error}</div> : !st.data ? <div className="muted small">Loading…</div> : <>
         <div className="row" style={{ flexWrap: 'wrap' }}>
@@ -121,15 +121,15 @@ function BackupCard({ nav, dataDir }: { nav: Nav; dataDir?: string }) {
   };
   return (
     <div className="card pad" style={{ marginBottom: 16 }}>
-      <h2 className="row" style={{ marginBottom: 8 }}><LuDatabaseBackup /> Back up</h2>
+      <h2>Back up now</h2>
       <p className="muted small" style={{ marginTop: 0 }}>A consistent copy of the vault database, a readable export of every project (notes as Markdown, file documentation, tasks, timeline) and a manifest with checksums. Verified right after it's written, and readable without Project Vault.</p>
       <div className="field"><label>Destination folder (e.g. an external drive)</label><BackupDest value={dest} onChange={setDest} /></div>
       <div className="grid2">
         <div className="field"><label>Scope</label>
-          <select className="input" value={scope} onChange={(e) => setScope(e.target.value)}><option value="">Entire vault</option>{nav.projects.map((p) => <option key={p.id} value={p.id}>Only: {p.name}</option>)}</select>
+          <select className="input" title="Back up every project, or just one" value={scope} onChange={(e) => setScope(e.target.value)}><option value="">Entire vault</option>{nav.projects.map((p) => <option key={p.id} value={p.id}>Only: {p.name}</option>)}</select>
         </div>
         <div className="field"><label>Format</label>
-          <select className="input" value={zip ? 'zip' : 'folder'} onChange={(e) => setZip(e.target.value === 'zip')}><option value="folder">Folder</option><option value="zip">Single .zip file (uncompressed)</option></select>
+          <select className="input" title="A folder you can browse, or one .zip file that's easy to copy around" value={zip ? 'zip' : 'folder'} onChange={(e) => setZip(e.target.value === 'zip')}><option value="folder">Folder</option><option value="zip">Single .zip file (uncompressed)</option></select>
         </div>
       </div>
       <label className="row" style={{ alignItems: 'flex-start', marginBottom: 6 }}><input type="checkbox" checked={files} onChange={(e) => setFiles(e.target.checked)} style={{ marginTop: 3 }} />
@@ -167,17 +167,17 @@ function ScheduleCard() {
   const every = s.everyDays >= 1 ? `${s.everyDays}` : 'h';
   return (
     <div className="card pad" style={{ marginBottom: 16 }}>
-      <h2 className="row" style={{ marginBottom: 8 }}><LuClock /> Scheduled backups</h2>
+      <h2>Scheduled backups</h2>
       <p className="muted small" style={{ marginTop: 0 }}>Runs automatically while Project Vault is open (checked at start-up and every 30 minutes). If the app was closed when one was due, it runs the next time you open it.</p>
       <label className="row" style={{ marginBottom: 10 }}><input type="checkbox" checked={!!s.enabled} onChange={(e) => save({ enabled: e.target.checked })} /> <b>Back up automatically</b></label>
       <div className="field"><label>Destination folder</label><BackupDest value={s.dest} onChange={(dest) => setS({ ...s, dest })} /></div>
       <div className="grid2">
         <div className="field"><label>How often</label>
-          <select className="input" value={every} onChange={(e) => setS({ ...s, everyDays: e.target.value === 'h' ? 1 / 24 : Number(e.target.value) })}>
+          <select className="input" title="Runs while the app is open; if it was closed when one was due, it runs on the next start" value={every} onChange={(e) => setS({ ...s, everyDays: e.target.value === 'h' ? 1 / 24 : Number(e.target.value) })}>
             <option value="h">Every hour</option><option value="1">Every day</option><option value="3">Every 3 days</option><option value="7">Every week</option><option value="30">Every month</option>
           </select></div>
         <div className="field"><label>Keep</label>
-          <select className="input" value={s.keep} onChange={(e) => setS({ ...s, keep: Number(e.target.value) })}>
+          <select className="input" title="Only backups made by the schedule are ever removed; ones you make yourself are kept" value={s.keep} onChange={(e) => setS({ ...s, keep: Number(e.target.value) })}>
             <option value={0}>Every scheduled backup (never delete)</option>{[3, 5, 10, 20, 50].map((n) => <option key={n} value={n}>Newest {n} scheduled backups</option>)}
           </select></div>
       </div>
@@ -185,7 +185,7 @@ function ScheduleCard() {
       <label className="row small" style={{ marginBottom: 10 }}><input type="checkbox" checked={!!s.zip} onChange={(e) => setS({ ...s, zip: e.target.checked })} /> Save as a single .zip</label>
       <div className="row">
         <button className="btn primary" onClick={() => save({ dest: s.dest, everyDays: s.everyDays, keep: s.keep, includeFiles: s.includeFiles, zip: s.zip })}>Save schedule</button>
-        <button className="btn" disabled={!s.dest} onClick={runNow}>Run now</button>
+        <button className="btn" disabled={!s.dest} onClick={runNow} title="Make a scheduled backup right away (counts toward Keep)">Run now</button>
         <span className="small dim right">{s.lastRun ? <>Last run {dateTime(s.lastRun)} — {s.lastResult?.ok ? 'OK' : <span style={{ color: 'var(--bad)' }}>failed: {s.lastResult?.error}</span>}</> : 'Never run'}{s.enabled && s.nextRun ? ` · next ${dateTime(s.nextRun)}` : ''}</span>
       </div>
     </div>
@@ -223,13 +223,13 @@ function RestoreCard({ nav }: { nav: Nav }) {
   };
   return (
     <div className="card pad" style={{ marginBottom: 16 }}>
-      <h2 className="row" style={{ marginBottom: 8 }}><LuArchiveRestore /> Check or restore a backup</h2>
+      <h2>Check or restore a backup</h2>
       {pending.data?.pending && <div className="alert warn" style={{ marginBottom: 10 }}><LuTriangleAlert /><div className="grow">A database restore is waiting and will be applied the next time Project Vault starts.</div><button className="btn sm" onClick={async () => { await act(() => call('backup.cancelDatabaseRestore')); pending.reload(); }}>Cancel it</button></div>}
       <p className="muted small" style={{ marginTop: 0 }}>Choose a backup folder or .zip. It's verified (every checksum plus a database integrity check) before anything is offered.</p>
       <div className="row"><input className="input mono" value={path} onChange={(e) => setPath(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && path && open(path)} placeholder="E:\Backups\ProjectVault\ProjectVault-backup-…" />
         <button className="btn" title="Choose a backup folder" onClick={async () => { const p = await pickFolder('Backup folder'); if (p) open(p); }}><LuFolderOpen /> Folder…</button>
         <button className="btn" title="Choose a .zip backup" onClick={async () => { const p = await pickFiles('Backup .zip', [{ name: 'Project Vault backup', extensions: ['zip'] }]); if (p[0]) open(p[0]); }}>.zip…</button>
-        <button className="btn primary" disabled={!path || loading} onClick={() => open(path)}>{loading ? 'Checking…' : 'Check'}</button></div>
+        <button className="btn primary" title="Verify every checksum and the database before showing what can be restored" disabled={!path || loading} onClick={() => open(path)}>{loading ? 'Checking…' : 'Check'}</button></div>
       {info && <div style={{ marginTop: 12 }}>
         {info.verification.ok
           ? <div className="alert info"><LuShieldCheck /><div>Verified — {info.verification.checkedFiles} files match their checksums; database integrity check passed.</div></div>
@@ -299,34 +299,58 @@ function UpdateCheck() {
   );
 }
 
+type Section = 'appearance' | 'editor' | 'backups' | 'restore' | 'storage' | 'about';
+const SECTIONS: { id: Section; label: string; icon: ReactElement; hint: string }[] = [
+  { id: 'appearance', label: 'Appearance', icon: <LuPalette />, hint: 'Accent colors' },
+  { id: 'editor', label: 'Editor & saving', icon: <LuFileCode />, hint: 'What Ctrl+S does' },
+  { id: 'backups', label: 'Backups', icon: <LuDatabaseBackup />, hint: 'Back up now, or on a schedule' },
+  { id: 'restore', label: 'Restore', icon: <LuArchiveRestore />, hint: 'Check a backup and bring things back' },
+  { id: 'storage', label: 'Version storage', icon: <LuHardDrive />, hint: 'Where file backups and snapshots live' },
+  { id: 'about', label: 'About & updates', icon: <LuInfo />, hint: 'Version, data folder, shortcuts' },
+];
+
 export function SettingsView({ nav }: { nav: Nav }) {
   const info = useLoad(() => call<any>('app.info'), []);
   const act = useAction();
-
-
+  const [sec, setSecRaw] = useState<Section>(() => (localStorage.getItem('pv.settingsSection') as Section) || 'appearance');
+  const setSec = (x: Section) => { setSecRaw(x); try { localStorage.setItem('pv.settingsSection', x); } catch { /* ignore */ } };
+  const cur = SECTIONS.find((x) => x.id === sec) || SECTIONS[0];
   return (
-    <div className="page" style={{ maxWidth: 900 }}>
-      <h1 style={{ marginBottom: 16 }}>Settings & backup</h1>
-      <Appearance />
-      <EditorSaving />
-      <BackupStorage />
-      <BackupCard nav={nav} dataDir={info.data?.dataDir} />
-      <ScheduleCard />
-      <RestoreCard nav={nav} />
-
-      <div className="card pad" style={{ marginBottom: 16 }}>
-        <h2 className="row" style={{ marginBottom: 8 }}><LuRefreshCw /> Maintenance</h2>
-        <button className="btn" onClick={() => act(() => call('search.rebuild'), 'Search index rebuilt')}>Rebuild search index</button>
-      </div>
-
-      <div className="card pad">
-        <h2 className="row" style={{ marginBottom: 8 }}><LuInfo /> About</h2>
-        <div className="kv">
-          <span>Version</span><span className="row">{info.data?.version} {isTauri && <UpdateCheck />}</span>
-          <span>Database schema</span><span>v{info.data?.schemaVersion} (SQLite {info.data?.sqlite})</span>
-          <span>Data folder</span><span className="mono row">{info.data?.dataDir}{isTauri && info.data && <button className="btn ghost sm" onClick={() => act(() => revealPath(info.data.dataDir + '/vault.db'))}>Show</button>}</span>
-          <span>Shortcuts</span><span><kbd>Ctrl K</kbd> command palette · <kbd>Ctrl Shift F</kbd> search · <kbd>Ctrl N</kbd> new project · <kbd>Ctrl B</kbd> sidebar · <kbd>Alt 1–6</kbd> project tabs · <kbd>F5</kbd> rescan · <kbd>Ctrl S</kbd> save note · <kbd>Alt ←</kbd> back</span>
-        </div>
+    <div className="page settings">
+      <nav className="set-nav" aria-label="Settings sections">
+        <h1>Settings</h1>
+        {SECTIONS.map((x) => (
+          <button key={x.id} className={cx('set-link', sec === x.id && 'on')} aria-current={sec === x.id ? 'page' : undefined} title={x.hint} onClick={() => setSec(x.id)}>{x.icon}<span>{x.label}</span></button>
+        ))}
+      </nav>
+      <div className="set-body" key={sec}>
+        <h2 className="set-title">{cur.label}</h2>
+        {sec === 'appearance' && <Appearance />}
+        {sec === 'editor' && <EditorSaving />}
+        {sec === 'backups' && <><BackupCard nav={nav} dataDir={info.data?.dataDir} /><ScheduleCard /></>}
+        {sec === 'restore' && <RestoreCard nav={nav} />}
+        {sec === 'storage' && <BackupStorage />}
+        {sec === 'about' && <>
+          <div className="card pad">
+            <h2>Version</h2>
+            <div className="kv">
+              <span>App</span><span className="row">{info.data?.version} {isTauri && <UpdateCheck />}</span>
+              <span>Database</span><span>schema v{info.data?.schemaVersion}, SQLite {info.data?.sqlite}</span>
+              <span>Data folder</span><span className="mono row" style={{ wordBreak: 'break-all' }}>{info.data?.dataDir}{isTauri && info.data && <button className="btn ghost sm" title="Show the data folder in Explorer" onClick={() => act(() => revealPath(info.data.dataDir + '/vault.db'))}>Show</button>}</span>
+            </div>
+          </div>
+          <div className="card pad">
+            <h2>Keyboard shortcuts</h2>
+            <table className="shortcuts"><tbody>
+              {([['Ctrl K', 'Search everything, run a command'], ['Ctrl Shift F', 'Full search results'], ['Ctrl N', 'New project'], ['Ctrl B', 'Show or hide the sidebar'], ['Alt 1–7', 'Switch project tabs'], ['F5', 'Rescan the project'], ['Ctrl S', 'Save (see Editor & saving)'], ['Ctrl Shift S', 'Save with a backup'], ['F12', 'Go to a script function’s definition'], ['Shift F10', 'Open the context menu'], ['Alt ←', 'Back']] as const).map(([k, d]) => <tr key={k}><td><kbd>{k}</kbd></td><td>{d}</td></tr>)}
+            </tbody></table>
+          </div>
+          <div className="card pad">
+            <h2>Maintenance</h2>
+            <p className="muted small" style={{ marginTop: 0 }}>Rebuild the search index if search results look out of date.</p>
+            <button className="btn" onClick={() => act(() => call('search.rebuild'), 'Search index rebuilt')}><LuRefreshCw /> Rebuild search index</button>
+          </div>
+        </>}
       </div>
     </div>
   );

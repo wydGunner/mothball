@@ -27,6 +27,7 @@ if (!hasTauriApi) {
   console.warn('[build] @tauri-apps packages not installed: using ui/shims (fine for browser tests; run npm install for release builds)');
   alias['@tauri-apps/api/core'] = join(here, 'shims/core.ts');
   alias['@tauri-apps/api/webview'] = join(here, 'shims/webview.ts');
+  alias['@tauri-apps/api/window'] = join(here, 'shims/window.ts');
   alias['@tauri-apps/plugin-dialog'] = join(here, 'shims/dialog.ts');
   alias['@tauri-apps/plugin-opener'] = join(here, 'shims/opener.ts');
   alias['@tauri-apps/plugin-updater'] = join(here, 'shims/updater.ts');

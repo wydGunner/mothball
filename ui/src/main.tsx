@@ -1,8 +1,8 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LuLayoutDashboard, LuSearch, LuSettings, LuPanelLeftClose, LuPanelLeftOpen, LuStar, LuClock, LuPlus, LuChevronRight, LuChevronDown } from 'react-icons/lu';
-import { call, type Project } from './ipc';
-import { ToastProvider, ConfirmProvider, ContextMenuProvider, PromptProvider, ProjectIcon, useToast } from './components/common';
+import { call, isTauri, type Project } from './ipc';
+import { ToastProvider, ConfirmProvider, ContextMenuProvider, PromptProvider, ProjectIcon, TooltipLayer, useToast } from './components/common';
 import { Dashboard, NewProjectDialog } from './views/Dashboard';
 import { ProjectView, type Tab } from './views/Project';
 import { SearchView } from './views/Search';
@@ -27,6 +27,30 @@ export type Route =
 export interface Focus { type: 'file' | 'note' | 'task' | 'folder'; id: string; action?: 'reveal' | 'edit' | 'history'; versionId?: string; /** with action 'edit': 1-based line to show */ line?: number; nonce?: number }
 
 export interface Nav { go: (r: Route) => void; refreshProjects: () => void; projects: Project[] }
+
+/** Our own black title bar buttons (the window has no system frame). */
+function WindowControls() {
+  const [max, setMax] = useState(false);
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    import('@tauri-apps/api/window').then(async ({ getCurrentWindow }) => {
+      const w = getCurrentWindow();
+      setMax(await w.isMaximized());
+      off = await w.onResized(async () => setMax(await w.isMaximized()));
+    }).catch(() => {});
+    return () => off?.();
+  }, []);
+  const win = (fn: 'minimize' | 'toggleMaximize' | 'close') => import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow()[fn]());
+  return (
+    <div className="winctl">
+      <button title="Minimize" aria-label="Minimize" onClick={() => win('minimize')}><svg viewBox="0 0 10 10"><path d="M0 5h10" /></svg></button>
+      <button title={max ? 'Restore down' : 'Maximize'} aria-label={max ? 'Restore down' : 'Maximize'} onClick={() => win('toggleMaximize')}>
+        {max ? <svg viewBox="0 0 10 10"><path d="M2 0h8v8M0 2h8v8H0z" /></svg> : <svg viewBox="0 0 10 10"><path d="M0 0h10v10H0z" /></svg>}
+      </button>
+      <button className="close" title="Close" aria-label="Close" onClick={() => win('close')}><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" /></svg></button>
+    </div>
+  );
+}
 
 function App() {
   const [route, setRoute] = useState<Route>({ view: 'dashboard' });
@@ -103,7 +127,7 @@ function App() {
   return (
     <div className="app">
       <aside className={cx('sidebar', collapsed && 'collapsed')}>
-        <div className="brand"><svg className="logo" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="15" width="18" height="4" rx="1" fill="currentColor" /><rect x="5" y="9.5" width="14" height="4" rx="1" fill="currentColor" opacity=".7" /><rect x="7" y="4" width="10" height="4" rx="1" fill="currentColor" opacity=".45" /></svg><span>Project Vault</span></div>
+        <div className="brand" data-tauri-drag-region><svg className="logo" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="15" width="18" height="4" rx="1" fill="currentColor" /><rect x="5" y="9.5" width="14" height="4" rx="1" fill="currentColor" opacity=".7" /><rect x="7" y="4" width="10" height="4" rx="1" fill="currentColor" opacity=".45" /></svg><span>Project Vault</span></div>
         <nav>
           <button className={cx('navitem', route.view === 'dashboard' && 'active')} onClick={() => go({ view: 'dashboard' })} title="Dashboard"><LuLayoutDashboard /><span className="label">Dashboard</span></button>
           <button className="navitem" onClick={() => setNewProject(true)} title="New project (Ctrl+N)"><LuPlus /><span className="label">New project</span></button>
@@ -122,17 +146,17 @@ function App() {
           {recent.length > 0 && <><div className="section"><LuClock size={10} /> Recent</div><nav>{recent.map(projLink)}</nav></>}
         </div>
         <div className="foot">
-          <button className={cx('navitem', route.view === 'settings' && 'active')} onClick={() => go({ view: 'settings' })} title="Settings & backup"><LuSettings /><span className="label">Settings & backup</span></button>
+          <button className={cx('navitem', route.view === 'settings' && 'active')} onClick={() => go({ view: 'settings' })} title="Settings, backups and restore"><LuSettings /><span className="label">Settings</span></button>
           <button className="navitem" onClick={() => setCollapsed((c) => !c)} title="Toggle sidebar (Ctrl+B)">{collapsed ? <LuPanelLeftOpen /> : <LuPanelLeftClose />}<span className="label">Collapse</span></button>
         </div>
       </aside>
       <main className="main">
-        <div className="topbar">
-          <div className="crumbs">
+        <div className="topbar" data-tauri-drag-region>
+          <div className="crumbs" data-tauri-drag-region>
             <button onClick={() => go({ view: 'dashboard' })}>Projects</button>
             {route.view === 'project' && current && <><LuChevronRight /><span className="cur">{current.name}</span></>}
             {route.view === 'search' && <><LuChevronRight /><span className="cur">Search</span></>}
-            {route.view === 'settings' && <><LuChevronRight /><span className="cur">Settings & backup</span></>}
+            {route.view === 'settings' && <><LuChevronRight /><span className="cur">Settings</span></>}
           </div>
           {update && (
             <button className="btn primary sm" style={{ marginLeft: 'auto' }} disabled={updating !== false} title={update.notes || undefined}
@@ -141,6 +165,7 @@ function App() {
             </button>
           )}
           <div className="searchbox" style={update ? { marginLeft: 8 } : undefined} onClick={() => setPalette(true)} role="button" tabIndex={0}><LuSearch /> Search or run a command… <kbd>Ctrl K</kbd></div>
+          {isTauri && <WindowControls />}
         </div>
         <div className="content">
           {route.view === 'dashboard' && <Dashboard nav={nav} onNew={() => setNewProject(true)} />}
@@ -157,6 +182,6 @@ function App() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ToastProvider><ConfirmProvider><PromptProvider><ContextMenuProvider><FileDialogsProvider><App /></FileDialogsProvider></ContextMenuProvider></PromptProvider></ConfirmProvider></ToastProvider>
+    <ToastProvider><ConfirmProvider><PromptProvider><ContextMenuProvider><FileDialogsProvider><App /><TooltipLayer /></FileDialogsProvider></ContextMenuProvider></PromptProvider></ConfirmProvider></ToastProvider>
   </StrictMode>,
 );
