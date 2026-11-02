@@ -1,7 +1,7 @@
 # Releasing & automatic updates
 
 Installed copies of Mothball check
-`https://github.com/wheresmeep/mothball/releases/latest/download/latest.json`
+`https://github.com/wydGunner/mothball/releases/latest/download/latest.json`
 on startup (and every 6 hours) and offer **Update to vX.Y.Z** in the top bar.
 Updates are signed; the app only installs files signed with the project's key.
 
