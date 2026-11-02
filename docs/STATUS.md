@@ -5,7 +5,7 @@ or not yet verified on Windows · ⛔ not implemented yet
 
 ## How this was verified
 
-* `cargo test` for `vault-core`: 42 unit/integration tests (ZIP read/write +
+* `cargo test` for `vault-core`: 54 unit/integration tests (background folder watching, deploy (only changes copied, edits in the destination never overwritten silently, removals limited to our own unchanged files), time sessions from file activity + logged time counted once, Lua function index and WoW .toc load order, project-type guessing and per-type profiles, timeline change details, dashboard attention/recent, ZIP read/write +
   inflate vectors, backups with project files / .zip / restore / schedule
   retention / staged database restore, 3MF meshes + print info, STL/OBJ,
   GSC function parsing, go-to-definition and call sites, reconciliation
@@ -13,9 +13,9 @@ or not yet verified on Windows · ⛔ not implemented yet
   Smart Save backups + names, dedup, restore, storage location changes and
   unavailable storage, snapshots, retention dry run, notes, tasks, search, git,
   backup/tamper detection, Print Vault import, JSON parser, SHA-256 vectors,
-  path traversal, v1→v4 database upgrade).
+  path traversal, v1→v7 database upgrade).
 * `scripts/ui-smoke.mjs`: headless Chromium drives the real UI against the
-  real core — 42 steps, no console errors — including Smart Save (cancel
+  real core — 52 steps, no console errors — including the first-run welcome and type suggestion, editor tabs (unsaved edits kept across files and project tabs, discard prompts), deploy with a conflict in the game folder, the WoW .toc panel and Lua functions, background watching (an outside change reaches the timeline and dashboard with no Rescan), time tracking (estimate, timer, logged time), the dashboard summary, Smart Save (cancel
   writes nothing, neutral/descriptive names, backup recorded, conflict
   prompt), version search/compare/restore with keep-current, backups in
   global search with backup-only actions, snapshots (preview, restore, newer
@@ -28,6 +28,7 @@ or not yet verified on Windows · ⛔ not implemented yet
   function list, F12 go-to-definition and `@function` search, plus importing
   the real Print Vault database you supplied.
 * **Verified by you on Windows:** the app builds and runs (Nov 1).
+* **Still unverified on Windows (added Nov 1 evening):** the background watcher thread in the desktop shell (its exact code was type-checked against vault-core, but the shell itself can't be built here), folder-to-Recycle-Bin when removing a managed project, Launch (starting a game .exe detached), deploying into Program Files (may need the folder to be writable), and Monaco hover/go-to-definition for Lua.
 * **Still unverified on Windows:** the Monaco diff editor (the tests here use the built-in diff fallback), the Recycle Bin path for Delete / Undo import / Move to another project, the folder picker for backup storage, Explorer “reveal”, the new GitHub panel's sign-in flow, OneDrive online-only file detection, the import picker's type filters, and `tsc` type-checking. Previously unverified: the Tauri shell (`src-tauri/`) and the Windows
   installer have not been compiled, and `tsc` type-checking has not run. The
   build environment had no access to crates.io or the npm registry. The first

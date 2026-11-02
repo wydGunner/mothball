@@ -941,6 +941,17 @@ await step('Time tracking: estimate, timer, log time', async () => {
   if (shots) await page.screenshot({ path: join(shots, 'x-time.png') });
 });
 
+await step('Background watching: outside changes appear without Rescan', async () => {
+  await api('watch.setSettings', { patch: { seconds: 5 } });
+  await page.locator('.sidebar .navitem').filter({ hasText: "What's Left?" }).first().click();
+  await page.getByRole('tab', { name: /Timeline/ }).click();
+  await page.waitForTimeout(6000); // let the watcher take its baseline
+  writeFileSync(join(tmp, 'WhatsLeft', 'Options.lua'), 'local x = 1\n');
+  await page.locator('.tlitem').filter({ hasText: 'File changes detected: 1 added' }).waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  await page.locator('.ds-row').filter({ hasText: 'Options.lua' }).waitFor({ timeout: 15000 });
+});
+
 await step('Dashboard: remove a managed project and delete its folder', async () => {
   const pr = (await api('projects.create', { name: 'Scratch To Delete', category: 'game' })).data;
   await page.evaluate(() => location.reload());
