@@ -479,3 +479,41 @@ input[type=checkbox] { accent-color: var(--accent); }
 .pic-cand span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .pic-cand:hover { border-color: var(--line2); }
 .pic-cand.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+/* ---- project overview */
+.ov2 { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 32px; align-items: start; max-width: 1360px; }
+@media (max-width: 1150px) { .ov2 { grid-template-columns: 1fr; } }
+.ov2-main { display: flex; flex-direction: column; gap: 28px; min-width: 0; }
+.ov2-hero { display: flex; gap: 20px; align-items: flex-start; }
+.ov2-pic { flex: none; width: 300px; aspect-ratio: 250 / 128; padding: 0; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; background: #0d0d0d; cursor: pointer; }
+.ov2-pic img { width: 100%; height: 100%; display: block; }
+.ov2-pic:hover { border-color: var(--line2); }
+@media (max-width: 800px) { .ov2-hero { flex-direction: column; } .ov2-pic { width: 100%; } }
+.ov2-about { min-width: 0; flex: 1; }
+.ov2-about .ov-desc { font-size: 15px; max-width: 70ch; }
+.ov2-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 10px; color: var(--fg2); font-size: 12.5px; }
+.ov2-progress { display: flex; align-items: center; gap: 10px; margin-top: 10px; max-width: 360px; }
+.ov2-progress .progress { flex: 1; height: 4px; }
+.ov2-sec { min-width: 0; }
+.ov2-h { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.ov2-h h2 { flex: 1; font-size: 16px; }
+.ov2-sec.attention { border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; }
+.ov2-sec.attention h2 { display: flex; gap: 8px; align-items: center; font-size: 16px; margin-bottom: 6px; }
+.ov2-sec.attention svg { color: var(--accent); flex: none; }
+.ov2-files { display: grid; }
+.ov2-file { display: grid; grid-template-columns: 18px auto minmax(0, 1fr) auto 30px; align-items: center; gap: 8px; padding: 5px 6px; margin: 0 -6px; border-radius: 4px; cursor: pointer; }
+.ov2-file:hover { background: var(--bg2); }
+.ov2-file .name { font-size: 12.5px; color: var(--fg0); white-space: nowrap; }
+.ov2-file .dir { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov2-file .when { white-space: nowrap; }
+.ov2-file .btn { opacity: 0; }
+.ov2-file:hover .btn, .ov2-file .btn:focus-visible { opacity: 1; }
+.ov2-groups { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.ov2-dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px 24px; margin: 0; }
+.ov2-dl dt { font-size: 12px; color: var(--fg2); }
+.ov2-dl dd { margin: 2px 0 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; }
+.ov2-rail { display: flex; flex-direction: column; gap: 26px; min-width: 0; padding-left: 24px; border-left: 1px solid var(--line); }
+@media (max-width: 1150px) { .ov2-rail { padding-left: 0; border-left: 0; } }
+.ov2-rail .ov2-h h2 { font-size: 14px; }
+.ov2-rail .prio { width: 8px; height: 8px; border-radius: 2px; flex: none; padding: 0; background: var(--bg4); }
+.ov2-rail .prio.p0 { background: var(--bg3); } .ov2-rail .prio.p2 { background: var(--accent2); } .ov2-rail .prio.p3 { background: var(--accent3); }

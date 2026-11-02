@@ -135,7 +135,7 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
       <div className="row" style={{ padding: '12px 16px 8px', background: 'var(--bg1)', gap: 12 }}>
         <ProjectIcon category={project.category} icon={project.icon} color={project.color} size={34} />
         <div className="grow">
-          <div className="row"><h1 style={{ fontSize: 17 }}>{project.name}</h1><StatusPill status={project.status} />
+          <div className="row"><h1 style={{ fontSize: 20 }}>{project.name}</h1>{project.status !== 'Active' && <StatusPill status={project.status} />}
             <button className={cx('star', project.favorite && 'on')} title="Favorite" onClick={async () => { await act(() => call('projects.update', { id, patch: { favorite: !project.favorite } })); reload(); nav.refreshProjects(); }}><LuStar fill={project.favorite ? 'currentColor' : 'none'} /></button>
           </div>
           <div className="small dim mono" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={project.rootPath}>

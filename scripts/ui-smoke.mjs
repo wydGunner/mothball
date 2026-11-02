@@ -432,8 +432,9 @@ await step('Git tab: commit and push', async () => {
 
 await step('Overview summary and edit dialog', async () => {
   await page.getByRole('tab', { name: /Overview/ }).click();
-  await page.getByText('Recent activity').waitFor();
-  await page.locator('.card').filter({ hasText: 'No description yet' }).getByRole('button', { name: 'Edit' }).click();
+  await page.locator('.ov2-rail').getByText('Activity').first().waitFor();
+  await page.locator('.ov2-file').first().waitFor(); // recently changed files
+  await page.locator('.ov2-hero').getByRole('button', { name: 'Edit project' }).click();
   await page.locator('.modal textarea').first().fill('IW4X trickshot server mod');
   await page.locator('.modal').getByRole('button', { name: 'Save' }).click();
   await page.locator('.ov-desc').filter({ hasText: 'IW4X trickshot server mod' }).waitFor();
@@ -504,14 +505,14 @@ await step('Import Print Vault', async () => {
   await step('3D printing project details', async () => {
     await page.locator('.pcard').filter({ hasText: 'Cat - Green And Yellow' }).click();
     await page.getByText('Print details').waitFor();
-    await page.locator('.fact').filter({ hasText: 'X2D' }).waitFor();
-    await page.locator('.card').filter({ hasText: 'Print details' }).getByRole('button', { name: 'Edit' }).click();
+    await page.locator('.ov2-dl dd').filter({ hasText: 'X2D' }).waitFor();
+    await page.locator('.ov2-sec').filter({ hasText: 'Print details' }).getByRole('button', { name: 'Edit' }).click();
     await page.getByPlaceholder('Notes (settings, what went wrong…)').fill('Gray layer showed through');
     await page.getByRole('button', { name: 'Log' }).click();
     await page.locator('.modal').getByRole('button', { name: 'Save' }).click();
     await page.getByText('Gray layer showed through').waitFor();
     if (shots) await page.screenshot({ path: join(shots, 'x-3d-overview.png') });
-    await page.locator('.groupcard').filter({ hasText: 'Meshes' }).click();
+    await page.locator('.ov2-groups .chip').filter({ hasText: 'Meshes' }).click();
     await page.locator('.chip.on').filter({ hasText: 'Meshes' }).waitFor();
     await page.locator('.filerow').filter({ hasText: 'fixed cat.stl' }).click();
     await page.getByText('Mesh bounds').waitFor();

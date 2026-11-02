@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
   LuTriangleAlert, LuGitCompareArrows, LuPlus, LuTrash2, LuCircleCheck, LuCircleX, LuFileWarning, LuPencil,
-  LuNotebookPen, LuListTodo, LuHistory, LuChevronRight, LuDiff, LuBug,
+  LuNotebookPen, LuListTodo, LuHistory, LuChevronRight, LuDiff, LuBug, LuImage, LuCode,
 } from 'react-icons/lu';
 import { call, type Project } from '../ipc';
-import { Modal, StatusPill, TagInput, useAction, useLoad, useConfirm, useToast } from '../components/common';
+import { KindIcon, Modal, StatusPill, TagInput, useAction, useLoad, useConfirm, useToast } from '../components/common';
+import { PictureDialog } from './Dashboard';
 import { ago, bytes, CATEGORY_LABELS, cx, dateTime } from '../format';
 import { CompareDialog } from './Versions';
 import { Retention } from './History';
@@ -53,6 +54,10 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const tasks = useLoad(() => call<any[]>('tasks.list', { projectId: p.id }), [p.id]);
   const notes = useLoad(() => call<any[]>('notes.tree', { projectId: p.id }), [p.id]);
   const timeline = useLoad(() => call<any[]>('timeline.list', { projectId: p.id, limit: 8 }), [p.id, ctx.scanTick]);
+  const recent = useLoad(() => call<any[]>('files.list', { projectId: p.id, sort: 'changed', limit: 6 }), [p.id, ctx.scanTick]);
+  const thumbs = useLoad(() => call<any>('projects.thumbnail', { id: p.id }), [p.id, JSON.stringify(p.module?.thumb || '')]);
+  const thumb = thumbs.data as { src: string; fit?: 'cover' | 'contain'; x?: number; y?: number } | null | undefined;
+  const [picking, setPicking] = useState(false);
 
   const mod = MODULES[p.category];
   const filled = mod ? mod.fields.filter((f) => (p.module?.[f.key] || '').toString().trim()) : [];
@@ -62,38 +67,38 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const attention = (reviews.data?.length || 0) + (changed.data?.length || 0) + (missing.data?.length || 0);
   const recentNotes = [...(notes.data || [])].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
 
+  const ext = (path: string) => (path.includes('.') ? path.split('.').pop()!.toLowerCase() : '');
   return (
-    <div className="page overview">
-      <div className="ov-main">
-        {/* ---------- about */}
-        <section className="card pad">
-          <div className="row" style={{ alignItems: 'flex-start' }}>
-            <div className="grow">
-              <div className="row wrap" style={{ gap: 8, marginBottom: 8 }}>
-                <StatusPill status={p.status} />
-                <span className="pill">{CATEGORY_LABELS[p.category]}</span>
-                {p.tags.map((t) => <span className="tag" key={t}>{t}</span>)}
-              </div>
-              {p.description
-                ? <p className="ov-desc">{p.description}</p>
-                : <p className="muted" style={{ margin: '4px 0' }}>No description yet. <a href="#" onClick={(e) => { e.preventDefault(); setEditing('general'); }}>Add one</a> so future-you knows what this is.</p>}
+    <div className="page ov2">
+      <div className="ov2-main">
+        {/* ---------- what this is */}
+        <section className="ov2-hero">
+          {thumb && <button className="ov2-pic" title="Change the picture" onClick={() => setPicking(true)}><img src={thumb.src} alt="" style={{ objectFit: thumb.fit || 'cover', objectPosition: `${thumb.x ?? 50}% ${thumb.y ?? 50}%` }} /></button>}
+          <div className="ov2-about">
+            {p.description
+              ? <p className="ov-desc">{p.description}</p>
+              : <p className="muted" style={{ margin: 0 }}><a href="#" onClick={(e) => { e.preventDefault(); setEditing('general'); }}>Add a description</a> of what this project is.</p>}
+            <div className="ov2-facts">
+              <span>{CATEGORY_LABELS[p.category]}</span>
+              {p.status !== 'Active' && <StatusPill status={p.status} />}
+              {p.group && <span>in {p.group}</span>}
+              {p.tags.map((t) => <span className="tag" key={t}>{t}</span>)}
             </div>
-            <button className="btn" onClick={() => setEditing('general')}><LuPencil /> Edit</button>
-          </div>
-          <div className="row" style={{ marginTop: 12, gap: 10 }}>
-            <span className="small muted" style={{ width: 70 }}>Progress</span>
-            <div className="progress grow" style={{ height: 6 }}><div style={{ width: `${p.progress}%` }} /></div>
-            <span className="small">{p.progress}%</span>
+            {p.progress > 0 && <div className="ov2-progress" title={`${p.progress}% done`}><div className="progress"><div style={{ width: `${p.progress}%` }} /></div><span className="small dim">{p.progress}%</span></div>}
+            <div className="row" style={{ gap: 6, marginTop: 10 }}>
+              <button className="btn sm" onClick={() => setEditing('general')}><LuPencil /> Edit project</button>
+              {!thumb && <button className="btn sm ghost" onClick={() => setPicking(true)}><LuImage /> Add a picture</button>}
+            </div>
           </div>
         </section>
 
         {/* ---------- needs attention */}
         {attention > 0 && (
-          <section className="card pad attention">
-            <h2 className="row"><LuTriangleAlert color="var(--warn)" /> Needs your attention</h2>
+          <section className="ov2-sec attention">
+            <h2><LuTriangleAlert /> Needs your attention</h2>
             {(reviews.data || []).map((r) => (
               <div key={r.id} className="att-row">
-                <LuGitCompareArrows color="var(--warn)" />
+                <LuGitCompareArrows />
                 <div className="grow small">
                   <div><b>Is this the same file?</b> <span className="mono">{r.missing.path}</span> disappeared and <span className="mono">{r.candidate.path}</span> appeared <span className="dim">({r.reason})</span>.</div>
                   {r.missing.hasDocs && <div className="dim">Confirming moves its notes and history to the new path.</div>}
@@ -104,8 +109,8 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
             ))}
             {(changed.data || []).map((f) => (
               <div key={f.id} className="att-row">
-                <LuFileWarning color="var(--warn)" />
-                <div className="grow small"><span className="mono">{f.path}</span> <span className="dim">changed {ago(f.lastChanged)}</span>{f.hasDocs && <span className="dim"> · has notes, check they still apply</span>}</div>
+                <LuFileWarning />
+                <div className="grow small"><span className="mono">{f.path}</span> <span className="dim">changed {ago(f.lastChanged)}</span>{f.hasDocs && <span className="dim">, has notes: check they still apply</span>}</div>
                 {f.versions > 1 && <button className="btn sm" onClick={() => setCompare({ fileId: f.id, name: f.name })}><LuDiff /> What changed?</button>}
                 <button className="btn sm ghost" onClick={() => ctx.openFile(f.id)}>Open</button>
                 <button className="btn sm ghost" onClick={async () => { await act(() => call('files.markReviewed', { ids: [f.id] })); changed.reload(); ctx.reload(); }}>Dismiss</button>
@@ -113,8 +118,8 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
             ))}
             {(missing.data || []).map((f) => (
               <div key={f.id} className="att-row">
-                <LuTriangleAlert color="var(--bad)" />
-                <div className="grow small"><span className="mono">{f.path}</span> <span className="dim">is missing from disk</span>{f.hasDocs && <span className="dim"> · its notes are kept</span>}</div>
+                <LuTriangleAlert />
+                <div className="grow small"><span className="mono">{f.path}</span> <span className="dim">is missing from disk</span>{f.hasDocs && <span className="dim">; its notes are kept</span>}</div>
                 <button className="btn sm ghost" onClick={() => ctx.openFile(f.id)}>Open</button>
                 <button className="btn sm ghost" onClick={async () => {
                   if (await confirm({ title: 'Forget this file?', danger: true, confirm: 'Forget', body: <>The record for <span className="mono">{f.path}</span>{f.hasDocs ? ', including its notes,' : ''} is removed from the vault. Nothing on disk changes.</> })) {
@@ -127,32 +132,57 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
           </section>
         )}
 
+        {/* ---------- pick up where you left off */}
+        <section className="ov2-sec">
+          <div className="ov2-h"><h2>Recently changed</h2><button className="btn sm ghost" onClick={() => ctx.openFiles()}>All {p.fileCount} files <LuChevronRight /></button></div>
+          {recent.data?.length ? <div className="ov2-files">
+            {recent.data.map((f) => {
+              const d = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/') + 1) : '';
+              const canEdit = ['gsc', 'csc', 'gsh', 'lua', 'cfg', 'json', 'txt', 'md', 'cs', 'js', 'ts', 'py', 'ini', 'xml', 'menu', 'toc'].includes(ext(f.path));
+              return (
+                <div key={f.id} className="ov2-file" onClick={() => ctx.openFile(f.id)}>
+                  <KindIcon kind={f.kind} />
+                  <span className="mono name">{f.name}</span>
+                  <span className="mono dim dir">{d}</span>
+                  <span className="dim small when">{ago(f.lastChanged)}</span>
+                  {canEdit && <button className="btn ghost sm" title="Edit in Project Vault" onClick={(e) => { e.stopPropagation(); ctx.nav.go({ view: 'project', id: p.id, tab: 'files', focus: { type: 'file', id: f.id, action: 'edit', nonce: Date.now() } }); }}><LuCode /></button>}
+                </div>
+              );
+            })}
+          </div> : <div className="small muted">{p.fileCount ? 'No files yet.' : p.mode === 'managed' ? 'No files yet. Import some from the Files tab.' : 'No files found in the folder yet. Press Rescan.'}</div>}
+          {(groups.data || []).some((g) => g.count > 0) && <div className="ov2-groups">
+            {groups.data!.filter((g) => g.count > 0).map((g) => (
+              <button key={g.id} className="chip" onClick={() => ctx.openFiles(g.id)} title={`${g.hint ? g.hint + ': ' : ''}${(g.found || []).map((f: any) => `${f.ext ? '.' + f.ext : 'no extension'} ${f.count}`).join(', ')}`}>{g.label} <span>{g.count}</span></button>
+            ))}
+          </div>}
+        </section>
+
         {/* ---------- category details */}
         {mod && (
-          <section className="card pad">
-            <div className="row" style={{ marginBottom: 10 }}><h2 className="grow">{mod.title}</h2><button className="btn sm ghost" onClick={() => setEditing('details')}><LuPencil /> Edit</button></div>
+          <section className="ov2-sec">
+            <div className="ov2-h"><h2>{mod.title}</h2><button className="btn sm ghost" onClick={() => setEditing('details')}><LuPencil /> Edit</button></div>
             {filled.length === 0 && !custom.length ? (
-              <p className="muted small" style={{ margin: 0 }}>Nothing filled in yet. <a href="#" onClick={(e) => { e.preventDefault(); setEditing('details'); }}>Add {p.category === '3d-printing' ? 'material, printer, print time…' : 'details'}</a></p>
+              <p className="muted small" style={{ margin: 0 }}><a href="#" onClick={(e) => { e.preventDefault(); setEditing('details'); }}>Add {p.category === '3d-printing' ? 'material, printer and print time' : 'details'}</a>{p.category === '3d-printing' ? ', or fill them from a .3mf in this project.' : '.'}</p>
             ) : (
               <>
-                <div className="facts">
+                <dl className="ov2-dl">
                   {filled.filter((f) => !f.multiline).map((f) => (
-                    <div key={f.key} className="fact"><span>{f.label}</span>
+                    <div key={f.key}><dt>{f.label}</dt>
                       {f.key === 'printStatus'
-                        ? <b><span className="pill"><span className={`dot ${PRINT_STATUS_DOT[p.module[f.key]] || 'off'}`} style={p.module[f.key] === 'FAILED_PRINT' ? { background: 'var(--bad)' } : undefined} />{p.module[f.key].replace(/_/g, ' ').toLowerCase()}</span></b>
-                        : <b>{p.module[f.key]}</b>}
+                        ? <dd><span className="pill"><span className={`dot ${PRINT_STATUS_DOT[p.module[f.key]] || 'off'}`} style={p.module[f.key] === 'FAILED_PRINT' ? { background: 'var(--bad)' } : undefined} />{p.module[f.key].replace(/_/g, ' ').toLowerCase()}</span></dd>
+                        : <dd>{p.module[f.key]}</dd>}
                     </div>
                   ))}
-                  {custom.map(([k, v]) => <div key={k} className="fact"><span>{k}</span><b>{v}</b></div>)}
-                </div>
+                  {custom.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
+                </dl>
                 {filled.filter((f) => f.multiline).map((f) => (
                   <div key={f.key} style={{ marginTop: 12 }}><h3>{f.label}</h3><div className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{p.module[f.key]}</div></div>
                 ))}
               </>
             )}
             {p.category === '3d-printing' && printLog.length > 0 && (
-              <div style={{ marginTop: 12 }}>
-                <h3>Print history <span className="dim small">({printLog.filter((e) => e.result === 'success').length} ok · {printLog.filter((e) => e.result !== 'success').length} failed)</span></h3>
+              <div style={{ marginTop: 14 }}>
+                <h3>Print history <span className="dim small" style={{ fontWeight: 400 }}>{printLog.filter((e) => e.result === 'success').length} succeeded, {printLog.filter((e) => e.result !== 'success').length} failed</span></h3>
                 {printLog.slice(-4).reverse().map((e, i) => (
                   <div key={i} className="row small" style={{ padding: '3px 0' }}>{e.result === 'success' ? <LuCircleCheck color="var(--ok)" /> : <LuCircleX color="var(--bad)" />}<span style={{ width: 90 }}>{e.date}</span><span className="grow muted">{e.notes}</span></div>
                 ))}
@@ -160,58 +190,41 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
             )}
           </section>
         )}
-
-        {/* ---------- key files */}
-        <section className="card pad">
-          <div className="row" style={{ marginBottom: 10 }}><h2 className="grow">Files</h2><button className="btn sm ghost" onClick={() => ctx.openFiles()}>Browse all {p.fileCount} <LuChevronRight /></button></div>
-          {(groups.data || []).some((g) => g.count > 0) ? (
-            <div className="groupgrid">
-              {groups.data!.filter((g) => g.count > 0).map((g) => (
-                <button key={g.id} className="groupcard" onClick={() => ctx.openFiles(g.id)} title={g.hint}>
-                  <b>{g.count}</b><span>{g.label}</span>
-                  <small>{(g.found || []).slice(0, 4).map((f: any) => `${f.ext ? '.' + f.ext : 'no ext'} ${f.count}`).join(' · ')}{(g.found || []).length > 4 ? ' …' : ''}</small>
-                </button>
-              ))}
-            </div>
-          ) : <div className="small muted">{p.fileCount} files · {bytes(p.bytes)}</div>}
-        </section>
       </div>
 
-      <div className="ov-side">
-        <section className="card pad">
-          <div className="row" style={{ marginBottom: 8 }}><h2 className="grow"><LuListTodo /> Next up</h2><button className="btn sm ghost" onClick={() => ctx.openTask('')}>Board <LuChevronRight /></button></div>
+      <aside className="ov2-rail">
+        <section>
+          <div className="ov2-h"><h2>Next up</h2><button className="btn sm ghost" onClick={() => ctx.openTask('')}>Board <LuChevronRight /></button></div>
           {nextTasks.length ? nextTasks.map((t) => (
             <div key={t.id} className="linkrow" onClick={() => ctx.openTask(t.id)}>
-              <span className={`prio p${t.priority}`}>{['low', 'normal', 'high', 'urgent'][t.priority]}</span>
-              <span className="grow">{t.kind === 'bug' ? <LuBug color="var(--accent)" style={{ marginRight: 4, verticalAlign: -2 }} /> : null}{t.title}</span><span className="dim small">{t.status.replace('_', ' ')}</span>
+              {t.kind === 'bug' ? <LuBug color="var(--accent)" /> : <span className={`prio p${t.priority}`} title={['Low', 'Normal', 'High', 'Urgent'][t.priority] + ' priority'} />}
+              <span className="grow">{t.title}</span><span className="dim small">{t.status.replace('_', ' ')}</span>
             </div>
-          )) : <div className="muted small">Nothing planned. Add tasks so you know where to pick up next time.</div>}
+          )) : <div className="muted small"><a href="#" onClick={(e) => { e.preventDefault(); ctx.openTask(''); }}>Add a task</a> so you know where to pick up next time.</div>}
         </section>
-
-        <section className="card pad">
-          <div className="row" style={{ marginBottom: 8 }}><h2 className="grow"><LuNotebookPen /> Notes</h2><button className="btn sm ghost" onClick={() => ctx.openNote('')}>All <LuChevronRight /></button></div>
+        <section>
+          <div className="ov2-h"><h2>Notes</h2><button className="btn sm ghost" onClick={() => ctx.openNote('')}>All <LuChevronRight /></button></div>
           {recentNotes.length ? recentNotes.map((n) => (
             <div key={n.id} className="linkrow" onClick={() => ctx.openNote(n.id)}><span className="grow">{n.title}</span><span className="dim small">{ago(n.updatedAt)}</span></div>
-          )) : <div className="muted small">No notes yet.</div>}
+          )) : <div className="muted small"><a href="#" onClick={(e) => { e.preventDefault(); ctx.openNote(''); }}>Write the first note</a>: setup steps, decisions, how things fit together.</div>}
         </section>
-
-        <section className="card pad">
-          <div className="row" style={{ marginBottom: 8 }}><h2 className="grow"><LuHistory /> Recent activity</h2><button className="btn sm ghost" onClick={() => ctx.openTimeline()}>Timeline <LuChevronRight /></button></div>
+        <section>
+          <div className="ov2-h"><h2>Activity</h2><button className="btn sm ghost" onClick={() => ctx.openTimeline()}>Timeline <LuChevronRight /></button></div>
           {(timeline.data || []).map((e) => (
             <div key={e.id} className="row small" style={{ padding: '3px 0', alignItems: 'baseline' }}><span className="grow" style={e.manual ? { fontWeight: 600 } : undefined}>{e.summary}</span><span className="dim" style={{ whiteSpace: 'nowrap' }}>{ago(e.at)}</span></div>
           ))}
         </section>
-
-        <section className="card pad small">
+        <section className="small">
           <div className="kv">
             <span>Folder</span><span className="mono" style={{ wordBreak: 'break-all' }}>{p.rootPath}</span>
-            <span>Mode</span><span>{p.mode === 'linked' ? 'Linked (files stay where they are)' : 'Managed by Project Vault'}</span>
-            <span>Size</span><span>{p.fileCount} files · {bytes(p.bytes)}</span>
+            <span>Files</span><span>{p.mode === 'linked' ? 'Edited where they are' : 'Kept in app storage'}</span>
+            <span>Size</span><span>{p.fileCount} files, {bytes(p.bytes)}</span>
             <span>Created</span><span>{dateTime(p.createdAt)}</span>
           </div>
         </section>
-      </div>
+      </aside>
 
+      {picking && <PictureDialog p={p} onClose={() => setPicking(false)} onSaved={() => { setPicking(false); thumbs.reload(); ctx.reload(); ctx.nav.refreshProjects(); }} />}
       {editing && <EditProjectDialog ctx={ctx} initialTab={editing} onClose={() => setEditing(null)} />}
       {compare && <CompareDialog fileId={compare.fileId} title={compare.name} onClose={() => setCompare(null)} onRestored={() => { ctx.scan(true); }} />}
     </div>
