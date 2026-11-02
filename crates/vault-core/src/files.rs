@@ -229,9 +229,15 @@ impl ScanReport {
 }
 
 fn event(v: &Vault, pid: &str, fid: &str, kind: &str, detail: &str, sha: Option<&str>) -> DbResult<()> {
+    event_m(v, pid, fid, kind, detail, sha, None)
+}
+
+/// Like `event`, also recording the file's modified time (when the change
+/// actually happened, which can be before it was detected).
+fn event_m(v: &Vault, pid: &str, fid: &str, kind: &str, detail: &str, sha: Option<&str>, mtime: Option<i64>) -> DbResult<()> {
     v.db.exec(
-        "INSERT INTO file_events(id,project_id,file_id,kind,detail,sha256,at) VALUES (?,?,?,?,?,?,?)",
-        p![new_id(), pid, fid, kind, detail, sha.map(String::from), now_ms()],
+        "INSERT INTO file_events(id,project_id,file_id,kind,detail,sha256,at,mtime) VALUES (?,?,?,?,?,?,?,?)",
+        p![new_id(), pid, fid, kind, detail, sha.map(String::from), now_ms(), mtime],
     )?;
     Ok(())
 }
@@ -306,7 +312,7 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
             }
             if content_changed {
                 rep.modified += 1;
-                event(v, project_id, &fid, "modified", "Content changed outside Project Vault", h.as_deref())?;
+                event_m(v, project_id, &fid, "modified", "Content changed outside Project Vault", h.as_deref(), Some(seen.mtime))?;
                 let mut c = change("modified", &fid, rel).with("to", h.clone().unwrap_or_default());
                 if let Some(old) = r.os("sha256") { c.set("from", old); }
                 changes.push(c);
@@ -382,7 +388,7 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
                 p![fid.clone(), project_id, n.0.clone(), file_name_of(&n.0), ext.clone(), classify(&ext), n.1, n.2, n.3.clone(), now, now, now],
             )?;
             if !first_scan {
-                event(v, project_id, &fid, "added", "", n.3.as_deref())?;
+                event_m(v, project_id, &fid, "added", "", n.3.as_deref(), Some(n.2))?;
                 changes.push(change("added", &fid, &n.0).with("to", n.3.clone().unwrap_or_default()));
             }
             rep.added += 1;

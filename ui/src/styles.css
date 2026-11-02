@@ -654,3 +654,21 @@ input[type=checkbox] { accent-color: var(--accent); }
 .pane.filepane { display: flex; flex-direction: column; overflow: hidden; }
 .panescroll { flex: 1; min-height: 0; overflow: auto; }
 .edslot > .editor-pane { height: auto; flex: 1; min-height: 0; }
+
+/* time */
+.tc-top { display: flex; align-items: flex-start; gap: 10px; justify-content: space-between; }
+.tc-big { font-family: var(--display); font-size: 22px; font-weight: 600; color: var(--fg0); line-height: 1.1; }
+.tc-bars { display: grid; grid-template-columns: repeat(14, 1fr); gap: 3px; height: 46px; align-items: end; margin: 12px 0 8px; }
+.tc-bar { height: 100%; display: flex; align-items: flex-end; background: var(--bg2); border-radius: 2px; }
+.tc-bar > div { width: 100%; background: var(--accent); border-radius: 2px; }
+.tc-bar:nth-child(n+8) { background: var(--bg3); }
+.tc-list { display: flex; flex-direction: column; }
+.tc-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12.5px; }
+.tc-dur { width: 70px; text-align: right; flex: none; }
+.btn.on-rec { border-color: var(--accent); color: var(--fg0); font-variant-numeric: tabular-nums; }
+.btn.on-rec svg { color: var(--accent); }
+.timerchip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--fg1); padding: 0 8px; }
+.timerchip .rec { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pvblink 1.4s infinite; }
+@keyframes pvblink { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .timerchip .rec { animation: none; } }
+.tc-when { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

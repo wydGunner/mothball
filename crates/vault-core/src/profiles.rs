@@ -122,7 +122,7 @@ pub fn key_version_exts(category: &str) -> &'static [&'static str] {
         "3d-printing" => &["3mf", "stl", "obj", "blend", "step", "stp", "f3d", "fcstd", "scad"],
         "electronics" => &["kicad_pcb", "kicad_sch", "kicad_pro", "sch", "brd"],
         "video" => &["veg", "vf", "prproj", "drp", "fcpxml", "kdenlive", "wfp"],
-        "motion" => &["aep", "aepx", "c4d", "blend", "comp", "mogrt", "hip", "hipnc"],
+        "motion" => &["aep", "aepx", "c4d", "comp", "mogrt"],
         "design" => &["psd", "psb", "ai", "afdesign", "afphoto", "afpub", "kra", "xcf", "clip", "indd", "sketch", "fig", "xd"],
         "3d-art" => &["blend", "c4d", "ma", "mb", "max", "hip", "hipnc", "ztl", "zpr", "spp", "sbs"],
         "cad" => &["sldprt", "sldasm", "slddrw", "f3d", "f3z", "ipt", "iam", "idw", "fcstd", "3dm", "scad", "dwg", "dxf", "step", "stp"],
@@ -171,11 +171,19 @@ pub fn guess(root: &std::path::Path) -> Option<(String, String)> {
     if has("3mf") + has("gcode") + has("bgcode") > 0 {
         *score.entry("3d-printing").or_default() += 25.0;
     }
-    let (best, top) = score.iter().filter(|(c, _)| **c != "creative" && **c != "general").max_by(|a, b| a.1.partial_cmp(b.1).unwrap())?;
-    if *top < 3.0 {
+    // highest score wins; ties go to the category listed first (deterministic)
+    let mut best: Option<(&str, f64)> = None;
+    for c in crate::projects::CATEGORIES.iter().filter(|c| !matches!(**c, "creative" | "general")) {
+        let sc = score.get(c).copied().unwrap_or(0.0);
+        if best.is_none_or(|b| sc > b.1) {
+            best = Some((c, sc));
+        }
+    }
+    let (best, top) = best?;
+    if top < 3.0 {
         return None;
     }
-    let reason = match *best {
+    let reason = match best {
         "video" => "has video editing projects",
         "motion" => "has After Effects / Cinema 4D files",
         "design" => "has design files",

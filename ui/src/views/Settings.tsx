@@ -299,6 +299,21 @@ function UpdateCheck() {
   );
 }
 
+function TimeSettings() {
+  const sum = useLoad(() => call<{ estimate: boolean }>('time.summary', { since: Date.now() }), []);
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => { if (sum.data) setOn(sum.data.estimate); }, [sum.data]);
+  const act = useAction();
+  if (on === null) return null;
+  return (
+    <div className="card pad">
+      <h2>Time tracking</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>Each project’s Overview shows time spent on it: time you log or run the timer for, plus — if this is on — work sessions estimated from when the project’s files were saved, so time in Blender, Vegas, your slicer or an IDE counts too. Saves within 30 minutes of each other count as one session (plus 10 minutes before the first save). Overlapping time is only counted once.</p>
+      <label className="row"><input type="checkbox" checked={on} onChange={async (e) => { const v = e.target.checked; setOn(v); await act(() => call('time.setEstimate', { on: v })); }} /> Estimate time from file activity</label>
+    </div>
+  );
+}
+
 function WatchCard() {
   const w = useLoad(() => call<{ enabled: boolean; seconds: number }>('watch.settings'), []);
   const [cur, setCur] = useState<{ enabled: boolean; seconds: number } | null>(null);
@@ -356,7 +371,7 @@ export function SettingsView({ nav }: { nav: Nav }) {
         <h2 className="set-title">{cur.label}</h2>
         {sec === 'appearance' && <Appearance />}
         {sec === 'editor' && <EditorSaving />}
-        {sec === 'tracking' && <WatchCard />}
+        {sec === 'tracking' && <><WatchCard /><TimeSettings /></>}
         {sec === 'backups' && <><BackupCard nav={nav} dataDir={info.data?.dataDir} /><ScheduleCard /></>}
         {sec === 'restore' && <RestoreCard nav={nav} />}
         {sec === 'storage' && <BackupStorage />}

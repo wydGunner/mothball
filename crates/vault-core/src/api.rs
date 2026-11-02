@@ -5,7 +5,7 @@
 use crate::db::DbResult;
 use crate::json::Json;
 use crate::projects::NewProject;
-use crate::{backup, deploy, files, git, knowledge, legacy, profiles, projects, search, snapshots, symbols, tasks, timeline, versions, watch, Vault};
+use crate::{backup, deploy, files, git, knowledge, legacy, profiles, projects, search, snapshots, symbols, tasks, timeline, versions, watch, time, Vault};
 use std::path::PathBuf;
 
 fn s(a: &Json, k: &str) -> DbResult<String> {
@@ -102,6 +102,20 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "files.groups" => files::groups(v, &s(a, "projectId")?),
         "profiles.groups" => Ok(profiles::groups_json(&s(a, "category")?)),
         "projects.dashboard" => projects::dashboard(v, a.get("limit").and_then(|x| x.as_i64()).unwrap_or(8)),
+        "time.summary" => time::summary(v, os(a, "projectId").as_deref(), a.get("since").and_then(|x| x.as_i64()).unwrap_or(0)),
+        "time.start" => time::start(v, &s(a, "projectId")?, &os(a, "note").unwrap_or_default()),
+        "time.stop" => time::stop(v),
+        "time.timer" => time::timer(v),
+        "time.add" => time::add(
+            v,
+            &s(a, "projectId")?,
+            a.get("start").and_then(|x| x.as_i64()).ok_or("start is required")?,
+            a.get("end").and_then(|x| x.as_i64()).ok_or("end is required")?,
+            &os(a, "note").unwrap_or_default(),
+            "manual",
+        ),
+        "time.delete" => time::delete(v, &s(a, "id")?).and_then(|_| ok()),
+        "time.setEstimate" => time::set_estimate(v, a.get("on").and_then(|x| x.as_bool()).unwrap_or(true)).and_then(|_| ok()),
         "deploy.get" => deploy::get(v, &s(a, "projectId")?),
         "deploy.set" => deploy::set(v, &s(a, "projectId")?, a.get("patch").unwrap_or(&Json::obj())),
         "deploy.preview" => deploy::preview(v, &s(a, "projectId")?),

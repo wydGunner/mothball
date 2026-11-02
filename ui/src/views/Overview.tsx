@@ -9,6 +9,7 @@ import { PictureDialog } from './Dashboard';
 import { ago, bytes, CATEGORY_LABELS, cx, dateTime } from '../format';
 import { CompareDialog } from './Versions';
 import { Retention } from './History';
+import { TimeCard } from './TimeCard';
 import type { ProjectCtx } from './Project';
 
 type FieldDef = { key: string; label: string; multiline?: boolean; options?: string[]; placeholder?: string };
@@ -227,6 +228,10 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
       </div>
 
       <aside className="ov2-rail">
+        <section>
+          <div className="ov2-h"><h2>Time</h2></div>
+          <TimeCard projectId={p.id} onTimerChange={() => window.dispatchEvent(new CustomEvent('pv:timer'))} />
+        </section>
         <section>
           <div className="ov2-h"><h2>Next up</h2><button className="btn sm ghost" onClick={() => ctx.openTask('')}>Board <LuChevronRight /></button></div>
           {nextTasks.length ? nextTasks.map((t) => (

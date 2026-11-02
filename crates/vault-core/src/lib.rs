@@ -23,6 +23,7 @@ pub mod search;
 pub mod snapshots;
 pub mod symbols;
 pub mod tasks;
+pub mod time;
 pub mod timeline;
 pub mod util;
 pub mod versions;

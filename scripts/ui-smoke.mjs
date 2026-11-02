@@ -572,7 +572,7 @@ await step('Import Print Vault', async () => {
     await page.locator('.ov2-dl dd').filter({ hasText: 'X2D' }).waitFor();
     await page.locator('.ov2-sec').filter({ hasText: 'Print details' }).getByRole('button', { name: 'Edit' }).click();
     await page.getByPlaceholder('Notes (settings, what went wrong…)').fill('Gray layer showed through');
-    await page.getByRole('button', { name: 'Log' }).click();
+    await page.getByRole('button', { name: 'Log', exact: true }).click();
     await page.locator('.modal').getByRole('button', { name: 'Save' }).click();
     await page.getByText('Gray layer showed through').waitFor();
     if (shots) await page.screenshot({ path: join(shots, 'x-3d-overview.png') });
@@ -919,6 +919,26 @@ await step('Deploy a project to a game folder', async () => {
   await page.getByText(/Deployed: 1 copied/).first().waitFor();
   if (!readFileSync(join(dest, 'scripts/mp/_util.gsc'), 'utf8').includes('// newer')) throw new Error('not overwritten');
   await toastGone();
+});
+
+await step('Time tracking: estimate, timer, log time', async () => {
+  await page.locator('.sidebar .navitem').filter({ hasText: 'OMEN v2' }).first().click();
+  await page.getByRole('tab', { name: /Overview/ }).click();
+  const card = page.locator('.ov2-rail section').filter({ hasText: 'Time' }).first();
+  await card.locator('.tc-big').waitFor();
+  // file activity during this test run already counts
+  if ((await card.locator('.tc-big').textContent()) === '0 min') throw new Error('no time estimated from file activity');
+  await card.getByRole('button', { name: 'Start timer' }).click();
+  await page.locator('.timerchip').waitFor();
+  await card.locator('.btn.on-rec').click();
+  await page.locator('.timerchip').waitFor({ state: 'detached' });
+  await card.getByRole('button', { name: 'Log time' }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Log time' });
+  await m.locator('input[inputmode=decimal]').fill('1.5');
+  await m.getByPlaceholder('Modelled the receiver, test print').fill('Playtesting');
+  await m.getByRole('button', { name: 'Add' }).click();
+  await card.locator('.tc-row').filter({ hasText: 'logged' }).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-time.png') });
 });
 
 await step('Dashboard: remove a managed project and delete its folder', async () => {

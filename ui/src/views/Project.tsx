@@ -5,6 +5,7 @@ import { Empty, ProjectIcon, StatusPill, useAction, useToast, useConfirm } from 
 import { ago, cx } from '../format';
 import { FirstTips } from './Welcome';
 import { DeployButtons } from './Deploy';
+import { TimerChip } from './TimeCard';
 import type { Focus, Nav } from '../main';
 import { Overview } from './Overview';
 import { FilesTab } from './Files';
@@ -50,6 +51,8 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
   const [tab, setTab] = useState<Tab>(initialTab || 'overview');
   // the Files tab stays mounted while it has open editors, so unsaved edits survive tab switches
   const [filesVisited, setFilesVisited] = useState(false);
+  const [timerTick, setTimerTick] = useState(0);
+  useEffect(() => { const f = () => setTimerTick((t) => t + 1); window.addEventListener('pv:timer', f); return () => window.removeEventListener('pv:timer', f); }, []);
   const [focus, setFocus] = useState(initialFocus);
   const [scanning, setScanning] = useState(false);
   const [scanTick, setScanTick] = useState(0);
@@ -156,6 +159,7 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
           </div>
         </div>
         <span className="small dim">{project.lastScanAt ? `Checked ${ago(project.lastScanAt)}` : ''}</span>
+        <TimerChip projectId={project.id} tick={timerTick} />
         <DeployButtons project={project} />
         <button className="btn" onClick={() => scan(false)} disabled={scanning} title="Re-scan for external changes (F5)"><LuRefreshCw className={scanning ? 'spin' : ''} /> {scanning ? 'Scanning…' : 'Rescan'}</button>
         {isTauri && <button className="btn icon" title="Open folder in Explorer" onClick={() => act(() => revealPath(project.rootPath))}><LuFolderOpen /></button>}

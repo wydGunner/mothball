@@ -305,6 +305,24 @@ CREATE INDEX symbols_file ON symbols(file_id);
 -- content hashes before/after) so the entry can show what changed.
 ALTER TABLE timeline ADD COLUMN data TEXT NOT NULL DEFAULT '';
 "#,
+), (
+    7,
+    r#"
+-- Time tracking: manual entries and timer runs. Work done in other programs
+-- is estimated from file changes (file_events), whose file modified time is
+-- now kept too, so changes found later still count at the right time.
+CREATE TABLE time_entries (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  start_at INTEGER NOT NULL,
+  end_at INTEGER NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT 'manual',   -- manual | timer
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX time_project ON time_entries(project_id, start_at);
+ALTER TABLE file_events ADD COLUMN mtime INTEGER;
+"#,
 )];
 
 pub fn current_version(db: &Db) -> DbResult<i64> {
