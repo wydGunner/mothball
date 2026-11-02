@@ -18,6 +18,7 @@ pub mod profiles;
 pub mod projects;
 pub mod schema;
 pub mod search;
+pub mod snapshots;
 pub mod tasks;
 pub mod timeline;
 pub mod util;

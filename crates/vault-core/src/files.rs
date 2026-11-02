@@ -59,6 +59,7 @@ pub fn is_text_ext(ext: &str) -> bool {
 // ------------------------------------------------------------------ ignore
 
 pub struct Ignore {
+    paths: HashSet<String>,
     dirs: HashSet<String>,
     dir_paths: Vec<String>,
     exts: HashSet<String>,
@@ -69,7 +70,7 @@ impl Ignore {
     /// One rule per line: `Name/` (directory name anywhere), `a/b/` (directory
     /// at a project-relative path), `*.ext`, or an exact file name.
     pub fn parse(rules: &str) -> Ignore {
-        let mut ig = Ignore { dirs: HashSet::new(), dir_paths: Vec::new(), exts: HashSet::new(), names: HashSet::new() };
+        let mut ig = Ignore { paths: HashSet::new(), dirs: HashSet::new(), dir_paths: Vec::new(), exts: HashSet::new(), names: HashSet::new() };
         for d in ALWAYS_IGNORE_DIRS {
             ig.dirs.insert(d.to_lowercase());
         }
@@ -83,6 +84,8 @@ impl Ignore {
             } else if let Some(d) = l.strip_suffix('/') {
                 let d = d.trim_start_matches('/');
                 if d.contains('/') { ig.dir_paths.push(d.to_string()) } else { ig.dirs.insert(d.to_string()); }
+            } else if l.contains('/') {
+                ig.paths.insert(l.trim_start_matches('/').to_string());
             } else {
                 ig.names.insert(l);
             }
@@ -94,9 +97,9 @@ impl Ignore {
         let r = rel.to_lowercase();
         self.dirs.contains(&n) || self.dir_paths.iter().any(|d| *d == r)
     }
-    fn skip_file(&self, name: &str) -> bool {
+    fn skip_file(&self, name: &str, rel: &str) -> bool {
         let n = name.to_lowercase();
-        self.names.contains(&n) || self.exts.contains(&extension_of(&n)) || n.starts_with(".pv-tmp-")
+        self.paths.contains(&rel.to_lowercase()) || self.names.contains(&n) || self.exts.contains(&extension_of(&n)) || n.starts_with(".pv-tmp-")
     }
 }
 
@@ -166,7 +169,7 @@ pub fn walk(root: &Path, ig: &Ignore) -> Walk {
                 if !ig.skip_dir(&name, &rel) {
                     stack.push(path);
                 }
-            } else if ft.is_file() && !ig.skip_file(&name) {
+            } else if ft.is_file() && !ig.skip_file(&name, &rel) {
                 match ent.metadata() {
                     Ok(m) => {
                         let mtime = m.modified().map(system_time_ms).unwrap_or(0);
@@ -902,18 +905,233 @@ pub fn import(v: &Vault, project_id: &str, sources: &[PathBuf], dest_rel_dir: &s
             errors.push(format!("{}: {e}", src.display()));
             continue;
         }
-        imported.push(Json::obj().with("source", src.to_string_lossy().to_string()).with("path", rel_path(&root, &dest).unwrap_or_default()));
+        imported.push(Json::obj().with("source", src.to_string_lossy().to_string()).with("path", rel_path(&root, &dest).unwrap_or_default()).with("sha256", h));
     }
     let n = imported.len();
     let scan_rep = scan(v, project_id)?;
+    let mut batch_id = Json::Null;
     if n > 0 {
-        timeline::add(v, project_id, "import", &format!("Imported {n} file{}", if n == 1 { "" } else { "s" }), "", None, false)?;
+        let id = new_id();
+        v.db.exec(
+            "INSERT INTO import_batches(id,project_id,dest_dir,files_json,created_at) VALUES (?,?,?,?,?)",
+            p![id.clone(), project_id, dest_rel_dir, Json::Arr(imported.clone()).to_string(), now_ms()],
+        )?;
+        timeline::add(v, project_id, "import", &format!("Imported {n} file{}", if n == 1 { "" } else { "s" }), &format!("into /{}", dest_rel_dir.trim_matches('/')), Some(("import", &id)), false)?;
+        batch_id = Json::from(id);
     }
     Ok(Json::obj()
+        .with("batchId", batch_id)
         .with("imported", Json::Arr(imported))
         .with("skipped", Json::Arr(skipped))
         .with("errors", Json::Arr(errors.into_iter().map(Json::from).collect()))
         .with("scan", scan_rep.json()))
+}
+
+/// Dry run of an import: what would be copied where, with conflicts.
+/// Nothing on disk changes.
+pub fn import_preview(v: &Vault, project_id: &str, sources: &[PathBuf], dest_rel_dir: &str) -> DbResult<Json> {
+    let pr = v.db.one("SELECT name, root_path, mode FROM projects WHERE id=?", p![project_id])?.ok_or("Project not found")?;
+    let root = PathBuf::from(pr.s("root_path"));
+    if !root.is_dir() {
+        return Err(format!("Project folder {} is not reachable", root.display()));
+    }
+    let dest_dir = safe_join(&root, dest_rel_dir)?;
+    let mut items = Vec::new();
+    let mut planned: HashSet<PathBuf> = HashSet::new();
+    let mut add = |src: PathBuf, sub: String, items: &mut Vec<Json>| -> DbResult<()> {
+        let mut status = "copy";
+        let mut detail = String::new();
+        if src.starts_with(&root) {
+            status = "skip";
+            detail = "already inside this project's folder".into();
+        }
+        let h = if status == "copy" { sha256_file(&src).ok() } else { None };
+        if status == "copy" && h.is_none() {
+            status = "error";
+            detail = "can't be read".into();
+        }
+        if let (Some(h), "copy") = (&h, status) {
+            if let Some(d) = v.db.one("SELECT rel_path FROM files WHERE project_id=? AND sha256=? AND state='present'", p![project_id, h.clone()])? {
+                status = "skip";
+                detail = format!("identical to {}", d.s("rel_path"));
+            }
+        }
+        let mut dest_rel = String::new();
+        if status == "copy" {
+            let target_dir = match sub.rsplit_once('/') { Some((d, _)) => safe_join(&dest_dir, d)?, None => dest_dir.clone() };
+            let name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let mut dest = target_dir.join(&name);
+            if dest.exists() || planned.contains(&dest) {
+                let mut n = 2;
+                let (stem, ext) = match name.rfind('.') { Some(i) if i > 0 => (name[..i].to_string(), name[i..].to_string()), _ => (name.clone(), String::new()) };
+                while dest.exists() || planned.contains(&dest) {
+                    dest = target_dir.join(format!("{stem} ({n}){ext}"));
+                    n += 1;
+                }
+                status = "rename";
+                detail = format!("“{name}” already exists there; the copy will be named “{}”", dest.file_name().unwrap().to_string_lossy());
+            }
+            planned.insert(dest.clone());
+            dest_rel = rel_path(&root, &dest).unwrap_or_default();
+        }
+        items.push(Json::obj().with("source", src.to_string_lossy().to_string()).with("dest", dest_rel).with("status", status).with("detail", detail));
+        Ok(())
+    };
+    for s in sources {
+        if s.is_dir() {
+            let base = s.parent().unwrap_or(s).to_path_buf();
+            for (rel, _) in walk(s, &Ignore::parse("")).files {
+                let src = s.join(&rel);
+                let sub = rel_path(&base, &src).unwrap_or(rel.clone());
+                add(src, sub, &mut items)?;
+            }
+        } else if s.is_file() {
+            let name = s.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            add(s.clone(), name, &mut items)?;
+        } else {
+            items.push(Json::obj().with("source", s.to_string_lossy().to_string()).with("dest", "").with("status", "error").with("detail", "not found"));
+        }
+    }
+    Ok(Json::obj()
+        .with("projectName", pr.s("name"))
+        .with("mode", pr.s("mode"))
+        .with("destDir", dest_rel_dir.trim_matches('/'))
+        .with("destAbs", projects::display_path(&dest_dir))
+        .with("operation", "copy")
+        .with("items", Json::Arr(items)))
+}
+
+pub fn import_batches(v: &Vault, project_id: &str) -> DbResult<Json> {
+    Ok(Json::Arr(
+        v.db.query("SELECT * FROM import_batches WHERE project_id=? ORDER BY created_at DESC LIMIT 50", p![project_id])?
+            .iter()
+            .map(|r| {
+                Json::obj()
+                    .with("id", r.s("id"))
+                    .with("destDir", r.s("dest_dir"))
+                    .with("files", Json::parse(&r.s("files_json")).unwrap_or(Json::Arr(vec![])))
+                    .with("at", r.i("created_at"))
+                    .with("undoneAt", r.oi("undone_at"))
+            })
+            .collect(),
+    ))
+}
+
+/// Undo an import: removes only the copies that import created, and only if
+/// they are byte-for-byte unchanged since (hash check). Anything edited since,
+/// or not created by the import, is left alone and reported.
+pub fn undo_import(v: &Vault, batch_id: &str) -> DbResult<Json> {
+    let b = v.db.one("SELECT * FROM import_batches WHERE id=?", p![batch_id])?.ok_or("Import not found")?;
+    if b.oi("undone_at").is_some() {
+        return Err("This import was already undone".into());
+    }
+    let pid = b.s("project_id");
+    let root = projects::root_of(v, &pid)?;
+    let list = Json::parse(&b.s("files_json")).unwrap_or(Json::Arr(vec![]));
+    let mut removed = Vec::new();
+    let mut kept = Vec::new();
+    for it in list.as_arr().cloned().unwrap_or_default() {
+        let rel = it.str_of("path").unwrap_or_default();
+        let sha = it.str_of("sha256").unwrap_or_default();
+        let path = safe_join(&root, &rel)?;
+        if !path.exists() {
+            kept.push(Json::obj().with("path", rel).with("reason", "already gone"));
+            continue;
+        }
+        if sha256_file(&path).ok().as_deref() != Some(sha.as_str()) {
+            kept.push(Json::obj().with("path", rel).with("reason", "changed since the import — kept"));
+            continue;
+        }
+        match to_recycle_bin(&path) {
+            Ok(()) => {
+                if let Some(r) = v.db.one("SELECT id FROM files WHERE project_id=? AND rel_path=?", p![pid.clone(), rel.clone()])? {
+                    search::unindex(v, "file", &r.s("id"))?;
+                    v.db.exec("DELETE FROM files WHERE id=?", p![r.s("id")])?;
+                }
+                removed.push(Json::from(rel));
+            }
+            Err(e) => kept.push(Json::obj().with("path", rel).with("reason", format!("could not remove: {e}"))),
+        }
+    }
+    v.db.exec("UPDATE import_batches SET undone_at=? WHERE id=?", p![now_ms(), batch_id])?;
+    timeline::add(v, &pid, "import", &format!("Undid import ({} removed, {} kept)", removed.len(), kept.len()), "", None, false)?;
+    scan(v, &pid)?;
+    Ok(Json::obj().with("removed", Json::Arr(removed)).with("kept", Json::Arr(kept)))
+}
+
+/// Moves files to another project: copies (verified) into the target folder,
+/// carries over notes, tags and stored versions, then sends the original to
+/// the Recycle Bin. Links to other items stay behind (links are per project).
+pub fn move_to_project(v: &Vault, file_ids: &[String], target_pid: &str, dest_rel_dir: &str) -> DbResult<Json> {
+    let troot = projects::root_of(v, target_pid)?;
+    if !troot.is_dir() {
+        return Err("The target project's folder is not reachable".into());
+    }
+    let tdir = safe_join(&troot, dest_rel_dir)?;
+    std::fs::create_dir_all(&tdir).map_err(|e| e.to_string())?;
+    let mut moved = Vec::new();
+    let mut errors = Vec::new();
+    let mut sources = HashSet::new();
+    for fid in file_ids {
+        let res = (|| -> DbResult<String> {
+            let f = v.db.one("SELECT * FROM files WHERE id=?", p![fid.clone()])?.ok_or("File not found")?;
+            if f.s("project_id") == target_pid {
+                return Err(format!("{} is already in that project", f.s("rel_path")));
+            }
+            if f.s("state") != "present" {
+                return Err(format!("{} is not on disk", f.s("rel_path")));
+            }
+            let sroot = projects::root_of(v, &f.s("project_id"))?;
+            let src = safe_join(&sroot, &f.s("rel_path"))?;
+            let sha = sha256_file(&src).map_err(|e| e.to_string())?;
+            let dest = unique_dest(&tdir, &f.s("name"));
+            let tmp = tdir.join(format!(".pv-tmp-{}", &new_id()[..8]));
+            std::fs::copy(&src, &tmp).map_err(|e| e.to_string())?;
+            if sha256_file(&tmp).ok().as_deref() != Some(sha.as_str()) {
+                let _ = std::fs::remove_file(&tmp);
+                return Err("copy verification failed".into());
+            }
+            std::fs::rename(&tmp, &dest).map_err(|e| e.to_string())?;
+            let new_rel = rel_path(&troot, &dest).unwrap_or_default();
+            // move the identity: same file id, new project + path (keeps notes, tags, versions)
+            to_recycle_bin(&src).map_err(|e| {
+                let _ = std::fs::remove_file(&dest);
+                format!("the original couldn't be moved to the Recycle Bin ({e}); the move was cancelled")
+            })?;
+            v.db.tx(|db| {
+                db.exec("DELETE FROM links WHERE (a_type='file' AND a_id=?) OR (b_type='file' AND b_id=?)", p![fid.clone(), fid.clone()])?;
+                db.exec("DELETE FROM reconcile_reviews WHERE missing_file_id=? OR candidate_file_id=?", p![fid.clone(), fid.clone()])?;
+                let ext = extension_of(&new_rel);
+                db.exec(
+                    "UPDATE files SET project_id=?, rel_path=?, name=?, ext=?, kind=?, sha256=?, state='present' WHERE id=?",
+                    p![target_pid, new_rel.clone(), file_name_of(&new_rel), ext.clone(), classify(&ext), sha.clone(), fid.clone()],
+                )?;
+                db.exec("UPDATE file_versions SET project_id=? WHERE file_id=?", p![target_pid, fid.clone()])?;
+                db.exec("UPDATE file_events SET project_id=? WHERE file_id=?", p![target_pid, fid.clone()])?;
+                Ok(())
+            })?;
+            event(v, target_pid, fid, "moved", &format!("Moved here from another project ({})", f.s("rel_path")), Some(&sha))?;
+            timeline::add(v, &f.s("project_id"), "files", &format!("Moved {} to another project", f.s("rel_path")), "", None, false)?;
+            sources.insert(f.s("project_id"));
+            search::index_file(v, fid)?;
+            for r in v.db.query("SELECT id FROM file_versions WHERE file_id=?", p![fid.clone()])? {
+                crate::versions::index_backup(v, &r.s("id"))?;
+            }
+            Ok(new_rel)
+        })();
+        match res {
+            Ok(p) => moved.push(Json::from(p)),
+            Err(e) => errors.push(Json::from(e)),
+        }
+    }
+    if !moved.is_empty() {
+        timeline::add(v, target_pid, "files", &format!("Received {} file(s) from another project", moved.len()), "", None, false)?;
+    }
+    for s in &sources {
+        scan(v, s)?;
+    }
+    scan(v, target_pid)?;
+    Ok(Json::obj().with("moved", Json::Arr(moved)).with("errors", Json::Arr(errors)))
 }
 
 // ------------------------------------------------------------------ rename / delete
@@ -1045,6 +1263,43 @@ pub fn delete(v: &Vault, file_ids: &[String]) -> DbResult<Json> {
         timeline::add(v, pid, "files", &format!("Deleted {n} file{}", if n == 1 { "" } else { "s" }), "", None, false)?;
     }
     Ok(Json::obj().with("deleted", Json::Arr(deleted)).with("errors", Json::Arr(errors)))
+}
+
+/// "Remove from Project Vault": stops tracking a file without touching it on
+/// disk. Adds an exact-path ignore rule (so the next scan doesn't re-add it)
+/// and removes its record, notes, links and tags. Stored versions are removed
+/// too unless `keep_versions`.
+pub fn stop_tracking(v: &Vault, file_ids: &[String], keep_versions: bool) -> DbResult<Json> {
+    let mut removed = Vec::new();
+    for fid in file_ids {
+        let Some(f) = v.db.one("SELECT * FROM files WHERE id=?", p![fid.clone()])? else { continue };
+        let pid = f.s("project_id");
+        let rel = f.s("rel_path");
+        let rules = v.db.one("SELECT ignore_globs FROM projects WHERE id=?", p![pid.clone()])?.map(|r| r.s("ignore_globs")).unwrap_or_default();
+        let rule = if rel.contains('/') { rel.clone() } else { format!("./{rel}").replace("./", "/") };
+        if !rules.lines().any(|l| l.trim().eq_ignore_ascii_case(&rule)) {
+            let new_rules = if rules.trim().is_empty() { rule.clone() } else { format!("{}\n{rule}", rules.trim_end()) };
+            v.db.exec("UPDATE projects SET ignore_globs=? WHERE id=?", p![new_rules, pid.clone()])?;
+        }
+        if keep_versions {
+            // versions reference the file row; keep it hidden as 'untracked' instead of deleting
+            v.db.exec("UPDATE files SET state='deleted' WHERE id=?", p![fid.clone()])?;
+        } else {
+            v.db.exec("DELETE FROM links WHERE (a_type='file' AND a_id=?) OR (b_type='file' AND b_id=?)", p![fid.clone(), fid.clone()])?;
+            v.db.exec("DELETE FROM entity_tags WHERE entity_type='file' AND entity_id=?", p![fid.clone()])?;
+            for r in v.db.query("SELECT id FROM file_versions WHERE file_id=?", p![fid.clone()])? {
+                search::unindex(v, "backup", &r.s("id"))?;
+            }
+            v.db.exec("DELETE FROM files WHERE id=?", p![fid.clone()])?;
+        }
+        search::unindex(v, "file", fid)?;
+        timeline::add(v, &pid, "files", &format!("Stopped tracking {rel} (file left on disk)"), "", None, false)?;
+        removed.push(Json::from(rel));
+    }
+    if !keep_versions {
+        crate::versions::gc(v)?;
+    }
+    Ok(Json::obj().with("removed", Json::Arr(removed)))
 }
 
 /// Brings back a file deleted through Project Vault from its stored copy.
@@ -1439,6 +1694,61 @@ mod tests {
     }
 
     #[test]
+    fn stop_tracking_import_undo_and_move() {
+        let (t, v) = vault();
+        let d = t.path().join("p");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("keep.txt"), "pre-existing").unwrap();
+        fs::write(d.join("noise.log"), "x").unwrap();
+        let pid = linked(&v, &d);
+        scan(&v, &pid).unwrap();
+        // stop tracking: file stays on disk, doesn't come back on rescan
+        let nid = id_at(&v, &pid, "noise.log");
+        stop_tracking(&v, &[nid], false).unwrap();
+        assert!(d.join("noise.log").exists());
+        scan(&v, &pid).unwrap();
+        assert_eq!(v.db.scalar_i64("SELECT count(*) FROM files WHERE rel_path='noise.log'", p![]).unwrap(), 0);
+
+        // import preview shows destination + conflicts, changes nothing
+        let src = t.path().join("downloads");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("keep.txt"), "different content").unwrap();
+        fs::write(src.join("model.stl"), "solid m").unwrap();
+        let pv = import_preview(&v, &pid, &[src.join("keep.txt"), src.join("model.stl")], "").unwrap();
+        let items = pv.get("items").unwrap().as_arr().unwrap().clone();
+        assert_eq!(items[0].str_of("status").unwrap(), "rename");
+        assert_eq!(items[0].str_of("dest").unwrap(), "keep (2).txt");
+        assert!(!d.join("keep (2).txt").exists());
+        // import, edit one copy, undo: only the untouched copy is removed; pre-existing file intact
+        let r = import(&v, &pid, &[src.join("keep.txt"), src.join("model.stl")], "", false).unwrap();
+        let batch = r.str_of("batchId").unwrap();
+        fs::write(d.join("model.stl"), "edited after import").unwrap();
+        let u = undo_import(&v, &batch).unwrap();
+        assert_eq!(u.get("removed").unwrap().as_arr().unwrap().len(), 1);
+        assert!(!d.join("keep (2).txt").exists());
+        assert!(d.join("model.stl").exists(), "changed since import -> kept");
+        assert_eq!(fs::read_to_string(d.join("keep.txt")).unwrap(), "pre-existing");
+        assert!(undo_import(&v, &batch).is_err());
+
+        // move to another project keeps identity, notes and versions
+        let d2 = t.path().join("q");
+        fs::create_dir_all(&d2).unwrap();
+        let pid2 = create(&v, NewProject { name: "Other".into(), description: "".into(), category: "general".into(), status: "".into(), link_path: Some(d2.clone()), module: Json::obj() }).unwrap().str_of("id").unwrap();
+        let kid = id_at(&v, &pid, "keep.txt");
+        docs_save(&v, &kid, &Json::parse(r#"{"purpose":"wrong project"}"#).unwrap()).unwrap();
+        let versions_before = crate::versions::list(&v, &kid).unwrap().as_arr().unwrap().len();
+        let m = move_to_project(&v, &[kid.clone()], &pid2, "imported").unwrap();
+        assert_eq!(m.get("moved").unwrap().as_arr().unwrap()[0].str_of("").unwrap_or_default(), "");
+        assert!(d2.join("imported/keep.txt").exists() && !d.join("keep.txt").exists());
+        let g = get(&v, &kid).unwrap();
+        assert_eq!(g.str_of("projectId").unwrap(), pid2);
+        assert_eq!(g.get("docs").unwrap().str_of("purpose").unwrap(), "wrong project");
+        assert_eq!(crate::versions::list(&v, &kid).unwrap().as_arr().unwrap().len(), versions_before);
+        let r1 = scan(&v, &pid).unwrap();
+        assert_eq!(r1.missing, 0, "source project doesn't report it missing");
+    }
+
+    #[test]
     fn stl_binary_dims() {
         let t = TempDir::new("stl");
         let mut b = vec![0u8; 80];
@@ -1462,8 +1772,11 @@ mod tests {
         assert!(ig.skip_dir("node_modules", "a/node_modules"));
         assert!(ig.skip_dir("Gen", "Assets/Gen"));
         assert!(!ig.skip_dir("Gen", "Other/Gen"));
-        assert!(ig.skip_file("x.LOG"));
-        assert!(ig.skip_file("secret.txt"));
-        assert!(!ig.skip_file("main.rs"));
+        assert!(ig.skip_file("x.LOG", "x.LOG"));
+        assert!(ig.skip_file("secret.txt", "a/secret.txt"));
+        assert!(!ig.skip_file("main.rs", "main.rs"));
+        let ig2 = Ignore::parse("scripts/old/test.gsc");
+        assert!(ig2.skip_file("test.gsc", "scripts/old/test.gsc"));
+        assert!(!ig2.skip_file("test.gsc", "scripts/test.gsc"));
     }
 }

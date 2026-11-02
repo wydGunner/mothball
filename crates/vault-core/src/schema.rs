@@ -235,6 +235,44 @@ CREATE INDEX fv_sha ON file_versions(sha256);
 -- {"text":bool,"textMaxMb":n,"keyFiles":bool,"keyMaxMb":n}; missing keys use category defaults
 ALTER TABLE projects ADD COLUMN version_policy TEXT NOT NULL DEFAULT '{}';
 "#,
+), (
+    3,
+    r#"
+-- Named, described backups reuse file_versions (note = "what changed").
+ALTER TABLE file_versions ADD COLUMN name TEXT NOT NULL DEFAULT '';
+ALTER TABLE file_versions ADD COLUMN tags TEXT NOT NULL DEFAULT '';
+
+-- Project-wide restore points: exact content (by SHA-256) of every included file.
+CREATE TABLE snapshots (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  file_count INTEGER NOT NULL,
+  total_bytes INTEGER NOT NULL,
+  skipped_json TEXT NOT NULL DEFAULT '[]'
+);
+CREATE TABLE snapshot_files (
+  snapshot_id TEXT NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+  file_id TEXT,
+  rel_path TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  PRIMARY KEY (snapshot_id, rel_path)
+);
+CREATE INDEX sf_sha ON snapshot_files(sha256);
+
+-- Import batches, so an import can be undone safely.
+CREATE TABLE import_batches (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  dest_dir TEXT NOT NULL,
+  files_json TEXT NOT NULL,      -- [{path, sha256}]
+  created_at INTEGER NOT NULL,
+  undone_at INTEGER
+);
+"#,
 )];
 
 pub fn current_version(db: &Db) -> DbResult<i64> {

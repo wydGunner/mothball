@@ -5,7 +5,7 @@
 use crate::db::DbResult;
 use crate::json::Json;
 use crate::projects::NewProject;
-use crate::{backup, files, git, knowledge, legacy, profiles, projects, search, tasks, timeline, versions, Vault};
+use crate::{backup, files, git, knowledge, legacy, profiles, projects, search, snapshots, tasks, timeline, versions, Vault};
 use std::path::PathBuf;
 
 fn s(a: &Json, k: &str) -> DbResult<String> {
@@ -95,7 +95,49 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "versions.compare" => versions::compare(v, &s(a, "fileId")?, &s(a, "old")?, &s(a, "new")?),
         "versions.restore" => versions::restore(v, &s(a, "id")?),
         "versions.delete" => versions::delete_version(v, &s(a, "id")?).and_then(|_| ok()),
-        "versions.prune" => versions::prune(v, &s(a, "projectId")?, a.get("keep").and_then(|x| x.as_i64()).unwrap_or(10)),
+        "versions.prune" => versions::prune_opts(v, &s(a, "projectId")?, a.get("keep").and_then(|x| x.as_i64()).unwrap_or(10), a.get("includeNamed").and_then(|x| x.as_bool()).unwrap_or(false)),
+        "versions.restoreOpts" => versions::restore_opts(v, &s(a, "id")?, a.get("keepCurrent").and_then(|x| x.as_bool()).unwrap_or(true)),
+        "versions.backupNow" => versions::backup_now(v, &s(a, "fileId")?, &os(a, "name").unwrap_or_default(), &os(a, "description").unwrap_or_default(), &os(a, "tags").unwrap_or_default()),
+        "versions.suggestName" => versions::suggest_name(v, &s(a, "fileId")?, &os(a, "description").unwrap_or_default(), &os(a, "taskTitle").unwrap_or_default()),
+        "versions.update" => versions::update_backup(v, &s(a, "id")?, &os(a, "name").unwrap_or_default(), &os(a, "description").unwrap_or_default(), &os(a, "tags").unwrap_or_default()).and_then(|_| ok()),
+        "versions.export" => versions::export_copy(v, &s(a, "id")?, &PathBuf::from(s(a, "dest")?)),
+        "versions.browse" => versions::browse(
+            v,
+            os(a, "projectId").as_deref(),
+            &os(a, "query").unwrap_or_default(),
+            a.get("namedOnly").and_then(|x| x.as_bool()).unwrap_or(false),
+            a.get("from").and_then(|x| x.as_i64()),
+            a.get("to").and_then(|x| x.as_i64()),
+            a.get("limit").and_then(|x| x.as_i64()).unwrap_or(500),
+        ),
+        "versions.history" => versions::history(v, &s(a, "fileId")?),
+        "versions.smartSave" => versions::smart_save(
+            v,
+            &s(a, "id")?,
+            &a.str_of("text").unwrap_or_default(),
+            &s(a, "expectedSha")?,
+            &os(a, "eol").unwrap_or_else(|| "lf".into()),
+            a.get("bom").and_then(|x| x.as_bool()).unwrap_or(false),
+            &versions::SmartSave {
+                backup_before: a.get("backupBefore").and_then(|x| x.as_bool()).unwrap_or(false),
+                backup_after: a.get("backupAfter").and_then(|x| x.as_bool()).unwrap_or(false),
+                name: &os(a, "name").unwrap_or_default(),
+                description: &os(a, "description").unwrap_or_default(),
+                tags: &os(a, "tags").unwrap_or_default(),
+            },
+        ),
+        "storage.get" => Ok(Json::obj().with("root", projects::display_path(&versions::storage_root(v))).with("available", versions::storage_root(v).is_dir()).with("stats", versions::stats(v, None)?)),
+        "storage.set" => versions::set_storage_root(v, &PathBuf::from(s(a, "path")?)),
+        "snapshots.create" => snapshots::create(v, &s(a, "projectId")?, &os(a, "name").unwrap_or_default(), &os(a, "description").unwrap_or_default(), a.get("maxFileMb").and_then(|x| x.as_f64()).unwrap_or(200.0)),
+        "snapshots.list" => snapshots::list(v, &s(a, "projectId")?),
+        "snapshots.preview" => snapshots::preview(v, &s(a, "id")?),
+        "snapshots.restore" => snapshots::restore(v, &s(a, "id")?),
+        "snapshots.delete" => snapshots::delete(v, &s(a, "id")?).and_then(|_| ok()),
+        "files.stopTracking" => files::stop_tracking(v, &strs(a, "ids"), a.get("keepVersions").and_then(|x| x.as_bool()).unwrap_or(false)),
+        "files.importPreview" => files::import_preview(v, &s(a, "projectId")?, &strs(a, "paths").into_iter().map(PathBuf::from).collect::<Vec<_>>(), &os(a, "destDir").unwrap_or_default()),
+        "files.importBatches" => files::import_batches(v, &s(a, "projectId")?),
+        "files.undoImport" => files::undo_import(v, &s(a, "id")?),
+        "files.moveToProject" => files::move_to_project(v, &strs(a, "ids"), &s(a, "targetProjectId")?, &os(a, "destDir").unwrap_or_default()),
         "versions.stats" => versions::stats(v, os(a, "projectId").as_deref()),
         "versions.policy" => versions::policy_json(v, &s(a, "projectId")?),
         "versions.setPolicy" => versions::set_policy(v, &s(a, "projectId")?, a.get("policy").unwrap_or(&Json::obj())),

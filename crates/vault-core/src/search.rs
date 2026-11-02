@@ -158,6 +158,32 @@ pub fn search(v: &Vault, q: &str, project_id: Option<&str>, types: &[String], li
             .with("title", r.s("title"))
             .with("snippet", r.s("snip"))
             .with("score", r.get("score").as_i64().map(|x| x as f64).unwrap_or(0.0));
+        if et == "backup" {
+            match v.db.one(
+                "SELECT fv.*, f.name AS file_name, f.state AS file_state FROM file_versions fv JOIN files f ON f.id=fv.file_id WHERE fv.id=?",
+                p![r.s("entity_id")],
+            )? {
+                Some(b) => {
+                    item.set("fileId", b.s("file_id"));
+                    item.set("fileName", b.s("file_name"));
+                    item.set("path", b.s("rel_path"));
+                    item.set("backupName", b.s("name"));
+                    item.set("description", b.s("note"));
+                    item.set("reason", b.s("reason"));
+                    item.set("at", b.i("created_at"));
+                    item.set("fileState", b.s("file_state"));
+                }
+                None => continue,
+            }
+        }
+        if et == "snapshot" {
+            if let Some(sn) = v.db.one("SELECT created_at, file_count FROM snapshots WHERE id=?", p![r.s("entity_id")])? {
+                item.set("at", sn.i("created_at"));
+                item.set("fileCount", sn.i("file_count"));
+            } else {
+                continue;
+            }
+        }
         if et == "file" {
             if let Some(f) = v.db.one("SELECT f.rel_path, f.name, f.state, f.ext, f.kind, p.root_path FROM files f JOIN projects p ON p.id=f.project_id WHERE f.id=?", p![r.s("entity_id")])? {
                 if f.s("state") == "deleted" {
@@ -215,6 +241,12 @@ pub fn rebuild(v: &Vault) -> DbResult<i64> {
     }
     for r in v.db.query("SELECT id FROM tasks", p![])? {
         crate::tasks::index_task(v, &r.s("id"))?;
+    }
+    for r in v.db.query("SELECT id FROM file_versions WHERE name!='' OR note!='' OR reason IN ('manual','pre-save','post-save')", p![])? {
+        crate::versions::index_backup(v, &r.s("id"))?;
+    }
+    for r in v.db.query("SELECT id, project_id, name, description, file_count FROM snapshots", p![])? {
+        index(v, "snapshot", &r.s("id"), &r.s("project_id"), &r.s("name"), &format!("{} snapshot {} files", r.s("description"), r.i("file_count")))?;
     }
     for r in v.db.query("SELECT id, project_id, summary, detail FROM timeline WHERE manual=1", p![])? {
         index(v, "journal", &r.s("id"), &r.s("project_id"), &r.s("summary"), &r.s("detail"))?;
