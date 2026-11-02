@@ -672,3 +672,43 @@ input[type=checkbox] { accent-color: var(--accent); }
 @keyframes pvblink { 50% { opacity: .3; } }
 @media (prefers-reduced-motion: reduce) { .timerchip .rec { animation: none; } }
 .tc-when { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* movable, collapsible panels */
+.panel { position: relative; min-width: 0; }
+.panel-h { display: flex; align-items: center; gap: 6px; min-height: 30px; cursor: grab; user-select: none; }
+.panel-h:active { cursor: grabbing; }
+.panel-h .grip { color: var(--fg3); opacity: 0; flex: none; margin-left: -4px; transition: opacity .12s; }
+.panel-h:hover .grip { opacity: 1; }
+.panel-t { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 0; color: var(--fg0); font: inherit; cursor: pointer; flex: 1; min-width: 0; text-align: left; }
+.panel-t > svg { color: var(--fg3); flex: none; }
+.panel-t h2 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg2); font-weight: 600; white-space: nowrap; }
+.panel-meta { color: var(--fg3); font-size: 12px; }
+.panel-actions { display: flex; gap: 4px; align-items: center; cursor: default; }
+.panel.is-dragged { opacity: .4; }
+.panel.drop-before::before, .panel.drop-after::after { content: ''; position: absolute; left: 0; right: 0; height: 2px; background: var(--accent); border-radius: 2px; z-index: 3; }
+.panel.drop-before::before { top: -8px; }
+.panel.drop-after::after { bottom: -8px; }
+.pzone.dragging { min-height: 60px; outline: 1px dashed var(--line2); outline-offset: 4px; border-radius: 6px; }
+.panel.collapsed .panel-h { opacity: .85; }
+
+/* dashboard zones */
+.dash-top { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 14px; margin-top: 16px; align-items: start; }
+.dash-top > .panel, .dash-bottom > .panel:not([data-panel=projects]) { background: var(--bg1); border: 1px solid var(--line); border-radius: 6px; padding: 8px 8px 8px; }
+.dash-top > .panel .panel-h, .dash-bottom > .panel:not([data-panel=projects]) .panel-h { padding: 0 8px 4px; }
+.dash-bottom { display: flex; flex-direction: column; gap: 14px; margin-top: 18px; }
+.dash-top > .panel[data-panel=projects] { grid-column: 1 / -1; background: none; border: 0; padding: 0; }
+.panel[data-panel=projects] > .panel-b > .toolbar { margin-top: 8px; }
+
+/* project card drop markers */
+.pcard.drop-before { box-shadow: -8px 0 0 -5px var(--accent); }
+.pcard.drop-after { box-shadow: 8px 0 0 -5px var(--accent); }
+
+/* overview panels */
+.ov2 .panel-h { border-bottom: 1px solid var(--line); padding-bottom: 6px; margin-bottom: 10px; }
+.ov2 .panel.collapsed .panel-h { margin-bottom: 0; }
+.ov2 .panel-t h2 { text-transform: none; letter-spacing: 0; font-size: 16px; color: var(--fg0); }
+.ov2-rail .panel-t h2 { font-size: 14.5px; }
+.ov2-rail { display: flex; flex-direction: column; gap: 22px; }
+.ov2 .panel.attention .panel-h { border-bottom: 0; margin-bottom: 4px; }
+.att-title { display: inline-flex; align-items: center; gap: 8px; }
+.att-title svg { color: var(--accent); }

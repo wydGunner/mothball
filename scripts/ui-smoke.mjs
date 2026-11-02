@@ -570,7 +570,7 @@ await step('Import Print Vault', async () => {
     await page.locator('.pcard').filter({ hasText: 'Cat - Green And Yellow' }).click();
     await page.getByText('Print details').waitFor();
     await page.locator('.ov2-dl dd').filter({ hasText: 'X2D' }).waitFor();
-    await page.locator('.ov2-sec').filter({ hasText: 'Print details' }).getByRole('button', { name: 'Edit' }).click();
+    await page.locator('[data-panel=details]').getByRole('button', { name: 'Edit' }).click();
     await page.getByPlaceholder('Notes (settings, what went wrong…)').fill('Gray layer showed through');
     await page.getByRole('button', { name: 'Log', exact: true }).click();
     await page.locator('.modal').getByRole('button', { name: 'Save' }).click();
@@ -924,7 +924,7 @@ await step('Deploy a project to a game folder', async () => {
 await step('Time tracking: estimate, timer, log time', async () => {
   await page.locator('.sidebar .navitem').filter({ hasText: 'OMEN v2' }).first().click();
   await page.getByRole('tab', { name: /Overview/ }).click();
-  const card = page.locator('.ov2-rail section').filter({ hasText: 'Time' }).first();
+  const card = page.locator('[data-panel=time]');
   await card.locator('.tc-big').waitFor();
   // file activity during this test run already counts
   if ((await card.locator('.tc-big').textContent()) === '0 min') throw new Error('no time estimated from file activity');
@@ -971,9 +971,45 @@ await step('Dashboard: remove a managed project and delete its folder', async ()
   await toastGone();
 });
 
+await step('Panels: drag to rearrange, collapse, remembered, reset', async () => {
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  const order = () => page.locator('.dash-top > .panel, .dash-bottom > .panel').evaluateAll((els) => els.map((e) => e.getAttribute('data-panel')));
+  if ((await order()).join() !== 'attention,recent,projects') throw new Error('default order: ' + await order());
+  // drag "Recently changed" above "Needs attention"
+  await page.locator('[data-panel=recent] > .panel-h').dragTo(page.locator('[data-panel=attention]'), { targetPosition: { x: 40, y: 4 } });
+  await page.waitForFunction(() => document.querySelector('.dash-top > .panel')?.getAttribute('data-panel') === 'recent');
+  // collapse it; survives a reload
+  await page.locator('[data-panel=recent] .panel-t').click();
+  await page.locator('[data-panel=recent] .panel-b').waitFor({ state: 'detached' });
+  await page.evaluate(() => location.reload());
+  await page.locator('[data-panel=recent].collapsed').waitFor();
+  if ((await order()).join() !== 'recent,attention,projects') throw new Error('not remembered: ' + await order());
+  if (shots) await page.screenshot({ path: join(shots, 'x-panels.png') });
+  // reset from the header's menu
+  await page.locator('[data-panel=recent] > .panel-h').click({ button: 'right' });
+  await page.locator('.ctx button').filter({ hasText: 'Reset layout' }).click();
+  await page.waitForFunction(() => document.querySelector('.dash-top > .panel')?.getAttribute('data-panel') === 'attention');
+  await page.locator('[data-panel=recent] .panel-b').waitFor();
+  // project cards: drag one onto another -> "My order"
+  const names = () => page.locator('.pgroup').last().locator('.pcard .name').allTextContents();
+  const before = await names();
+  const last = page.locator('.pgroup').last().locator('.pcard').last();
+  const first = page.locator('.pgroup').last().locator('.pcard').first();
+  await last.dragTo(first, { targetPosition: { x: 10, y: 60 } });
+  await page.getByText('Sort: My order (drag cards)').waitFor();
+  const after = await names();
+  if (after[0] !== before[before.length - 1]) throw new Error('card order not changed: ' + after.join(', '));
+  // overview panels collapse too
+  await page.locator('.sidebar .navitem').filter({ hasText: 'OMEN v2' }).first().click();
+  await page.locator('[data-panel=time] .panel-t').click();
+  await page.locator('[data-panel=time] .tc-big').waitFor({ state: 'detached' });
+  await page.locator('[data-panel=time] .panel-t').click();
+  await page.locator('[data-panel=time] .tc-big').waitFor();
+});
+
 await step('Dashboard overview screenshot', async () => {
   await page.getByRole('button', { name: 'Dashboard' }).click();
-  await page.locator('.dash-sum').waitFor();
+  await page.locator('.dash-top').waitFor();
   await page.evaluate(() => document.querySelector('.content')?.scrollTo(0, 0));
   await page.waitForTimeout(800);
   if (shots) await page.screenshot({ path: join(shots, 'x-dashboard.png') });

@@ -5,9 +5,10 @@ import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextM
 import { ago, bytes, CATEGORY_LABELS, cx } from '../format';
 import type { Nav } from '../main';
 import { Welcome } from './Welcome';
+import { PanelBoard } from '../components/Panels';
 
-type Sort = 'recent' | 'name' | 'updated' | 'created' | 'size' | 'progress';
-const SORTS: [Sort, string][] = [['recent', 'Recently opened'], ['updated', 'Latest activity'], ['name', 'Name'], ['created', 'Newest'], ['size', 'Storage used'], ['progress', 'Progress']];
+type Sort = 'custom' | 'recent' | 'name' | 'updated' | 'created' | 'size' | 'progress';
+const SORTS: [Sort, string][] = [['custom', 'My order (drag cards)'], ['recent', 'Recently opened'], ['updated', 'Latest activity'], ['name', 'Name'], ['created', 'Newest'], ['size', 'Storage used'], ['progress', 'Progress']];
 
 export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   const [mode, setMode] = useState<'grid' | 'list'>(() => (localStorage.getItem('pv.dash') as any) || 'grid');
@@ -18,6 +19,9 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   // Name by default so cards stay put; the choice is remembered.
   const [sort, setSortRaw] = useState<Sort>(() => (localStorage.getItem('pv.dashSort') as Sort) || 'name');
   const setSort = (s: Sort) => { setSortRaw(s); localStorage.setItem('pv.dashSort', s); };
+  const [order, setOrderRaw] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pv.cardOrder') || '[]'); } catch { return []; } });
+  const setOrder = (o: string[]) => { setOrderRaw(o); try { localStorage.setItem('pv.cardOrder', JSON.stringify(o)); } catch { /* ignore */ } };
+  const [cardDrop, setCardDrop] = useState<{ id: string; after: boolean } | null>(null);
   const [favOnly, setFavOnly] = useState(false);
   const [groupF, setGroupF] = useState<string | null>(null);
   const [collapsed, setCollapsedRaw] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pv.dashCollapsed') || '[]'); } catch { return []; } });
@@ -33,6 +37,8 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   const statuses = useLoad(() => call<{ name: string; color: string }[]>('projects.statuses'), [nav.projects.length]);
   const colors = Object.fromEntries((statuses.data || []).map((s) => [s.name, s.color]));
   const allTags = useMemo(() => [...new Set(nav.projects.flatMap((p) => p.tags))].sort(), [nav.projects]);
+  const dashStamp = nav.projects.map((p) => `${p.id}:${p.lastScanAt}:${p.fileCount}`).join('|');
+  const dash = useLoad(() => call<DashData>('projects.dashboard', { limit: 6 }), [dashStamp]);
 
   const list = useMemo(() => {
     const t = text.toLowerCase();
@@ -47,9 +53,23 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
       created: (a, b) => b.createdAt - a.createdAt,
       size: (a, b) => b.bytes - a.bytes,
       progress: (a, b) => b.progress - a.progress,
+      custom: (a, b) => { const ia = order.indexOf(a.id), ib = order.indexOf(b.id); return (ia < 0 ? 1e9 : ia) - (ib < 0 ? 1e9 : ib) || a.name.localeCompare(b.name); },
     };
-    return out.sort((a, b) => Number(b.favorite) - Number(a.favorite) || by[sort](a, b));
-  }, [nav.projects, status, category, tag, text, sort, favOnly, attention, groupF]);
+    // in your own order, favorites aren't pulled to the front
+    return out.sort((a, b) => (sort === 'custom' ? 0 : Number(b.favorite) - Number(a.favorite)) || by[sort](a, b));
+  }, [nav.projects, status, category, tag, text, sort, favOnly, attention, groupF, order]);
+  /** Drop one card onto another: it goes before/after it (switching to "My order"), and joins that card's group. */
+  const dropOnCard = (dragId: string, target: Project, after: boolean) => {
+    if (dragId === target.id) return;
+    const ids = list.map((p) => p.id).filter((id) => id !== dragId);
+    const at = ids.indexOf(target.id) + (after ? 1 : 0);
+    ids.splice(at, 0, dragId);
+    const rest = order.filter((id) => !ids.includes(id));
+    setOrder([...ids, ...rest]);
+    if (sort !== 'custom') setSort('custom');
+    const dragged = nav.projects.find((p) => p.id === dragId);
+    if (dragged && dragged.group !== target.group) setGroup([dragId], target.group);
+  };
   const allGroups = useMemo(() => [...new Set(nav.projects.map((p) => p.group).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })), [nav.projects]);
   // sections: each group (A→Z), then ungrouped; a flat list when nothing is grouped
   const sections = useMemo(() => {
@@ -129,7 +149,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
 
   return (
     <div className="page">
-      <div className="row dash-head"><h1>Projects</h1>
+      <div className="row dash-head"><h1>Dashboard</h1>
         <div className="right btngroup">
           <button className="btn newbtn" onClick={onNew}><LuPlus /> New project</button>
           <button className="btn newbtn icon" title="More ways to add projects" aria-label="More ways to add projects" onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu({ clientX: r.right - 220, clientY: r.bottom + 4, preventDefault() {} } as any, [
@@ -137,7 +157,11 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
           ]); }}><LuChevronDown /></button>
         </div>
       </div>
-      <DashSummary nav={nav} onAttention={() => setAttention(true)} />
+      <PanelBoard storageKey="dashboard" defaults={{ top: ['attention', 'recent'], bottom: ['projects'] }} zoneClass={{ top: 'dash-top', bottom: 'dash-bottom' }} panels={[
+        { id: 'attention', title: 'Needs attention', meta: dash.data?.attention.length ? dash.data.attention.length : undefined, body: <AttentionList data={dash.data} nav={nav} />,
+          actions: (dash.data?.attention.length || 0) > 1 ? <button className="btn ghost sm" onClick={() => setAttention(true)}>Show only these</button> : undefined },
+        { id: 'recent', title: 'Recently changed', body: <RecentList data={dash.data} nav={nav} /> },
+        { id: 'projects', title: 'Projects', meta: list.length !== nav.projects.length ? `${list.length} of ${nav.projects.length}` : nav.projects.length, body: <>
       <div className="toolbar">
         <div className="searchinput"><LuSearch /><input className="input" placeholder="Search projects…" value={text} onChange={(e) => setText(e.target.value)} aria-label="Search projects" /></div>
         <Dropdown label="Filter by" icon={<LuFilter />} badge={activeFilters.length || undefined} sections={[
@@ -154,7 +178,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
         <Dropdown label={<>Sort: {SORTS.find((x) => x[0] === sort)?.[1]}</>} sections={[{ items: SORTS.map(([k, l]) => ({ key: k, label: l, checked: sort === k, onSelect: () => setSort(k) })) }]} width={200} />
         {activeFilters.map((f) => <span key={f.key} className="fchip">{f.label}<button aria-label={`Remove filter ${f.label}`} onClick={f.clear}><LuX size={12} /></button></span>)}
         {activeFilters.length > 1 && <button className="btn ghost sm" onClick={() => activeFilters.forEach((f) => f.clear())}>Clear all</button>}
-        <div className="seg right">{list.length !== nav.projects.length && <span className="muted small" style={{ alignSelf: 'center', marginRight: 10 }}>{list.length} of {nav.projects.length} shown</span>}<button className={cx(mode === 'grid' && 'on')} onClick={() => setMode2('grid')} title="Grid"><LuLayoutGrid /></button><button className={cx(mode === 'list' && 'on')} onClick={() => setMode2('list')} title="List"><LuList /></button></div>
+        <div className="seg right"><button className={cx(mode === 'grid' && 'on')} onClick={() => setMode2('grid')} title="Grid"><LuLayoutGrid /></button><button className={cx(mode === 'list' && 'on')} onClick={() => setMode2('list')} title="List"><LuList /></button></div>
       </div>
 
       {sections.map((sec) => {
@@ -177,7 +201,11 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
       {mode === 'grid' ? (
         <div className="pgrid">
           {sec.items.map((p) => (
-            <ProjectCard key={p.id} p={p} colors={colors} onOpen={() => nav.go({ view: 'project', id: p.id })} onMenu={(e) => ctx(e, p)} onFav={() => toggleFav(p)} onPictureChanged={nav.refreshProjects} />
+            <ProjectCard key={p.id} p={p} colors={colors} onOpen={() => nav.go({ view: 'project', id: p.id })} onMenu={(e) => ctx(e, p)} onFav={() => toggleFav(p)} onPictureChanged={nav.refreshProjects}
+              dropSide={cardDrop?.id === p.id ? (cardDrop.after ? 'after' : 'before') : undefined}
+              onCardDragOver={(after) => { if (cardDrop?.id !== p.id || cardDrop.after !== after) setCardDrop({ id: p.id, after }); }}
+              onCardDrop={(dragId, after) => { setCardDrop(null); dropOnCard(dragId, p, after); }}
+              onCardDragEnd={() => setCardDrop(null)} />
           ))}
         </div>
       ) : (
@@ -202,6 +230,8 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
         );
       })}
       {!list.length && <Empty title="No projects match these filters" />}
+        </> },
+      ]} />
       {importPV && <ImportPrintVault onClose={() => setImportPV(false)} onDone={nav.refreshProjects} />}
       {pictureFor && <PictureDialog p={pictureFor} onClose={() => setPictureFor(null)} onSaved={() => { setPictureFor(null); nav.refreshProjects(); }} />}
     </div>
@@ -213,7 +243,7 @@ interface Thumb { src: string; fit?: 'cover' | 'contain'; x?: number; y?: number
 export const thumbCache = new Map<string, { key: string; t: Thumb | null }>();
 const thumbKey = (p: Project) => `${p.fileCount}:${p.bytes}:${JSON.stringify(p.module?.thumb || p.module?.thumbFileId || '')}`;
 
-function useThumb(p: Project) {
+export function useThumb(p: Project) {
   const key = thumbKey(p);
   const cached = thumbCache.get(p.id);
   const [t, setT] = useState<Thumb | null | undefined>(cached?.key === key ? cached.t : undefined);
@@ -353,53 +383,51 @@ interface DashData {
 }
 const CHANGE_WORD: Record<string, string> = { added: 'added', modified: 'changed', moved: 'moved', restored: 'back', 'restored-version': 'restored', renamed: 'renamed', imported: 'imported' };
 
-/** Above the grid: what needs attention, and what changed lately, across all projects. */
-function DashSummary({ nav, onAttention }: { nav: Nav; onAttention: () => void }) {
-  const stamp = nav.projects.map((p) => `${p.id}:${p.lastScanAt}:${p.fileCount}`).join('|');
-  const d = useLoad(() => call<DashData>('projects.dashboard', { limit: 6 }), [stamp]);
-  const data = d.data;
+/** Projects with missing files, offline folders, matches to confirm or stale notes. */
+function AttentionList({ data, nav }: { data?: DashData; nav: Nav }) {
   if (!data) return null;
-  const openFile = (r: DashData['recent'][number]) => nav.go({ view: 'project', id: r.projectId, tab: 'files', focus: r.present ? { type: 'file', id: r.fileId, action: 'reveal', nonce: Date.now() } : undefined });
   const fix = (a: DashData['attention'][number]) => {
     const k = a.reasons[0]?.kind;
     nav.go({ view: 'project', id: a.projectId, tab: k === 'staleDocs' || k === 'missing' ? 'files' : 'overview' });
   };
-  return (
-    <div className="dash-sum">
-      <section className="ds-box">
-        <div className="ds-h"><h2>Needs attention</h2>{data.attention.length > 1 && <button className="btn ghost sm" onClick={onAttention}>Show only these</button>}</div>
-        {data.attention.length ? data.attention.slice(0, 5).map((a) => (
-          <button key={a.projectId} className="ds-row" onClick={() => fix(a)}>
-            <ProjectIcon category={a.category} icon={a.icon} color={a.color} size={22} />
-            <span className="ds-name">{a.name}</span>
-            <span className="ds-why">{a.reasons.map((r) => r.text).join(' · ')}</span>
-          </button>
-        )) : <div className="ds-empty"><LuCircleCheck /> All clear — no missing files, offline folders or out-of-date notes.</div>}
-      </section>
-      <section className="ds-box">
-        <div className="ds-h"><h2>Recently changed</h2></div>
-        {data.recent.length ? data.recent.map((r) => (
-          <button key={r.fileId} className="ds-row" onClick={() => openFile(r)} title={`${r.projectName}: ${r.path}`}>
-            <LuFileCode className="ds-fi" />
-            <span className="ds-name mono">{r.name}</span>
-            <span className="ds-why">{r.projectName} · {CHANGE_WORD[r.change] || r.change}</span>
-            <span className="ds-when">{ago(r.at)}</span>
-          </button>
-        )) : <div className="ds-empty">Edits you make to project files — here or in other programs — show up here.</div>}
-      </section>
-    </div>
-  );
+  return data.attention.length ? <>{data.attention.slice(0, 8).map((a) => (
+    <button key={a.projectId} className="ds-row" onClick={() => fix(a)}>
+      <ProjectIcon category={a.category} icon={a.icon} color={a.color} size={22} />
+      <span className="ds-name">{a.name}</span>
+      <span className="ds-why">{a.reasons.map((r) => r.text).join(' · ')}</span>
+    </button>
+  ))}</> : <div className="ds-empty"><LuCircleCheck /> All clear — no missing files, offline folders or out-of-date notes.</div>;
+}
+
+/** Latest file changes across all projects. */
+function RecentList({ data, nav }: { data?: DashData; nav: Nav }) {
+  if (!data) return null;
+  const openFile = (r: DashData['recent'][number]) => nav.go({ view: 'project', id: r.projectId, tab: 'files', focus: r.present ? { type: 'file', id: r.fileId, action: 'reveal', nonce: Date.now() } : undefined });
+  return data.recent.length ? <>{data.recent.map((r) => (
+    <button key={r.fileId} className="ds-row" onClick={() => openFile(r)} title={`${r.projectName}: ${r.path}`}>
+      <LuFileCode className="ds-fi" />
+      <span className="ds-name mono">{r.name}</span>
+      <span className="ds-why">{r.projectName} · {CHANGE_WORD[r.change] || r.change}</span>
+      <span className="ds-when">{ago(r.at)}</span>
+    </button>
+  ))}</> : <div className="ds-empty">Edits you make to project files — here or in other programs — show up here.</div>;
 }
 
 /** A project card: its picture (print plate, cover image) or, for code, the file you touched last. */
-function ProjectCard({ p, colors, onOpen, onMenu, onFav, onPictureChanged }: { p: Project; colors: Record<string, string>; onOpen: () => void; onMenu: (e: React.MouseEvent) => void; onFav: () => void; onPictureChanged: () => void }) {
+function ProjectCard({ p, colors, onOpen, onMenu, onFav, onPictureChanged, dropSide, onCardDragOver, onCardDrop, onCardDragEnd }: {
+  p: Project; colors: Record<string, string>; onOpen: () => void; onMenu: (e: React.MouseEvent) => void; onFav: () => void; onPictureChanged: () => void;
+  dropSide?: 'before' | 'after'; onCardDragOver: (after: boolean) => void; onCardDrop: (dragId: string, after: boolean) => void; onCardDragEnd: () => void;
+}) {
   const thumb = useThumb(p);
   const [picking, setPicking] = useState(false);
   const attention = p.missingFiles + p.pendingReviews + (p.staleDocs || 0);
   return (
-    <div className={cx('pcard', p.favorite && 'isfav')} style={p.color ? ({ '--pc': p.color } as React.CSSProperties) : undefined}
+    <div className={cx('pcard', p.favorite && 'isfav', dropSide && 'drop-' + dropSide)} style={p.color ? ({ '--pc': p.color } as React.CSSProperties) : undefined}
       tabIndex={0} role="link" aria-label={`Open ${p.name}`}
       draggable onDragStart={(e) => { e.dataTransfer.setData('text/pv-project', p.id); e.dataTransfer.effectAllowed = 'move'; }}
+      onDragEnd={onCardDragEnd}
+      onDragOver={(e) => { if (!e.dataTransfer.types.includes('text/pv-project')) return; e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onCardDragOver(e.clientX > r.left + r.width / 2); }}
+      onDrop={(e) => { const id = e.dataTransfer.getData('text/pv-project'); if (!id) return; e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onCardDrop(id, e.clientX > r.left + r.width / 2); }}
       onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }} onContextMenu={onMenu}>
       <div className={cx('pc-face', thumb ? 'pic' : 'nopic')}>
         <button className="pc-edit btn sm" title="Change the picture" onClick={(e) => { e.stopPropagation(); setPicking(true); }}><LuImage /> Picture</button>

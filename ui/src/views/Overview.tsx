@@ -5,11 +5,12 @@ import {
 } from 'react-icons/lu';
 import { call, type Project } from '../ipc';
 import { KindIcon, Modal, StatusPill, TagInput, useAction, useLoad, useConfirm, useToast } from '../components/common';
-import { PictureDialog } from './Dashboard';
+import { PictureDialog, useThumb } from './Dashboard';
 import { ago, bytes, CATEGORY_LABELS, cx, dateTime } from '../format';
 import { CompareDialog } from './Versions';
 import { Retention } from './History';
 import { TimeCard } from './TimeCard';
+import { PanelBoard } from '../components/Panels';
 import type { ProjectCtx } from './Project';
 
 type FieldDef = { key: string; label: string; multiline?: boolean; options?: string[]; placeholder?: string };
@@ -90,8 +91,8 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const notes = useLoad(() => call<any[]>('notes.tree', { projectId: p.id }), [p.id]);
   const timeline = useLoad(() => call<any[]>('timeline.list', { projectId: p.id, limit: 8 }), [p.id, ctx.scanTick]);
   const recent = useLoad(() => call<any[]>('files.list', { projectId: p.id, sort: 'changed', limit: 6 }), [p.id, ctx.scanTick]);
-  const thumbs = useLoad(() => call<any>('projects.thumbnail', { id: p.id }), [p.id, JSON.stringify(p.module?.thumb || '')]);
-  const thumb = thumbs.data as { src: string; fit?: 'cover' | 'contain'; x?: number; y?: number } | null | undefined;
+  // same picture as the dashboard card (dark or tiny automatic picks are skipped)
+  const thumb = useThumb(p);
   const [picking, setPicking] = useState(false);
 
   const mod = MODULES[p.category];
@@ -105,9 +106,9 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const ext = (path: string) => (path.includes('.') ? path.split('.').pop()!.toLowerCase() : '');
   return (
     <div className="page ov2">
-      <div className="ov2-main">
-        {/* ---------- what this is */}
-        <section className="ov2-hero">
+      <PanelBoard storageKey="overview" defaults={{ main: ['about', 'attention', 'recent', 'details'], rail: ['time', 'next', 'notes', 'activity', 'info'] }}
+        zoneClass={{ main: 'ov2-main', rail: 'ov2-rail' }} panels={[
+        { id: 'about', title: 'About', className: 'ov2-hero-panel', body: <div className="ov2-hero">
           {thumb && <button className="ov2-pic" title="Change the picture" onClick={() => setPicking(true)}><img src={thumb.src} alt="" style={{ objectFit: thumb.fit || 'cover', objectPosition: `${thumb.x ?? 50}% ${thumb.y ?? 50}%` }} /></button>}
           <div className="ov2-about">
             {p.description
@@ -125,12 +126,8 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
               {!thumb && <button className="btn sm ghost" onClick={() => setPicking(true)}><LuImage /> Add a picture</button>}
             </div>
           </div>
-        </section>
-
-        {/* ---------- needs attention */}
-        {attention > 0 && (
-          <section className="ov2-sec attention">
-            <h2><LuTriangleAlert /> Needs your attention</h2>
+        </div> },
+        { id: 'attention', title: <span className="att-title"><LuTriangleAlert /> Needs your attention</span>, meta: attention || undefined, hidden: attention === 0, className: 'ov2-sec attention', body: <>
             {(reviews.data || []).map((r) => (
               <div key={r.id} className="att-row">
                 <LuGitCompareArrows />
@@ -164,12 +161,8 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
               </div>
             ))}
             {(changed.data?.length || 0) > 1 && <button className="btn sm" style={{ marginTop: 6 }} onClick={async () => { await act(() => call('files.markReviewed', { ids: changed.data!.map((f) => f.id) })); changed.reload(); ctx.reload(); }}>Dismiss all changes</button>}
-          </section>
-        )}
-
-        {/* ---------- pick up where you left off */}
-        <section className="ov2-sec">
-          <div className="ov2-h"><h2>Recently changed</h2><button className="btn sm ghost" onClick={() => ctx.openFiles()}>All {p.fileCount} {p.fileCount === 1 ? 'file' : 'files'} <LuChevronRight /></button></div>
+        </> },
+        { id: 'recent', title: 'Recently changed', actions: <button className="btn sm ghost" onClick={() => ctx.openFiles()}>All {p.fileCount} {p.fileCount === 1 ? 'file' : 'files'} <LuChevronRight /></button>, body: <>
           {recent.data?.length ? <div className="ov2-files">
             {recent.data.map((f) => {
               const d = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/') + 1) : '';
@@ -190,12 +183,8 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
               <button key={g.id} className="chip" onClick={() => ctx.openFiles(g.id)} title={`${g.hint ? g.hint + ': ' : ''}${(g.found || []).map((f: any) => `${f.ext ? '.' + f.ext : 'no extension'} ${f.count}`).join(', ')}`}>{g.label} <span>{g.count}</span></button>
             ))}
           </div>}
-        </section>
-
-        {/* ---------- category details */}
-        {mod && (
-          <section className="ov2-sec">
-            <div className="ov2-h"><h2>{mod.title}</h2><button className="btn sm ghost" onClick={() => setEditing('details')}><LuPencil /> Edit</button></div>
+        </> },
+        { id: 'details', title: mod?.title || 'Details', hidden: !mod, actions: <button className="btn sm ghost" onClick={() => setEditing('details')}><LuPencil /> Edit</button>, body: <>
             {filled.length === 0 && !custom.length ? (
               <p className="muted small" style={{ margin: 0 }}><a href="#" onClick={(e) => { e.preventDefault(); setEditing('details'); }}>Add {p.category === '3d-printing' ? 'material, printer and print time' : 'details'}</a>{p.category === '3d-printing' ? ', or fill them from a .3mf in this project.' : '.'}</p>
             ) : (
@@ -223,47 +212,40 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
                 ))}
               </div>
             )}
-          </section>
-        )}
-      </div>
-
-      <aside className="ov2-rail">
-        <section>
-          <div className="ov2-h"><h2>Time</h2></div>
+        </> },
+        { id: 'time', title: 'Time', body: <>
           <TimeCard projectId={p.id} onTimerChange={() => window.dispatchEvent(new CustomEvent('pv:timer'))} />
-        </section>
-        <section>
-          <div className="ov2-h"><h2>Next up</h2><button className="btn sm ghost" onClick={() => ctx.openTask('')}>Board <LuChevronRight /></button></div>
+        </> },
+        { id: 'next', title: 'Next up', actions: <button className="btn sm ghost" onClick={() => ctx.openTask('')}>Board <LuChevronRight /></button>, body: <>
           {nextTasks.length ? nextTasks.map((t) => (
             <div key={t.id} className="linkrow" onClick={() => ctx.openTask(t.id)}>
               {t.kind === 'bug' ? <LuBug color="var(--accent)" /> : <span className={`prio p${t.priority}`} title={['Low', 'Normal', 'High', 'Urgent'][t.priority] + ' priority'} />}
               <span className="grow">{t.title}</span><span className="dim small">{t.status.replace('_', ' ')}</span>
             </div>
           )) : <div className="muted small"><a href="#" onClick={(e) => { e.preventDefault(); ctx.openTask(''); }}>Add a task</a> so you know where to pick up next time.</div>}
-        </section>
-        <section>
-          <div className="ov2-h"><h2>Notes</h2><button className="btn sm ghost" onClick={() => ctx.openNote('')}>All <LuChevronRight /></button></div>
+        </> },
+        { id: 'notes', title: 'Notes', actions: <button className="btn sm ghost" onClick={() => ctx.openNote('')}>All <LuChevronRight /></button>, body: <>
           {recentNotes.length ? recentNotes.map((n) => (
             <div key={n.id} className="linkrow" onClick={() => ctx.openNote(n.id)}><span className="grow">{n.title}</span><span className="dim small">{ago(n.updatedAt)}</span></div>
           )) : <div className="muted small"><a href="#" onClick={(e) => { e.preventDefault(); ctx.openNote(''); }}>Write the first note</a>: setup steps, decisions, how things fit together.</div>}
-        </section>
-        <section>
-          <div className="ov2-h"><h2>Activity</h2><button className="btn sm ghost" onClick={() => ctx.openTimeline()}>Timeline <LuChevronRight /></button></div>
+        </> },
+        { id: 'activity', title: 'Activity', actions: <button className="btn sm ghost" onClick={() => ctx.openTimeline()}>Timeline <LuChevronRight /></button>, body: <>
           {(timeline.data || []).map((e) => (
             <div key={e.id} className="row small" style={{ padding: '3px 0', alignItems: 'baseline' }}><span className="grow" style={e.manual ? { fontWeight: 600 } : undefined}>{e.summary}</span><span className="dim" style={{ whiteSpace: 'nowrap' }}>{ago(e.at)}</span></div>
           ))}
-        </section>
-        <section className="small">
+        </> },
+        { id: 'info', title: 'Folder', className: 'small', body: <>
+
           <div className="kv">
             <span>Folder</span><span className="mono" style={{ wordBreak: 'break-all' }}>{p.rootPath}</span>
             <span>Files</span><span>{p.mode === 'linked' ? 'Edited where they are' : 'Kept in app storage'}</span>
             <span>Size</span><span>{p.fileCount} {p.fileCount === 1 ? 'file' : 'files'}, {bytes(p.bytes)}</span>
             <span>Created</span><span>{dateTime(p.createdAt)}</span>
           </div>
-        </section>
-      </aside>
+        </> },
+      ]} />
 
-      {picking && <PictureDialog p={p} onClose={() => setPicking(false)} onSaved={() => { setPicking(false); thumbs.reload(); ctx.reload(); ctx.nav.refreshProjects(); }} />}
+      {picking && <PictureDialog p={p} onClose={() => setPicking(false)} onSaved={() => { setPicking(false); ctx.reload(); ctx.nav.refreshProjects(); }} />}
       {editing && <EditProjectDialog ctx={ctx} initialTab={editing} onClose={() => setEditing(null)} />}
       {compare && <CompareDialog fileId={compare.fileId} title={compare.name} onClose={() => setCompare(null)} onRestored={() => { ctx.scan(true); }} />}
     </div>
