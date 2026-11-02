@@ -850,7 +850,6 @@ pub fn base64(data: &[u8]) -> String {
 }
 
 /// Bounding box of an STL (binary or ASCII), in model units (normally mm).
-/// Ported from Print Vault's extractor.
 pub fn stl_dimensions(p: &Path) -> Option<(f64, f64, f64)> {
     let md = std::fs::metadata(p).ok()?;
     if md.len() > 512 * 1024 * 1024 {

@@ -31,7 +31,6 @@
 │   diff.rs       Myers line diff → hunks                        │
 │   profiles.rs   file-type groups per project type              │
 │   backup.rs     verified metadata backups + Markdown export    │
-│   legacy.rs     Print Vault importer                           │
 └───────────────────────────────────────────────────────────────┘
 ```
 

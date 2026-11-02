@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { LuArrowLeft, LuArrowRight, LuDownload, LuFolderOpen, LuFolderPlus, LuArchiveRestore, LuX, LuFileText, LuSearch, LuHistory } from 'react-icons/lu';
+import { LuArrowLeft, LuArrowRight, LuFolderOpen, LuFolderPlus, LuArchiveRestore, LuX, LuFileText, LuSearch, LuHistory } from 'react-icons/lu';
 import { call, pickFolder, type Project } from '../ipc';
 import { ProjectIcon, useAction } from '../components/common';
 import { CATEGORY_LABELS, cx, hiddenTypes, typeChoices } from '../format';
 import type { Nav } from '../main';
 
 /** Shown instead of an empty dashboard: add the first project in two steps. */
-export function Welcome({ nav, onImportPrintVault }: { nav: Nav; onImportPrintVault: () => void }) {
+export function Welcome({ nav }: { nav: Nav }) {
   const [mode, setMode] = useState<null | 'linked' | 'managed'>(null);
   const [path, setPath] = useState('');
   const [name, setName] = useState('');
@@ -71,7 +71,6 @@ export function Welcome({ nav, onImportPrintVault }: { nav: Nav; onImportPrintVa
           </div>
           <div className="wl-links">
             <button className="linklike" onClick={restore}><LuArchiveRestore /> Restore from a backup</button>
-            <button className="linklike" onClick={onImportPrintVault}><LuDownload /> Import from Print Vault</button>
           </div>
         </>
       )}

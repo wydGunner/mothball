@@ -53,13 +53,6 @@ Your data is kept in `%APPDATA%\com.projectvault.desktop\` (the folder keeps its
 original name so data from before the rename to Mothball carries over). To use another
 folder (portable or test install), set `MOTHBALL_DATA` first.
 
-### Bringing over Print Vault
-
-Dashboard → **Import Print Vault** → choose the folder with
-`print_vault.sqlite` (e.g. `D:\PrintVault\3D Prints Vault`). Each project
-becomes a linked 3D-printing project pointing at its existing folder.
-Print Vault's database is only read. You can keep using it alongside.
-
 ## Development
 
 | Command | What it does |

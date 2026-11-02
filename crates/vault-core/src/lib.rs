@@ -15,7 +15,6 @@ pub mod git;
 pub mod json;
 pub mod knowledge;
 pub mod models;
-pub mod legacy;
 pub mod profiles;
 pub mod projects;
 pub mod schema;

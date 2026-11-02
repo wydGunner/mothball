@@ -5,7 +5,7 @@
 use crate::db::DbResult;
 use crate::json::Json;
 use crate::projects::NewProject;
-use crate::{backup, deploy, files, git, knowledge, legacy, profiles, projects, search, snapshots, symbols, tasks, timeline, versions, watch, time, Vault};
+use crate::{backup, deploy, files, git, knowledge, profiles, projects, search, snapshots, symbols, tasks, timeline, versions, watch, time, Vault};
 use std::path::PathBuf;
 
 fn s(a: &Json, k: &str) -> DbResult<String> {
@@ -284,7 +284,6 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "backup.setSchedule" => backup::schedule_set(v, a.get("schedule").unwrap_or(&Json::obj())),
         "backup.runDue" => backup::run_due(v, a.get("force").and_then(|x| x.as_bool()).unwrap_or(false)),
         "backup.verify" => backup::verify(&PathBuf::from(s(a, "path")?)),
-        "legacy.importPrintVault" => legacy::import_print_vault(v, &PathBuf::from(s(a, "path")?)),
 
         _ => Err(format!("unknown command: {cmd}")),
     }

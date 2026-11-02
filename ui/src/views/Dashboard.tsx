@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuDownload, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine, LuImage, LuFileCode, LuUpload, LuCircleCheck, LuHistory } from 'react-icons/lu';
+import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine, LuImage, LuFileCode, LuUpload, LuCircleCheck, LuHistory } from 'react-icons/lu';
 import { call, pickFiles, pickFolder, revealPath, isTauri, type Project } from '../ipc';
 import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, useLoad, useConfirm, usePrompt } from '../components/common';
 import { ago, bytes, CATEGORY_LABELS, cx, hiddenTypes, typeChoices } from '../format';
@@ -29,7 +29,6 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   const [pictureFor, setPictureFor] = useState<Project | null>(null);
   const prompt = usePrompt();
   const [attention, setAttention] = useState(false);
-  const [importPV, setImportPV] = useState(false);
   const act = useAction();
   const menu = useContextMenu();
   const confirm = useConfirm();
@@ -142,8 +141,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   if (!nav.projects.length) {
     return (
       <>
-        <Welcome nav={nav} onImportPrintVault={() => setImportPV(true)} />
-        {importPV && <ImportPrintVault onClose={() => setImportPV(false)} onDone={nav.refreshProjects} />}
+        <Welcome nav={nav} />
       </>
     );
   }
@@ -172,12 +170,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
           <LuTriangleAlert />{attCount > 0 && <span className="dash-badge">{attCount}</span>}
         </button>
         <button className={cx('btn icon dash-pop', drawer === 'recent' && 'on')} title="Recently changed files" aria-label="Recently changed" onClick={() => setDrawer(drawer === 'recent' ? null : 'recent')}><LuHistory /></button>
-        <div className="btngroup">
-          <button className="btn newbtn" onClick={onNew}><LuPlus /> New project</button>
-          <button className="btn newbtn icon" title="More ways to add projects" aria-label="More ways to add projects" onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu({ clientX: r.right - 220, clientY: r.bottom + 4, preventDefault() {} } as any, [
-            { label: 'Import from Print Vault…', icon: <LuDownload />, onClick: () => setImportPV(true) },
-          ]); }}><LuChevronDown /></button>
-        </div>
+        <button className="btn newbtn" onClick={onNew}><LuPlus /> New project</button>
       </div>
       {drawer && <DashDrawer which={drawer} data={dash.data} nav={nav} onClose={() => setDrawer(null)} onShowOnly={() => { setAttention(true); setDrawer(null); }} />}
 
@@ -230,7 +223,6 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
         );
       })}
       {!list.length && <Empty title="No projects match these filters" />}
-      {importPV && <ImportPrintVault onClose={() => setImportPV(false)} onDone={nav.refreshProjects} />}
       {pictureFor && <PictureDialog p={pictureFor} onClose={() => setPictureFor(null)} onSaved={() => { setPictureFor(null); nav.refreshProjects(); }} />}
     </div>
   );
@@ -567,27 +559,5 @@ function TypeFocus({ category }: { category: string }) {
       {d.keyExts.length > 0 && <div className="small muted" style={{ marginTop: 8 }}>Earlier versions of project files ({d.keyExts.slice(0, 6).map((e) => '.' + e).join(', ')}{d.keyExts.length > 6 ? '…' : ''}) are kept so you can compare and roll back.</div>}
       {ignores.length > 0 && <div className="small muted" style={{ marginTop: 6 }}>Skipped by default (caches and autosaves): <span className="mono dim">{ignores.slice(0, 6).join('  ')}{ignores.length > 6 ? ' …' : ''}</span>. You can change this per project.</div>}
     </div>
-  );
-}
-
-function ImportPrintVault({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
-  const [path, setPath] = useState('');
-  const [result, setResult] = useState<any>(null);
-  const [busy, setBusy] = useState(false);
-  const act = useAction();
-  return (
-    <Modal title="Import from Print Vault" onClose={onClose} footer={result ? <button className="btn primary" onClick={onClose}>Done</button> : <>
-      <button className="btn" onClick={onClose}>Cancel</button>
-      <button className="btn primary" disabled={!path || busy} onClick={async () => { setBusy(true); const r = await act(() => call('legacy.importPrintVault', { path })); setBusy(false); if (r) { setResult(r); onDone(); } }}>{busy ? 'Importing…' : 'Import'}</button>
-    </>}>
-      {!result ? <>
-        <p className="muted" style={{ marginTop: 0 }}>Choose your Print Vault folder (the one containing <code>print_vault.sqlite</code>, e.g. <code>D:\PrintVault\3D Prints Vault</code>). Each Print Vault project becomes a linked 3D-printing project pointing at its existing folder. Material, printer, nozzle, print time and filament are kept; notes become a project note. Print Vault's database is only read.</p>
-        <div className="row"><input className="input mono" value={path} onChange={(e) => setPath(e.target.value)} placeholder="D:\PrintVault\3D Prints Vault" /><button className="btn" onClick={async () => { const p = await pickFolder('Print Vault folder'); if (p) setPath(p); }}><LuFolderOpen /> Browse…</button></div>
-      </> : <>
-        <p><b>{result.created.length}</b> project(s) imported.</p>
-        <ul>{result.created.map((c: any) => <li key={c.id}>{c.name} <span className="dim">— {c.files} {c.files === 1 ? 'file' : 'files'}</span></li>)}</ul>
-        {result.skipped.length > 0 && <><p className="muted">Skipped:</p><ul>{result.skipped.map((s: any, i: number) => <li key={i}>{s.name}: <span className="muted">{s.reason}</span></li>)}</ul></>}
-      </>}
-    </Modal>
   );
 }

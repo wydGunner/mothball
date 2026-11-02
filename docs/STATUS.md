@@ -12,7 +12,7 @@ or not yet verified on Windows · ⛔ not implemented yet
   cases, imports + undo import, move between projects, remove from vault,
   Smart Save backups + names, dedup, restore, storage location changes and
   unavailable storage, snapshots, retention dry run, notes, tasks, search, git,
-  backup/tamper detection, Print Vault import, JSON parser, SHA-256 vectors,
+  backup/tamper detection, JSON parser, SHA-256 vectors,
   path traversal, v1→v7 database upgrade).
 * `scripts/ui-smoke.mjs`: headless Chromium drives the real UI against the
   real core — 52 steps, no console errors — including the first-run welcome and type suggestion, editor tabs (unsaved edits kept across files and project tabs, discard prompts), deploy with a conflict in the game folder, the WoW .toc panel and Lua functions, background watching (an outside change reaches the timeline and dashboard with no Rescan), time tracking (estimate, timer, logged time), the dashboard summary, Smart Save (cancel
@@ -24,9 +24,8 @@ or not yet verified on Windows · ⛔ not implemented yet
   menus, clickable breadcrumbs, the save-mode setting and moving backup
   storage, .zip backups with project files, restoring a deleted file from a
   backup, staging/cancelling a database restore, scheduled backups, the 3D
-  preview (WebGL) and 3MF print info on your real Bambu project, the GSC
-  function list, F12 go-to-definition and `@function` search, plus importing
-  the real Print Vault database you supplied.
+  preview (WebGL) on a generated test model, the GSC function list, F12
+  go-to-definition and `@function` search.
 * **Verified by you on Windows:** the app builds and runs (Nov 1).
 * **Still unverified on Windows (added Nov 1 evening):** the background watcher thread in the desktop shell (its exact code was type-checked against vault-core, but the shell itself can't be built here), folder-to-Recycle-Bin when removing a managed project, Launch (starting a game .exe detached), deploying into Program Files (may need the folder to be writable), and Monaco hover/go-to-definition for Lua.
 * **Still unverified on Windows:** the Monaco diff editor (the tests here use the built-in diff fallback), the Recycle Bin path for Delete / Undo import / Move to another project, the folder picker for backup storage, Explorer “reveal”, the new GitHub panel's sign-in flow, OneDrive online-only file detection, the import picker's type filters, and `tsc` type-checking. Previously unverified: the Tauri shell (`src-tauri/`) and the Windows
@@ -48,7 +47,7 @@ or not yet verified on Windows · ⛔ not implemented yet
 | 6 | Detect modification outside Mothball | ✅ polling rescans (open, focus, 60 s, F5) |
 | 7 | Git history when available | ✅ per-file (follows renames) and project log, diffs, status; plus Mothball's own version history without Git |
 | 8 | Return months later and understand it | ✅ docs follow renames/moves, timeline, revisions |
-| 9 | Separate 3D printing project with models, materials, assembly notes | ✅ 3D module fields, print log, STL bounds, Print Vault import |
+| 9 | Separate 3D printing project with models, materials, assembly notes | ✅ 3D module fields, print log, STL bounds |
 | 10 | Back up and restore metadata and files reliably | ✅ verified backups (folder or .zip), optionally with the project files; scheduled backups; in-app restore of files (with preview) and of the database (staged, previous kept) |
 
 ## By area
@@ -89,7 +88,6 @@ or not yet verified on Windows · ⛔ not implemented yet
 | Project-type file focus | ✅ | Files view groups by role (e.g. Print projects / Meshes / Source models), import picker filters by type |
 | Backups | ✅ | verified, portable; optional project files (size limit); folder or .zip (uncompressed, read back and checked); scheduled backups while the app is open with opt-in retention of scheduled ones only; in-app restore with preview. 🟡 the Windows folder/file pickers and app restart after a database restore are untested |
 | GSC / CSC scripting | ✅ | syntax highlighting (Monaco), function index per project (refreshed by content hash), F12 / Ctrl+click go to definition (honours `path::function`), hover shows signature + location (Monaco), per-file function list with #include links and “Uses” (call sites), `@name` function search in Ctrl+K. 🟡 the Monaco parts (highlighting, Ctrl+click, hover) are untested here — the tests use the plain editor, where F12 works |
-| Print Vault import | ✅ | read-only; projects linked in place |
 | 3MF print info | ✅ | own ZIP/inflate reader: printer, process, layer height, nozzle, infill, walls, supports, plate, filaments (type/colour), sliced plates (time, grams), slicer's plate thumbnail, title/designer/description — Bambu Studio, OrcaSlicer and PrusaSlicer formats; “Fill empty fields from a .3mf” in a print project's details. Checked against a real Bambu X2D project |
 | Multiple projects open as tabs | ⛔ | one project at a time with tabbed sections |
 | OS file watcher | ⛔ | polling chosen deliberately (no handles held on project folders); a watcher can be added on top |

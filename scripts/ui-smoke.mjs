@@ -3,20 +3,20 @@
 //
 //   cargo build --manifest-path crates/vault-core/Cargo.toml --bin vault-devserver
 //   npm run build:ui
-//   node scripts/ui-smoke.mjs [--print-vault <folder with print_vault.sqlite>] [--shots <dir>]
+//   node scripts/ui-smoke.mjs [--shots <dir>]
 //
 // Needs git on PATH. Exits non-zero on the first failed step.
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, renameSync, existsSync, cpSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, renameSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
+import { deflateSync } from 'node:zlib';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : undefined; };
 const shots = arg('--shots');
-const pvSrc = arg('--print-vault');
 if (shots) mkdirSync(shots, { recursive: true });
 
 function loadPlaywright() {
@@ -40,8 +40,26 @@ writeFileSync(join(omen, 'menus/createserver.menu'), 'menu "createserver" { item
 const git = (...a) => execFileSync('git', ['-C', omen, '-c', 'user.name=Dev', '-c', 'user.email=dev@example.com', ...a], { stdio: 'pipe' });
 git('init', '-q'); git('add', '-A'); git('commit', '-qm', 'Initial OMEN import');
 appendFileSync(join(omen, 'scripts/mp/weapon_tuner.gsc'), '\nonPlayerConnect() {}\n'); git('commit', '-qam', 'Add player connect hook');
-let pvDir;
-if (pvSrc && existsSync(pvSrc)) { pvDir = join(tmp, 'PV'); cpSync(pvSrc, pvDir, { recursive: true }); }
+// a small 3D-printing project: an STL cube and two bright pictures
+const deskCat = join(tmp, 'Desk Cat');
+mkdirSync(deskCat);
+{
+  const f = (n, a, b, c) => `facet normal ${n}\n outer loop\n${[a, b, c].map((v) => `  vertex ${v.join(' ')}`).join('\n')}\n endloop\nendfacet\n`;
+  const V = [[0, 0, 0], [20, 0, 0], [20, 30, 0], [0, 30, 0], [0, 0, 10], [20, 0, 10], [20, 30, 10], [0, 30, 10]];
+  const tris = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]];
+  writeFileSync(join(deskCat, 'desk cat.stl'), 'solid cat\n' + tris.map(([a, b, c]) => f('0 0 0', V[a], V[b], V[c])).join('') + 'endsolid cat\n');
+  const crcT = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc = (b) => { let c = 0xffffffff; for (const x of b) c = crcT[(c ^ x) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (t, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([l, td, c]); };
+  const png = (w, h, px) => {
+    const raw = Buffer.alloc((w * 3 + 1) * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) raw.set(px(x, y), y * (w * 3 + 1) + 1 + x * 3);
+    const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+    return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+  };
+  writeFileSync(join(deskCat, 'Green and yellow cat.png'), png(320, 240, (x, y) => [90 + (x % 120), 200, 60 + (y % 100)]));
+  writeFileSync(join(deskCat, 'cat on the desk.png'), png(320, 240, (x, y) => [230, 180 + (x % 60), 80 + (y % 120)]));
+}
 const backups = join(tmp, 'backups'); mkdirSync(backups);
 const bare = join(tmp, 'remote.git'); mkdirSync(bare);
 execFileSync('git', ['-C', bare, 'init', '--bare', '-q']);
@@ -118,7 +136,14 @@ await step('Document weapon_tuner.gsc', async () => {
   // an undocumented file shows one line plus "add" chips, not a wall of empty fields
   if (await page.locator('.doc textarea').count()) throw new Error('empty docs should not open editors');
   await page.getByPlaceholder(/One line, e\.g\./).fill('Handles weapon-specific tuning and behavior');
+  await page.evaluate(() => { // diagnostics for a CI-only failure: what did the pointer hit, and did the chip move?
+    const log = (window.__ev = []);
+    const at = (e) => { const c = [...document.querySelectorAll('.addrow .chip')].find((x) => x.textContent.includes('Notes')); const r = c?.getBoundingClientRect(); log.push(`${e.type} ${e.clientX},${e.clientY} on ${e.target.className || e.target.tagName} chip@${r ? Math.round(r.x) + ',' + Math.round(r.y) : 'gone'}`); };
+    for (const t of ['pointerdown', 'mousedown', 'mouseup', 'click']) window.addEventListener(t, at, true);
+    new MutationObserver(() => { if (!document.querySelector('.doc')) log.push('doc panel gone'); }).observe(document.body, { childList: true, subtree: true });
+  });
   await page.locator('.addrow .chip').filter({ hasText: 'Notes' }).click();
+  await page.locator('textarea.code').waitFor({ timeout: 8000 }).catch(async () => { throw new Error('notes editor did not open; events: ' + JSON.stringify(await page.evaluate(() => window.__ev))); });
   await page.locator('textarea.code').fill('- Contains instashoot configuration\n- Depends on [[file:configs/weapons.json]]\n- Requires dedicated server testing');
   await page.locator('.addrow .chip').filter({ hasText: 'Warning' }).click();
   await page.getByPlaceholder('e.g. Never edit while the server is running').fill('Requires dedicated server testing before release');
@@ -524,8 +549,7 @@ await step('Command palette', async () => {
   await page.keyboard.press('Escape');
 });
 
-if (pvDir) {
-  await step('Global search: real paths, duplicates, highlights', async () => {
+await step('Global search: real paths, duplicates, highlights', async () => {
   await page.keyboard.press('Control+K');
   await page.locator('.palette input').fill('createserver');
   const items = page.locator('.palette .item.fileitem').filter({ hasText: 'createserver.menu' });
@@ -561,19 +585,14 @@ await step('Global search: right-click menu and copy paths', async () => {
   await page.locator('.palette').waitFor({ state: 'detached' });
 });
 
-await step('Import Print Vault', async () => {
-    await page.getByRole('button', { name: 'Dashboard' }).click();
-    await page.getByRole('button', { name: 'More ways to add projects' }).click();
-    await page.locator('.ctx button').filter({ hasText: 'Import from Print Vault' }).click();
-    await page.getByPlaceholder('D:\\PrintVault\\3D Prints Vault').fill(pvDir);
-    await page.locator('.modal').getByRole('button', { name: 'Import' }).click();
-    await page.getByText(/project\(s\) imported/).waitFor({ timeout: 30000 });
-    await page.locator('.modal').getByRole('button', { name: 'Done' }).click();
-  });
-  await step('3D printing project details', async () => {
-    await page.locator('.pcard').filter({ hasText: 'Cat - Green And Yellow' }).click();
+await step('3D printing project', async () => {
+  const pr = (await api('projects.create', { name: 'Desk Cat', category: '3d-printing', linkPath: deskCat })).data;
+  if (!pr?.id) throw new Error('create failed');
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  await page.locator('.pcard').filter({ hasText: 'Desk Cat' }).click();
+});
+await step('3D printing project details', async () => {
     await page.getByText('Print details').waitFor();
-    await page.locator('.ov2-dl dd').filter({ hasText: 'X2D' }).waitFor();
     await page.locator('[data-panel=details]').getByRole('button', { name: 'Edit' }).click();
     await page.getByPlaceholder('Notes (settings, what went wrong…)').fill('Gray layer showed through');
     await page.getByRole('button', { name: 'Log', exact: true }).click();
@@ -582,7 +601,7 @@ await step('Import Print Vault', async () => {
     if (shots) await page.screenshot({ path: join(shots, 'x-3d-overview.png') });
     await page.locator('.ov2-groups .chip').filter({ hasText: 'Meshes' }).click();
     await page.locator('.chip.on').filter({ hasText: 'Meshes' }).waitFor();
-    await page.locator('.filerow').filter({ hasText: 'fixed cat.stl' }).click();
+    await page.locator('.filerow').filter({ hasText: 'desk cat.stl' }).click();
     await page.getByText('Mesh bounds').waitFor();
     if (await page.locator('.filerow').filter({ hasText: 'README.md' }).count()) throw new Error('type filter not applied');
     // 3D preview (large files load on request)
@@ -592,22 +611,13 @@ await step('Import Print Vault', async () => {
     await page.locator('.mv-bar').getByText(/triangles/).waitFor({ timeout: 60000 });
     if (shots) await page.locator('.modelview').screenshot({ path: join(shots, 'x-3d-preview.png') });
     await page.locator('.chip').filter({ hasText: 'All files' }).click();
-    const tmf = page.locator('.filerow').filter({ hasText: '.3mf' });
-    await tmf.first().waitFor();
-    {
-      await tmf.first().click();
-      await page.locator('.printinfo').getByText('Bambu Lab X2D 0.4 nozzle').waitFor({ timeout: 30000 });
-      await page.locator('.printinfo').waitFor({ timeout: 30000 });
-      if (shots) await page.locator('.printinfo').screenshot({ path: join(shots, 'x-3mf-info.png') });
-    }
     await page.getByRole('button', { name: /^Backups & versions/ }).click();
     await page.locator('.verrow').first().waitFor();
     if (shots) await page.screenshot({ path: join(shots, 'x-3d-files.png') });
   });
-}
 
 await step('Reveal in project from another project', async () => {
-  if (pvDir) await page.locator('.crumbs .cur').filter({ hasText: 'Cat - Green And Yellow' }).waitFor();
+  await page.locator('.crumbs .cur').filter({ hasText: 'Desk Cat' }).waitFor();
   await page.keyboard.press('Control+K');
   await page.locator('.palette input').fill('createserver');
   const item = page.locator('.palette .item.fileitem').filter({ hasText: 'menus / createserver.menu' });
@@ -826,11 +836,10 @@ await step('Tooltips', async () => {
   await page.locator('.pv-tip').waitFor({ state: 'detached' });
 });
 
-if (pvDir) await step('Dashboard: change a project picture', async () => {
+await step('Dashboard: change a project picture', async () => {
   await page.getByRole('button', { name: 'Dashboard' }).click();
-  const card = page.locator('.pcard').filter({ hasText: 'Cat - Green And Yellow' });
+  const card = page.locator('.pcard').filter({ hasText: 'Desk Cat' });
   await card.locator('.pc-face .pc-img').waitFor();
-  const before = await card.locator('.pc-face .pc-img').getAttribute('src');
   await card.hover();
   await card.getByRole('button', { name: 'Picture' }).click();
   const m = page.locator('.modal').filter({ hasText: 'Picture for' });
@@ -841,7 +850,7 @@ if (pvDir) await step('Dashboard: change a project picture', async () => {
   if (shots) await page.screenshot({ path: join(shots, 'x-picture-dialog.png') });
   await m.getByRole('button', { name: 'Save' }).click();
   await m.waitFor({ state: 'detached' });
-  await page.waitForFunction((b) => { const i = [...document.querySelectorAll('.pcard')].find((c) => c.textContent.includes('Cat - Green And Yellow'))?.querySelector('.pc-face .pc-img'); return i && i.getAttribute('src') !== b && i.style.objectFit === 'contain'; }, before);
+  await page.waitForFunction(() => { const i = [...document.querySelectorAll('.pcard')].find((c) => c.textContent.includes('Desk Cat'))?.querySelector('.pc-face .pc-img'); return i && i.style.objectFit === 'contain'; });
   // and back to no picture: the card lists recent files
   await card.hover();
   await card.getByRole('button', { name: 'Picture' }).click();
