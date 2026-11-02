@@ -261,7 +261,7 @@ pub fn thumbnail(v: &Vault, id: &str) -> DbResult<Json> {
     let module = Json::parse(&pr.s("module_json")).unwrap_or(Json::obj());
     let t = thumb_settings(&module);
     let mode = t.str_of("mode").unwrap_or_else(|| "auto".into());
-    let style = |j: Json| j.with("fit", t.str_of("fit").unwrap_or_else(|| "cover".into())).with("x", t.get("x").cloned().unwrap_or(Json::from(50))).with("y", t.get("y").cloned().unwrap_or(Json::from(50))).with("mode", mode.as_str());
+    let style = |j: Json| j.with("fit", t.str_of("fit").unwrap_or_else(|| "cover".into())).with("x", t.get("x").cloned().unwrap_or(Json::from(50))).with("y", t.get("y").cloned().unwrap_or(Json::from(50))).with("zoom", t.get("zoom").cloned().unwrap_or(Json::from(1))).with("mode", mode.as_str());
     match mode.as_str() {
         "none" => return Ok(Json::Null),
         "custom" => {
@@ -372,6 +372,10 @@ pub fn set_thumbnail(v: &Vault, id: &str, patch: &Json) -> DbResult<Json> {
         if let Some(x) = patch.get(k) {
             t.set(k, x.clone());
         }
+    }
+    // zoom into a wide screenshot so one part fills the card (1 = no zoom)
+    if let Some(z) = patch.get("zoom").and_then(|z| z.as_f64()) {
+        t.set("zoom", (z.clamp(1.0, 4.0) * 100.0).round() / 100.0);
     }
     if let Some(m) = t.str_of("mode") {
         if !["auto", "file", "custom", "none"].contains(&m.as_str()) {

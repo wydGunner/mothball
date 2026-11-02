@@ -237,7 +237,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
 }
 
 // card pictures, fetched once per project (until its files or picture settings change)
-interface Thumb { src: string; fit?: 'cover' | 'contain'; x?: number; y?: number; mode?: string; fileId?: string }
+interface Thumb { src: string; fit?: 'cover' | 'contain'; x?: number; y?: number; zoom?: number; mode?: string; fileId?: string }
 export const thumbCache = new Map<string, { key: string; t: Thumb | null }>();
 const thumbKey = (p: Project) => `${p.fileCount}:${p.bytes}:${JSON.stringify(p.module?.thumb || p.module?.thumbFileId || '')}`;
 
@@ -286,7 +286,11 @@ function looksUsable(src: string): Promise<boolean> {
   });
 }
 
-const imgStyle = (t: Thumb): React.CSSProperties => ({ objectFit: t.fit || 'cover', objectPosition: `${t.x ?? 50}% ${t.y ?? 50}%` });
+const imgStyle = (t: Thumb): React.CSSProperties => {
+  const z = (t.fit || 'cover') === 'cover' ? t.zoom || 1 : 1;
+  const at = `${t.x ?? 50}% ${t.y ?? 50}%`;
+  return { objectFit: t.fit || 'cover', objectPosition: at, ...(z > 1 ? { transform: `scale(${z})`, transformOrigin: at } : {}) };
+};
 
 /** Choose and frame the picture on a project's card. */
 export function PictureDialog({ p, onClose, onSaved }: { p: Project; onClose: () => void; onSaved: () => void }) {
@@ -297,6 +301,7 @@ export function PictureDialog({ p, onClose, onSaved }: { p: Project; onClose: ()
   const [src, setSrc] = useState<string | null | undefined>(undefined);
   const [fit, setFit] = useState<'cover' | 'contain'>('cover');
   const [pos, setPos] = useState({ x: 50, y: 50 });
+  const [zoom, setZoom] = useState(1);
   const [pics, setPics] = useState<Record<string, string | null>>({});
   const act = useAction();
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
@@ -304,7 +309,7 @@ export function PictureDialog({ p, onClose, onSaved }: { p: Project; onClose: ()
     if (cur.data === undefined || mode !== null) return;
     const t = cur.data;
     setMode(t?.mode || (p.module?.thumb?.mode === 'none' ? 'none' : 'auto'));
-    setFileId(t?.fileId); setSrc(t?.src ?? null); setFit(t?.fit || 'cover'); setPos({ x: t?.x ?? 50, y: t?.y ?? 50 });
+    setFileId(t?.fileId); setSrc(t?.src ?? null); setFit(t?.fit || 'cover'); setPos({ x: t?.x ?? 50, y: t?.y ?? 50 }); setZoom(t?.zoom || 1);
   }, [cur.data, mode, p.module]);
   // load candidate previews a few at a time
   useEffect(() => {
@@ -323,11 +328,11 @@ export function PictureDialog({ p, onClose, onSaved }: { p: Project; onClose: ()
   const fromComputer = async () => {
     const f = (await pickFiles('Choose a picture for this project', [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }]))[0];
     if (!f) return;
-    const r = await act(() => call<Thumb>('projects.setThumbnail', { id: p.id, thumb: { path: f, fit, x: pos.x, y: pos.y } }));
+    const r = await act(() => call<Thumb>('projects.setThumbnail', { id: p.id, thumb: { path: f, fit, x: pos.x, y: pos.y, zoom } }));
     if (r) { setMode('custom'); setFileId(undefined); setSrc(r.src); }
   };
   const save = async () => {
-    const thumb: any = { mode, fit, x: Math.round(pos.x), y: Math.round(pos.y) };
+    const thumb: any = { mode, fit, x: Math.round(pos.x), y: Math.round(pos.y), zoom };
     if (mode === 'file') thumb.fileId = fileId;
     // the result is null when the card has no picture, so check for failure explicitly
     const r = await act(() => call('projects.setThumbnail', { id: p.id, thumb }).then(() => true), 'Picture saved');
@@ -341,14 +346,17 @@ export function PictureDialog({ p, onClose, onSaved }: { p: Project; onClose: ()
         <div>
           <div className={cx('pic-preview', fit === 'cover' && shown && 'draggable')}
             onPointerDown={(e) => { if (fit !== 'cover' || !shown) return; drag.current = { x: e.clientX, y: e.clientY, px: pos.x, py: pos.y }; (e.target as HTMLElement).setPointerCapture(e.pointerId); }}
-            onPointerMove={(e) => { const d = drag.current; if (!d) return; const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setPos({ x: Math.max(0, Math.min(100, d.px - ((e.clientX - d.x) / r.width) * 100)), y: Math.max(0, Math.min(100, d.py - ((e.clientY - d.y) / r.height) * 100)) }); }}
+            onPointerMove={(e) => { const d = drag.current; if (!d) return; const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setPos({ x: Math.max(0, Math.min(100, d.px - ((e.clientX - d.x) / r.width) * 100 / zoom)), y: Math.max(0, Math.min(100, d.py - ((e.clientY - d.y) / r.height) * 100 / zoom)) }); }}
             onPointerUp={() => { drag.current = null; }}>
-            {shown ? <img src={shown} alt="" style={imgStyle({ src: shown, fit, x: pos.x, y: pos.y })} draggable={false} /> : <div className="small muted" style={{ padding: 20 }}>{mode === 'none' ? 'No picture: the card shows the most recently changed files.' : cur.data === undefined ? 'Loading…' : 'No picture found in this project.'}</div>}
+            {shown ? <img src={shown} alt="" style={imgStyle({ src: shown, fit, x: pos.x, y: pos.y, zoom })} draggable={false} /> : <div className="small muted" style={{ padding: 20 }}>{mode === 'none' ? 'No picture: the card shows the most recently changed files.' : cur.data === undefined ? 'Loading…' : 'No picture found in this project.'}</div>}
           </div>
-          <div className="small dim" style={{ margin: '6px 0' }}>This is how it appears on the dashboard card.{fit === 'cover' && shown ? ' Drag the picture to choose which part shows.' : ''}</div>
+          <div className="small dim" style={{ margin: '6px 0' }}>This is how it appears on the dashboard card.{fit === 'cover' && shown ? ' Drag the picture to choose which part shows; zoom in on a large screenshot.' : ''}</div>
           {shown && <div className="row" style={{ flexWrap: 'wrap' }}>
             <div className="seg"><button className={cx(fit === 'cover' && 'on')} onClick={() => setFit('cover')}>Fill the card</button><button className={cx(fit === 'contain' && 'on')} onClick={() => setFit('contain')}>Show the whole picture</button></div>
-            {fit === 'cover' && <button className="btn sm ghost" onClick={() => setPos({ x: 50, y: 50 })}>Center</button>}
+            {fit === 'cover' && <label className="row small" style={{ gap: 6 }} title="Zoom in on part of a large screenshot">Zoom
+              <input type="range" min={1} max={4} step={0.05} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} aria-label="Zoom" style={{ width: 120 }} />
+              <span className="dim" style={{ width: 38 }}>{Math.round(zoom * 100)}%</span></label>}
+            {fit === 'cover' && <button className="btn sm ghost" onClick={() => { setPos({ x: 50, y: 50 }); setZoom(1); }}>Reset</button>}
           </div>}
         </div>
         <div className="pic-side">

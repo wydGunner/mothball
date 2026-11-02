@@ -856,6 +856,15 @@ await step('Dashboard: change a project picture', async () => {
   await m.getByRole('button', { name: 'Save' }).click();
   await m.waitFor({ state: 'detached' });
   await page.waitForFunction(() => { const i = [...document.querySelectorAll('.pcard')].find((c) => c.textContent.includes('Desk Cat'))?.querySelector('.pc-face .pc-img'); return i && i.style.objectFit === 'contain'; });
+  // zoom in on part of the picture; the card uses the same zoom
+  await card.hover();
+  await card.getByRole('button', { name: 'Picture' }).click();
+  await m.getByRole('button', { name: 'Fill the card' }).click();
+  await m.getByRole('slider', { name: 'Zoom' }).fill('2');
+  await m.getByText('200%').waitFor();
+  await m.getByRole('button', { name: 'Save' }).click();
+  await m.waitFor({ state: 'detached' });
+  await page.waitForFunction(() => { const i = [...document.querySelectorAll('.pcard')].find((c) => c.textContent.includes('Desk Cat'))?.querySelector('.pc-face .pc-img'); return i && i.style.transform === 'scale(2)' && i.style.objectFit === 'cover'; });
   // and back to no picture: the card lists recent files
   await card.hover();
   await card.getByRole('button', { name: 'Picture' }).click();
