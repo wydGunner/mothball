@@ -4,7 +4,7 @@ import {
   LuCpu, LuBinary, LuFile, LuX, LuCircleAlert, LuCircleCheck, LuInfo, LuFolderGit2, LuCode, LuWrench, LuPalette, LuFolder,
 } from 'react-icons/lu';
 import { renderMarkdown, parseInternalHref } from '../markdown';
-import { LuChevronDown, LuCheck } from 'react-icons/lu';
+import { LuChevronDown, LuCheck, LuClapperboard, LuSparkles, LuPenTool, LuCuboid, LuDraftingCompass, LuPuzzle, LuType } from 'react-icons/lu';
 import { cx } from '../format';
 
 // ---------------------------------------------------------------- toasts
@@ -259,7 +259,7 @@ export function StatusPill({ status }: { status: string; colors?: Record<string,
 
 const KIND_ICONS: Record<string, ReactNode> = {
   code: <LuFileCode />, document: <LuFileText />, config: <LuSettings2 />, image: <LuImage />, mesh: <LuBox />, model: <LuShapes />,
-  gcode: <LuPrinter />, archive: <LuArchive />, engine: <LuGamepad2 />, audio: <LuMusic />, video: <LuVideo />, electronics: <LuCpu />, binary: <LuBinary />,
+  gcode: <LuPrinter />, archive: <LuArchive />, engine: <LuGamepad2 />, audio: <LuMusic />, video: <LuVideo />, electronics: <LuCpu />, binary: <LuBinary />, font: <LuType />,
 };
 export function KindIcon({ kind }: { kind: string }) {
   return <span className="kind" title={kind}>{KIND_ICONS[kind] || <LuFile />}</span>;
@@ -273,11 +273,17 @@ const CAT: Record<string, { icon: ReactNode }> = {
   creative: { icon: <LuPalette /> },
   documents: { icon: <LuFileText /> },
   general: { icon: <LuFolder /> },
+  addon: { icon: <LuPuzzle /> },
+  video: { icon: <LuClapperboard /> },
+  motion: { icon: <LuSparkles /> },
+  design: { icon: <LuPenTool /> },
+  '3d-art': { icon: <LuCuboid /> },
+  cad: { icon: <LuDraftingCompass /> },
 };
 export function ProjectIcon({ category, icon, color, size = 38 }: { category: string; icon?: string; color?: string; size?: number }) {
   const c = CAT[category] || CAT.general;
   return (
-    <div className={'picon ' + ({ software: 'c1', game: 'c3', '3d-printing': 'c1', electronics: 'c2', creative: 'c3', documents: 'c2' }[category] || 'c2')} style={{ width: size, height: size, fontSize: size * 0.47, borderRadius: Math.max(5, size * 0.24) }}>
+    <div className={'picon ' + ({ software: 'c1', game: 'c3', addon: 'c3', '3d-printing': 'c1', '3d-art': 'c1', cad: 'c2', video: 'c3', motion: 'c3', design: 'c1', electronics: 'c2', creative: 'c3', documents: 'c2' }[category] || 'c2')} style={{ width: size, height: size, fontSize: size * 0.47, borderRadius: Math.max(5, size * 0.24) }}>
       {icon ? <span style={{ fontSize: size * 0.5 }}>{icon}</span> : c.icon}
     </div>
   );

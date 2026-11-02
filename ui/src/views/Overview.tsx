@@ -33,6 +33,40 @@ export const MODULES: Record<string, { title: string; fields: FieldDef[] }> = {
     { key: 'fitsContains', label: 'Fits / contains' },
     { key: 'assemblyNotes', label: 'Assembly notes', multiline: true }, { key: 'finishingNotes', label: 'Finishing instructions', multiline: true },
   ] },
+  addon: { title: 'Addon details', fields: [
+    { key: 'game', label: 'Game', placeholder: 'World of Warcraft (Retail)' }, { key: 'interface', label: 'Interface / game version', placeholder: '110205' },
+    { key: 'addonVersion', label: 'Addon version' }, { key: 'pageUrl', label: 'CurseForge / Wago / GitHub page' },
+    { key: 'dependencies', label: 'Dependencies & libraries', multiline: true }, { key: 'savedVariables', label: 'Saved variables', placeholder: 'MyAddonDB' },
+    { key: 'releaseNotes', label: 'Release notes', multiline: true },
+  ] },
+  video: { title: 'Video details', fields: [
+    { key: 'editor', label: 'Editor', placeholder: 'Vegas Pro 21' }, { key: 'resolution', label: 'Resolution / frame rate', placeholder: '1920×1080 @ 60' },
+    { key: 'length', label: 'Length' }, { key: 'published', label: 'Published at (URL)' },
+    { key: 'mediaLocation', label: 'Where the source footage lives', placeholder: 'E:\\Recordings\\2026-10', multiline: true },
+    { key: 'plugins', label: 'Plugins & effects used', multiline: true }, { key: 'exportSettings', label: 'Export settings', multiline: true },
+  ] },
+  motion: { title: 'Motion details', fields: [
+    { key: 'software', label: 'Software', placeholder: 'After Effects 2025, Cinema 4D 2025' }, { key: 'resolution', label: 'Resolution / frame rate' },
+    { key: 'length', label: 'Length' }, { key: 'renderer', label: 'Renderer', placeholder: 'Redshift' },
+    { key: 'plugins', label: 'Plugins, presets & fonts needed to reopen', multiline: true }, { key: 'renderSettings', label: 'Render settings', multiline: true },
+    { key: 'assetsLocation', label: 'Where outside assets live', multiline: true },
+  ] },
+  design: { title: 'Design details', fields: [
+    { key: 'software', label: 'Software', placeholder: 'Photoshop 2025' }, { key: 'canvas', label: 'Canvas size', placeholder: '1280×720 px' },
+    { key: 'colorMode', label: 'Colour mode', options: ['', 'RGB', 'CMYK', 'Grayscale'] }, { key: 'client', label: 'For / client' },
+    { key: 'fonts', label: 'Fonts used', multiline: true }, { key: 'exports', label: 'Export sizes & formats', multiline: true },
+  ] },
+  '3d-art': { title: '3D art details', fields: [
+    { key: 'software', label: 'Software', placeholder: 'Blender 4.4' }, { key: 'renderer', label: 'Renderer', placeholder: 'Cycles' },
+    { key: 'polycount', label: 'Poly count' }, { key: 'output', label: 'Output', placeholder: 'Turntable, game asset, print…' },
+    { key: 'addons', label: 'Add-ons & plugins needed to reopen', multiline: true }, { key: 'textures', label: 'Where textures & HDRIs live', multiline: true },
+  ] },
+  cad: { title: 'CAD details', fields: [
+    { key: 'software', label: 'Software', placeholder: 'Fusion' }, { key: 'units', label: 'Units', options: ['', 'mm', 'cm', 'in'] },
+    { key: 'revision', label: 'Revision' }, { key: 'material', label: 'Material' },
+    { key: 'manufacturing', label: 'Manufacturing method', placeholder: '3D print, CNC, laser…' }, { key: 'tolerances', label: 'Tolerances & fits', multiline: true },
+    { key: 'parameters', label: 'Key parameters / dimensions', multiline: true },
+  ] },
   electronics: { title: 'Electronics details', fields: [
     { key: 'board', label: 'Board / PCB' }, { key: 'mcu', label: 'MCU' }, { key: 'firmware', label: 'Firmware' },
     { key: 'bom', label: 'Bill of materials', multiline: true }, { key: 'wiringNotes', label: 'Wiring / pinout notes', multiline: true },

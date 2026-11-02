@@ -12,6 +12,12 @@ const TEMPLATE_SETS: Record<string, string[]> = {
   game: ['Game design', 'Architecture', 'Scenes & scripts', 'Build & playtesting', 'Known bugs', 'Ideas'],
   '3d-printing': ['Print settings', 'Assembly', 'Finishing', 'Revisions', 'Ideas'],
   electronics: ['Schematic notes', 'Bill of materials', 'Firmware', 'Wiring', 'Troubleshooting'],
+  addon: ['Features', 'Slash commands', 'Saved variables', 'Release checklist', 'Known bugs', 'Ideas'],
+  video: ['Edit notes', 'Footage & sources', 'Music & licensing', 'Export settings', 'Revisions'],
+  motion: ['Concept', 'Plugins & presets', 'Render settings', 'Revisions', 'Client feedback'],
+  design: ['Brief', 'Fonts & colours', 'Export sizes', 'Revisions', 'Feedback'],
+  '3d-art': ['Concept & references', 'Modelling notes', 'Materials & textures', 'Render settings', 'Revisions'],
+  cad: ['Requirements', 'Design decisions', 'Tolerances & fits', 'Manufacturing', 'Revisions'],
 };
 
 export function NotesTab({ ctx }: { ctx: ProjectCtx }) {

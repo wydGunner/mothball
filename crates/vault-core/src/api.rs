@@ -100,6 +100,7 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "files.duplicates" => files::duplicates(v, &s(a, "projectId")?),
         "files.groups" => files::groups(v, &s(a, "projectId")?),
         "profiles.groups" => Ok(profiles::groups_json(&s(a, "category")?)),
+        "profiles.info" => Ok(profiles::info_json(&s(a, "category")?)),
 
         // versions
         "versions.list" => versions::list(v, &s(a, "fileId")?),

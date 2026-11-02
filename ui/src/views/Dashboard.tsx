@@ -402,7 +402,6 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
       <div className="grid2">
         <div className="field"><label>Project type</label>
           <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>{Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-          {category === 'game' && <span className="small dim">Unity Library/, Temp/, Logs/, obj/ and Build folders are skipped by default.</span>}
         </div>
         <div className="field"><label>Status</label>
           <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>{['Planned', 'Active', 'Paused', 'Completed', 'Archived'].map((s) => <option key={s}>{s}</option>)}</select>
@@ -414,12 +413,17 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
 }
 
 function TypeFocus({ category }: { category: string }) {
-  const groups = useLoad(() => call<{ id: string; label: string; exts: string[] }[]>('profiles.groups', { category }), [category]);
-  if (!groups.data?.length) return <p className="small dim" style={{ margin: 0 }}>All file types are treated equally for this project type.</p>;
+  const info = useLoad(() => call<{ groups: { id: string; label: string; exts: string[] }[]; ignores: string; keyExts: string[] }>('profiles.info', { category }), [category]);
+  const d = info.data;
+  if (!d) return null;
+  const ignores = d.ignores.split('\n').filter(Boolean);
+  if (!d.groups.length) return <p className="small dim" style={{ margin: 0 }}>All file types are treated equally for this project type.</p>;
   return (
     <div className="typefocus">
-      <div className="small muted" style={{ marginBottom: 6 }}>The Files view will put these first{category === '3d-printing' || category === 'electronics' ? ', and earlier versions of them are kept so you can compare and roll back' : ''}:</div>
-      {groups.data.map((g) => <div key={g.id} className="row small" style={{ gap: 6, padding: '2px 0' }}><b style={{ width: 130 }}>{g.label}</b><span className="dim mono">{g.exts.slice(0, 8).map((e) => '.' + e).join(' ')}</span></div>)}
+      <div className="small muted" style={{ marginBottom: 6 }}>The Files view sorts these into their own groups:</div>
+      {d.groups.map((g) => <div key={g.id} className="row small" style={{ gap: 6, padding: '2px 0' }}><b style={{ width: 150, flex: 'none' }}>{g.label}</b><span className="dim mono">{g.exts.slice(0, 8).map((e) => '.' + e).join(' ')}</span></div>)}
+      {d.keyExts.length > 0 && <div className="small muted" style={{ marginTop: 8 }}>Earlier versions of project files ({d.keyExts.slice(0, 6).map((e) => '.' + e).join(', ')}{d.keyExts.length > 6 ? '…' : ''}) are kept so you can compare and roll back.</div>}
+      {ignores.length > 0 && <div className="small muted" style={{ marginTop: 6 }}>Skipped by default (caches and autosaves): <span className="mono dim">{ignores.slice(0, 6).join('  ')}{ignores.length > 6 ? ' …' : ''}</span>. You can change this per project.</div>}
     </div>
   );
 }

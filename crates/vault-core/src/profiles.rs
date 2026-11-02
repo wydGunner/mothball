@@ -69,6 +69,44 @@ pub fn groups(category: &str) -> Vec<Group> {
             Group { id: "audio", label: "Audio", hint: "", exts: &["wav", "mp3", "flac", "als", "flp"] },
             Group { id: "docs", label: "Writing", hint: "", exts: &["md", "txt", "docx", "pdf"] },
         ],
+        "video" => vec![
+            Group { id: "project", label: "Edit projects", hint: "Vegas, Premiere, Resolve, Final Cut, Kdenlive projects", exts: &["veg", "vf", "prproj", "drp", "fcpxml", "kdenlive", "mlt", "wfp", "aep", "mogrt"] },
+            Group { id: "exports", label: "Exports & footage", hint: "Rendered videos and source clips", exts: &["mp4", "mov", "mkv", "webm", "avi", "mxf", "m4v"] },
+            Group { id: "audio", label: "Audio & music", hint: "Music, voice-over, sound effects", exts: &["wav", "mp3", "flac", "aiff", "m4a", "ogg"] },
+            Group { id: "graphics", label: "Graphics & thumbnails", hint: "Overlays, titles, thumbnails", exts: &["png", "jpg", "jpeg", "psd", "webp", "svg"] },
+            Group { id: "docs", label: "Scripts & notes", hint: "Scripts, shot lists, subtitles", exts: &["txt", "md", "docx", "pdf", "srt", "vtt"] },
+        ],
+        "motion" => vec![
+            Group { id: "project", label: "Project files", hint: "After Effects, Cinema 4D, Blender, Fusion", exts: &["aep", "aepx", "c4d", "blend", "comp", "mogrt", "hip", "hipnc"] },
+            Group { id: "renders", label: "Renders", hint: "Rendered videos and image sequences", exts: &["mp4", "mov", "webm", "gif", "exr", "png"] },
+            Group { id: "assets", label: "Assets", hint: "Footage, images, models, fonts", exts: &["psd", "ai", "svg", "jpg", "jpeg", "png", "fbx", "obj", "abc", "otf", "ttf"] },
+            Group { id: "audio", label: "Audio", hint: "Music and sound", exts: &["wav", "mp3", "flac", "aiff"] },
+            Group { id: "scripts", label: "Expressions & scripts", hint: "Expression and automation scripts", exts: &["jsx", "jsxbin", "js", "py", "txt"] },
+        ],
+        "design" => vec![
+            Group { id: "source", label: "Design files", hint: "Photoshop, Illustrator, Affinity, Krita, GIMP, Figma exports", exts: &["psd", "psb", "ai", "afdesign", "afphoto", "afpub", "kra", "xcf", "clip", "indd", "sketch", "fig", "xd", "procreate"] },
+            Group { id: "exports", label: "Exports", hint: "Final images and PDFs", exts: &["png", "jpg", "jpeg", "webp", "svg", "pdf", "gif", "tif", "tiff"] },
+            Group { id: "fonts", label: "Fonts", hint: "Fonts the design uses", exts: &["otf", "ttf", "woff", "woff2"] },
+            Group { id: "docs", label: "Briefs & notes", hint: "", exts: &["md", "txt", "docx", "pdf"] },
+        ],
+        "3d-art" => vec![
+            Group { id: "scenes", label: "Scene files", hint: "Blender, Cinema 4D, Maya, 3ds Max, Houdini, ZBrush", exts: &["blend", "c4d", "ma", "mb", "max", "hip", "hipnc", "ztl", "zpr", "usd", "usda"] },
+            Group { id: "textures", label: "Textures & materials", hint: "Substance projects, texture maps", exts: &["spp", "sbs", "sbsar", "png", "tga", "exr", "hdr", "jpg", "jpeg", "tif", "dds"] },
+            Group { id: "exports", label: "Exported models", hint: "For games, printing or sharing", exts: &["fbx", "obj", "gltf", "glb", "abc", "stl", "usdz", "dae"] },
+            Group { id: "renders", label: "Renders", hint: "Stills and animations", exts: &["png", "jpg", "jpeg", "exr", "mp4", "mov"] },
+        ],
+        "cad" => vec![
+            Group { id: "parts", label: "Parts & assemblies", hint: "SolidWorks, Fusion, Inventor, FreeCAD, Onshape exports", exts: &["sldprt", "sldasm", "f3d", "f3z", "ipt", "iam", "fcstd", "prt", "asm", "catpart", "catproduct", "3dm", "scad"] },
+            Group { id: "drawings", label: "Drawings", hint: "2D drawings and DXF/DWG", exts: &["slddrw", "idw", "dwg", "dxf", "pdf"] },
+            Group { id: "exchange", label: "Exchange formats", hint: "STEP, IGES, STL, Parasolid", exts: &["step", "stp", "iges", "igs", "x_t", "x_b", "stl", "3mf", "obj"] },
+            Group { id: "cam", label: "CAM & manufacturing", hint: "Toolpaths, G-code, laser files", exts: &["nc", "tap", "gcode", "ngc", "lbrn", "lbrn2", "svg"] },
+            Group { id: "docs", label: "Specs & BOM", hint: "", exts: &["pdf", "xlsx", "csv", "md", "txt"] },
+        ],
+        "addon" => vec![
+            Group { id: "code", label: "Code", hint: "Lua and XML", exts: &["lua", "xml", "toc"] },
+            Group { id: "media", label: "Textures & sounds", hint: "", exts: &["blp", "tga", "png", "ogg", "mp3"] },
+            Group { id: "docs", label: "Docs & packaging", hint: "Readme, changelog, packager config", exts: &["md", "txt", "yml", "yaml", "json"] },
+        ],
         "documents" => vec![
             Group { id: "docs", label: "Documents", hint: "", exts: &["pdf", "docx", "doc", "odt", "md", "txt", "rtf"] },
             Group { id: "sheets", label: "Spreadsheets", hint: "", exts: &["xlsx", "xls", "csv", "ods"] },
@@ -83,8 +121,21 @@ pub fn key_version_exts(category: &str) -> &'static [&'static str] {
     match category {
         "3d-printing" => &["3mf", "stl", "obj", "blend", "step", "stp", "f3d", "fcstd", "scad"],
         "electronics" => &["kicad_pcb", "kicad_sch", "kicad_pro", "sch", "brd"],
+        "video" => &["veg", "vf", "prproj", "drp", "fcpxml", "kdenlive", "wfp", "aep"],
+        "motion" => &["aep", "aepx", "c4d", "blend", "comp", "mogrt", "hip", "hipnc"],
+        "design" => &["psd", "psb", "ai", "afdesign", "afphoto", "afpub", "kra", "xcf", "clip", "indd", "sketch", "fig", "xd"],
+        "3d-art" => &["blend", "c4d", "ma", "mb", "max", "hip", "hipnc", "ztl", "zpr", "spp", "sbs"],
+        "cad" => &["sldprt", "sldasm", "slddrw", "f3d", "f3z", "ipt", "iam", "idw", "fcstd", "3dm", "scad", "dwg", "dxf", "step", "stp"],
         _ => &[],
     }
+}
+
+/// Everything the new-project dialog shows about a project type.
+pub fn info_json(category: &str) -> Json {
+    Json::obj()
+        .with("groups", groups_json(category))
+        .with("ignores", crate::projects::default_ignores(category))
+        .with("keyExts", Json::Arr(key_version_exts(category).iter().map(|e| Json::from(*e)).collect()))
 }
 
 pub fn groups_json(category: &str) -> Json {
@@ -100,4 +151,34 @@ pub fn groups_json(category: &str) -> Json {
             })
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::files::{classify, Ignore};
+
+    #[test]
+    fn every_category_is_described() {
+        for c in crate::projects::CATEGORIES {
+            let g = groups(c);
+            if !matches!(*c, "general") {
+                assert!(!g.is_empty(), "{c} has file groups");
+            }
+            for e in key_version_exts(c) {
+                assert!(g.iter().any(|g| g.exts.contains(e)), "{c}: key ext .{e} is in a group");
+            }
+        }
+        // project files of the new types are recognised, and their caches skipped
+        assert_eq!(classify("veg"), "video");
+        assert_eq!(classify("c4d"), "model");
+        assert_eq!(classify("afdesign"), "image");
+        assert_eq!(classify("sldprt"), "model");
+        let ig = Ignore::parse(crate::projects::default_ignores("3d-art"));
+        assert!(ig.skip_file("robot.blend1", "scenes/robot.blend1"));
+        assert!(!ig.skip_file("robot.blend", "scenes/robot.blend"));
+        let ig = Ignore::parse(crate::projects::default_ignores("video"));
+        assert!(ig.skip_dir("Adobe Premiere Pro Auto-Save", "Adobe Premiere Pro Auto-Save"));
+        assert!(ig.skip_file("clip.mp4.sfk", "clip.mp4.sfk"));
+    }
 }

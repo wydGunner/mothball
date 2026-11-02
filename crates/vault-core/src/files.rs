@@ -33,27 +33,32 @@ const MAX_FILES_PER_PROJECT: usize = 500_000;
 pub fn classify(ext: &str) -> &'static str {
     match ext {
         "rs" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "py" | "cs" | "c" | "h" | "cpp" | "hpp" | "cc" | "go"
-        | "java" | "kt" | "lua" | "gsc" | "csc" | "gd" | "shader" | "hlsl" | "glsl" | "sh" | "bat" | "ps1" | "cmd"
+        | "java" | "kt" | "lua" | "gsc" | "csc" | "gsh" | "gd" | "shader" | "hlsl" | "glsl" | "sh" | "bat" | "ps1" | "cmd"
         | "rb" | "php" | "swift" | "sql" | "css" | "scss" | "html" | "vue" | "svelte" | "ino" => "code",
-        "md" | "markdown" | "txt" | "rtf" | "pdf" | "doc" | "docx" | "odt" | "xls" | "xlsx" | "csv" | "ppt" | "pptx" => "document",
-        "json" | "yaml" | "yml" | "toml" | "xml" | "ini" | "cfg" | "conf" | "env" | "lock" => "config",
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "ico" | "tga" | "psd" | "tif" | "tiff" | "exr" | "hdr" => "image",
+        "md" | "markdown" | "txt" | "rtf" | "pdf" | "doc" | "docx" | "odt" | "xls" | "xlsx" | "csv" | "ppt" | "pptx" | "srt" | "vtt" => "document",
+        "json" | "yaml" | "yml" | "toml" | "xml" | "ini" | "cfg" | "conf" | "env" | "lock" | "toc" => "config",
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "ico" | "tga" | "psd" | "psb" | "tif" | "tiff" | "exr" | "hdr" | "ai" | "afdesign"
+        | "afphoto" | "afpub" | "kra" | "xcf" | "clip" | "indd" | "sketch" | "fig" | "xd" | "procreate" | "blp" | "dds" => "image",
         "stl" | "obj" | "3mf" | "ply" | "amf" => "mesh",
-        "step" | "stp" | "f3d" | "fcstd" | "iges" | "igs" | "scad" | "blend" | "fbx" | "dae" | "gltf" | "glb" | "max" | "ma" | "mb" => "model",
-        "gcode" | "bgcode" | "gco" => "gcode",
+        "step" | "stp" | "f3d" | "f3z" | "fcstd" | "iges" | "igs" | "scad" | "blend" | "fbx" | "dae" | "gltf" | "glb" | "max" | "ma" | "mb" | "c4d"
+        | "hip" | "hipnc" | "ztl" | "zpr" | "usd" | "usda" | "usdz" | "abc" | "spp" | "sbs" | "sbsar" | "sldprt" | "sldasm" | "slddrw" | "ipt" | "iam"
+        | "idw" | "dwg" | "dxf" | "3dm" | "catpart" | "catproduct" | "x_t" | "x_b" => "model",
+        "gcode" | "bgcode" | "gco" | "nc" | "tap" | "ngc" => "gcode",
         "zip" | "7z" | "rar" | "tar" | "gz" | "xz" | "bz2" | "iwd" | "ff" => "archive",
         "unity" | "prefab" | "asset" | "mat" | "meta" | "controller" | "anim" | "asmdef" | "uasset" | "umap" | "tscn" | "tres" => "engine",
-        "wav" | "mp3" | "ogg" | "flac" | "aiff" => "audio",
-        "mp4" | "mov" | "mkv" | "webm" | "avi" => "video",
+        "wav" | "mp3" | "ogg" | "flac" | "aiff" | "m4a" | "als" | "flp" | "rpp" => "audio",
+        "mp4" | "mov" | "mkv" | "webm" | "avi" | "mxf" | "m4v" | "veg" | "vf" | "prproj" | "drp" | "fcpxml" | "kdenlive" | "mlt" | "wfp" | "aep"
+        | "aepx" | "mogrt" | "comp" => "video",
         "kicad_pcb" | "kicad_sch" | "kicad_pro" | "sch" | "brd" | "gbr" | "drl" | "fzz" => "electronics",
         "exe" | "dll" | "so" | "dylib" | "bin" | "elf" | "hex" | "uf2" => "binary",
+        "otf" | "ttf" | "woff" | "woff2" => "font",
         _ => "other",
     }
 }
 
 pub fn is_text_ext(ext: &str) -> bool {
     matches!(classify(ext), "code" | "config")
-        || matches!(ext, "md" | "markdown" | "txt" | "csv" | "log" | "gitignore" | "gcode" | "scad" | "meta" | "asmdef" | "kicad_sch" | "kicad_pro" | "tres" | "tscn")
+        || matches!(ext, "md" | "markdown" | "txt" | "csv" | "log" | "gitignore" | "gcode" | "scad" | "meta" | "asmdef" | "kicad_sch" | "kicad_pro" | "tres" | "tscn" | "srt" | "vtt" | "fcpxml" | "kdenlive" | "mlt" | "aepx" | "jsx" | "nc" | "ngc" | "tap")
 }
 
 // ------------------------------------------------------------------ ignore
@@ -92,12 +97,12 @@ impl Ignore {
         }
         ig
     }
-    fn skip_dir(&self, name: &str, rel: &str) -> bool {
+    pub(crate) fn skip_dir(&self, name: &str, rel: &str) -> bool {
         let n = name.to_lowercase();
         let r = rel.to_lowercase();
         self.dirs.contains(&n) || self.dir_paths.iter().any(|d| *d == r)
     }
-    fn skip_file(&self, name: &str, rel: &str) -> bool {
+    pub(crate) fn skip_file(&self, name: &str, rel: &str) -> bool {
         let n = name.to_lowercase();
         self.paths.contains(&rel.to_lowercase()) || self.names.contains(&n) || self.exts.contains(&extension_of(&n)) || n.starts_with(".pv-tmp-")
     }

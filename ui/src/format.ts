@@ -24,8 +24,10 @@ export function day(ms: number): string {
 }
 
 export const CATEGORY_LABELS: Record<string, string> = {
-  general: 'General', software: 'Software', game: 'Game development', '3d-printing': '3D printing',
-  electronics: 'Electronics', creative: 'Creative', documents: 'Documents',
+  general: 'General', software: 'Software', game: 'Game development', addon: 'Game addon / mod',
+  '3d-printing': '3D printing', '3d-art': '3D art & animation', cad: 'CAD & engineering',
+  video: 'Video editing', motion: 'Motion graphics', design: '2D design & illustration',
+  electronics: 'Electronics', creative: 'Creative (other)', documents: 'Documents',
 };
 
 export function cx(...c: (string | false | null | undefined)[]) {

@@ -15,7 +15,7 @@ pub const BUILTIN_STATUSES: &[(&str, &str)] = &[
     ("Archived", "#8b93a7"),
 ];
 
-pub const CATEGORIES: &[&str] = &["general", "software", "game", "3d-printing", "electronics", "creative", "documents"];
+pub const CATEGORIES: &[&str] = &["general", "software", "game", "addon", "3d-printing", "3d-art", "cad", "video", "motion", "design", "electronics", "creative", "documents"];
 
 pub fn seed_statuses(v: &Vault) -> DbResult<()> {
     for (i, (n, c)) in BUILTIN_STATUSES.iter().enumerate() {
@@ -32,6 +32,12 @@ pub fn default_ignores(category: &str) -> &'static str {
         // Regenerable Unity/engine output; can be removed per project.
         "game" => "Library/\nTemp/\nLogs/\nobj/\nBuild/\nBuilds/\nUserSettings/",
         "software" => "target/\ndist/\nbuild/\n.venv/",
+        // Caches, previews and autosaves the editing apps rebuild themselves.
+        "video" => "Adobe Premiere Pro Auto-Save/\nAdobe Premiere Pro Video Previews/\nAdobe Premiere Pro Audio Previews/\nMedia Cache Files/\nMedia Cache/\nCacheClip/\nProxyMedia/\n*.pek\n*.cfa\n*.sfk\n*.sfl",
+        "motion" => "Adobe After Effects Auto-Save/\nMedia Cache Files/\nMedia Cache/\n*.pek\n*.cfa\n*.blend1\n*.blend2",
+        "3d-art" => "*.blend1\n*.blend2\n*.blend3\n*.blend@",
+        "cad" => "*.bak\n*.dwl\n*.dwl2\n*.f3d.bak",
+        "addon" => ".release/",
         _ => "",
     }
 }

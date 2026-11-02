@@ -36,7 +36,7 @@ function buildTree(dirs: { path: string; files: number }[]): DirNode {
 const FILE_SORTS: [string, string][] = [['path', 'Path'], ['name', 'Name'], ['changed', 'Last changed'], ['size', 'Size']];
 type GroupBy = 'none' | 'folder' | 'type' | 'ext';
 const GROUP_BYS: [GroupBy, string][] = [['none', 'No grouping'], ['folder', 'Folder'], ['type', 'File type'], ['ext', 'Extension']];
-const KINDS = ['code', 'document', 'config', 'image', 'mesh', 'model', 'gcode', 'archive', 'engine', 'audio', 'video', 'electronics', 'binary', 'other'];
+const KINDS = ['code', 'document', 'config', 'image', 'mesh', 'model', 'gcode', 'archive', 'engine', 'audio', 'video', 'electronics', 'binary', 'font', 'other'];
 
 export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   const pid = ctx.project.id;
