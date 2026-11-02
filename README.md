@@ -1,4 +1,9 @@
+<p align="center"><img src="assets/brand/mothball-wordmark.png" alt="Mothball" width="420"></p>
+
 # Mothball
+
+*mothball (v.): to store something carefully so it's ready when you need it again.*
+
 
 A local, offline Windows app for all your projects: find any project, understand
 every important file, see what changed, know what to do next.
