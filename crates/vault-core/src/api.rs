@@ -103,6 +103,10 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "watch.settings" => watch::settings(v),
         "watch.setSettings" => watch::set_settings(v, a.get("patch").unwrap_or(&Json::obj())),
         "watch.stamp" => watch::stamp(v),
+        "profiles.guess" => Ok(match profiles::guess(std::path::Path::new(&s(a, "path")?)) {
+            Some((c, why)) => Json::obj().with("category", c).with("reason", why),
+            None => Json::Null,
+        }),
         "profiles.info" => Ok(profiles::info_json(&s(a, "category")?)),
 
         // versions

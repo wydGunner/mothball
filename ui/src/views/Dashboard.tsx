@@ -4,6 +4,7 @@ import { call, pickFiles, pickFolder, revealPath, isTauri, type Project } from '
 import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, useLoad, useConfirm, usePrompt } from '../components/common';
 import { ago, bytes, CATEGORY_LABELS, cx } from '../format';
 import type { Nav } from '../main';
+import { Welcome } from './Welcome';
 
 type Sort = 'recent' | 'name' | 'updated' | 'created' | 'size' | 'progress';
 const SORTS: [Sort, string][] = [['recent', 'Recently opened'], ['updated', 'Latest activity'], ['name', 'Name'], ['created', 'Newest'], ['size', 'Storage used'], ['progress', 'Progress']];
@@ -119,13 +120,10 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
 
   if (!nav.projects.length) {
     return (
-      <div className="page">
-        <Empty icon={<LuDatabase />} title="Your vault is empty">
-          <p style={{ maxWidth: 520 }}>Add a project to start. <b>Link</b> an existing folder (nothing is moved or renamed) or create a <b>managed</b> project whose files Project Vault stores for you.</p>
-          <div className="row"><button className="btn primary" onClick={onNew}><LuPlus /> New project</button><button className="btn" onClick={() => setImportPV(true)}><LuDownload /> Import from Print Vault</button></div>
-        </Empty>
+      <>
+        <Welcome nav={nav} onImportPrintVault={() => setImportPV(true)} />
         {importPV && <ImportPrintVault onClose={() => setImportPV(false)} onDone={nav.refreshProjects} />}
-      </div>
+      </>
     );
   }
 
@@ -360,14 +358,21 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
   const [mode, setMode] = useState<'linked' | 'managed'>('linked');
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
-  const [category, setCategory] = useState('software');
+  const [category, setCategoryRaw] = useState('general');
+  const [typeTouched, setTypeTouched] = useState(false);
+  const setCategory = (c: string) => setCategoryRaw(c);
   const [status, setStatus] = useState('Active');
   const [path, setPath] = useState('');
   const [busy, setBusy] = useState(false);
   const act = useAction();
   const browse = async () => {
     const p = await pickFolder('Choose the project folder to link');
-    if (p) { setPath(p); if (!name) setName(p.split(/[\\/]/).filter(Boolean).pop() || ''); }
+    if (p) {
+      setPath(p);
+      if (!name) setName(p.split(/[\\/]/).filter(Boolean).pop() || '');
+      const g = await call<{ category: string } | null>('profiles.guess', { path: p }).catch(() => null);
+      if (g && !typeTouched) setCategory(g.category);
+    }
   };
   const create = async () => {
     setBusy(true);
@@ -401,7 +406,7 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
       <div className="field"><label>Description</label><textarea className="input" value={desc} onChange={(e) => setDesc(e.target.value)} rows={2} /></div>
       <div className="grid2">
         <div className="field"><label>Project type</label>
-          <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>{Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+          <select className="input" value={category} onChange={(e) => { setTypeTouched(true); setCategory(e.target.value); }}>{Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
         </div>
         <div className="field"><label>Status</label>
           <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>{['Planned', 'Active', 'Paused', 'Completed', 'Archived'].map((s) => <option key={s}>{s}</option>)}</select>

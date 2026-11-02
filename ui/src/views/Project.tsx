@@ -3,6 +3,7 @@ import { LuLayoutDashboard, LuFiles, LuNotebookPen, LuListTodo, LuHistory, LuGit
 import { call, isTauri, pickFolder, revealPath, onFileDrop, type Project, type ScanReport } from '../ipc';
 import { Empty, ProjectIcon, StatusPill, useAction, useToast, useConfirm } from '../components/common';
 import { ago, cx } from '../format';
+import { FirstTips } from './Welcome';
 import type { Focus, Nav } from '../main';
 import { Overview } from './Overview';
 import { FilesTab } from './Files';
@@ -169,6 +170,7 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
           </button>
         ))}
       </div>
+      <FirstTips />
       <div style={{ flex: 1, minHeight: 0, overflow: tab === 'files' || tab === 'notes' ? 'hidden' : 'auto' }}>
         {tab === 'overview' && <Overview ctx={ctx} />}
         {tab === 'files' && <FilesTab ctx={ctx} />}

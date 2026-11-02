@@ -70,7 +70,7 @@ pub fn groups(category: &str) -> Vec<Group> {
             Group { id: "docs", label: "Writing", hint: "", exts: &["md", "txt", "docx", "pdf"] },
         ],
         "video" => vec![
-            Group { id: "project", label: "Edit projects", hint: "Vegas, Premiere, Resolve, Final Cut, Kdenlive projects", exts: &["veg", "vf", "prproj", "drp", "fcpxml", "kdenlive", "mlt", "wfp", "aep", "mogrt"] },
+            Group { id: "project", label: "Edit projects", hint: "Vegas, Premiere, Resolve, Final Cut, Kdenlive projects", exts: &["veg", "vf", "prproj", "drp", "fcpxml", "kdenlive", "mlt", "wfp"] },
             Group { id: "exports", label: "Exports & footage", hint: "Rendered videos and source clips", exts: &["mp4", "mov", "mkv", "webm", "avi", "mxf", "m4v"] },
             Group { id: "audio", label: "Audio & music", hint: "Music, voice-over, sound effects", exts: &["wav", "mp3", "flac", "aiff", "m4a", "ogg"] },
             Group { id: "graphics", label: "Graphics & thumbnails", hint: "Overlays, titles, thumbnails", exts: &["png", "jpg", "jpeg", "psd", "webp", "svg"] },
@@ -121,13 +121,74 @@ pub fn key_version_exts(category: &str) -> &'static [&'static str] {
     match category {
         "3d-printing" => &["3mf", "stl", "obj", "blend", "step", "stp", "f3d", "fcstd", "scad"],
         "electronics" => &["kicad_pcb", "kicad_sch", "kicad_pro", "sch", "brd"],
-        "video" => &["veg", "vf", "prproj", "drp", "fcpxml", "kdenlive", "wfp", "aep"],
+        "video" => &["veg", "vf", "prproj", "drp", "fcpxml", "kdenlive", "wfp"],
         "motion" => &["aep", "aepx", "c4d", "blend", "comp", "mogrt", "hip", "hipnc"],
         "design" => &["psd", "psb", "ai", "afdesign", "afphoto", "afpub", "kra", "xcf", "clip", "indd", "sketch", "fig", "xd"],
         "3d-art" => &["blend", "c4d", "ma", "mb", "max", "hip", "hipnc", "ztl", "zpr", "spp", "sbs"],
         "cad" => &["sldprt", "sldasm", "slddrw", "f3d", "f3z", "ipt", "iam", "idw", "fcstd", "3dm", "scad", "dwg", "dxf", "step", "stp"],
         _ => &[],
     }
+}
+
+/// Best guess at a folder's project type from what's in it (first ~5000
+/// files). Returns the category and a short reason, or None when unclear.
+pub fn guess(root: &std::path::Path) -> Option<(String, String)> {
+    let w = crate::files::walk(root, &crate::files::Ignore::parse("Library/\nnode_modules/\ntarget/\nTemp/"));
+    let mut score: std::collections::HashMap<&'static str, f64> = std::collections::HashMap::new();
+    let mut tops: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut exts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for rel in w.files.keys().take(5000) {
+        let lower = rel.to_lowercase();
+        tops.insert(lower.split('/').next().unwrap_or("").to_string());
+        *exts.entry(crate::util::extension_of(&lower)).or_default() += 1;
+    }
+    let has = |e: &str| exts.get(e).copied().unwrap_or(0);
+    // unmistakable markers first
+    if has("toc") > 0 && has("lua") > 0 {
+        return Some(("addon".into(), "has a .toc file and Lua code".into()));
+    }
+    if tops.contains("assets") && tops.contains("projectsettings") {
+        return Some(("game".into(), "looks like a Unity project".into()));
+    }
+    if has("gsc") + has("csc") > 0 {
+        return Some(("game".into(), "has GSC scripts".into()));
+    }
+    for c in crate::projects::CATEGORIES {
+        let keys = key_version_exts(c);
+        for g in groups(c) {
+            for e in g.exts {
+                let n = has(e) as f64;
+                if n > 0.0 {
+                    // a category's own project files count far more than shared formats like .png
+                    *score.entry(c).or_default() += if keys.contains(e) { 20.0 + n } else { n.sqrt() * 0.5 };
+                }
+            }
+        }
+    }
+    if ["cargo.toml", "package.json", "pyproject.toml", "go.mod"].iter().any(|f| w.files.keys().any(|k| k.eq_ignore_ascii_case(f))) {
+        *score.entry("software").or_default() += 25.0;
+    }
+    if has("3mf") + has("gcode") + has("bgcode") > 0 {
+        *score.entry("3d-printing").or_default() += 25.0;
+    }
+    let (best, top) = score.iter().filter(|(c, _)| **c != "creative" && **c != "general").max_by(|a, b| a.1.partial_cmp(b.1).unwrap())?;
+    if *top < 3.0 {
+        return None;
+    }
+    let reason = match *best {
+        "video" => "has video editing projects",
+        "motion" => "has After Effects / Cinema 4D files",
+        "design" => "has design files",
+        "3d-art" => "has 3D scene files",
+        "cad" => "has CAD parts or drawings",
+        "3d-printing" => "has print files",
+        "electronics" => "has schematics or PCB files",
+        "software" => "has source code",
+        "game" => "has game engine files",
+        "documents" => "is mostly documents",
+        _ => "matches its file types",
+    };
+    Some((best.to_string(), reason.to_string()))
 }
 
 /// Everything the new-project dialog shows about a project type.
@@ -180,5 +241,28 @@ mod tests {
         let ig = Ignore::parse(crate::projects::default_ignores("video"));
         assert!(ig.skip_dir("Adobe Premiere Pro Auto-Save", "Adobe Premiere Pro Auto-Save"));
         assert!(ig.skip_file("clip.mp4.sfk", "clip.mp4.sfk"));
+    }
+
+    #[test]
+    fn guesses_project_type() {
+        let t = crate::testutil::TempDir::new("guess");
+        let mk = |dir: &str, files: &[&str]| {
+            let d = t.path().join(dir);
+            for f in files {
+                let p = d.join(f);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(p, "x").unwrap();
+            }
+            d
+        };
+        let g = |d: std::path::PathBuf| guess(&d).map(|x| x.0);
+        assert_eq!(g(mk("wow", &["WhatsLeft.toc", "Core.lua", "Media/icon.tga"])), Some("addon".into()));
+        assert_eq!(g(mk("vid", &["montage.veg", "clips/a.mp4", "clips/b.mp4", "thumb.png"])), Some("video".into()));
+        assert_eq!(g(mk("ae", &["intro.aep", "render/intro.mp4"])), Some("motion".into()));
+        assert_eq!(g(mk("print", &["frame.3mf", "frame.stl", "photo.jpg"])), Some("3d-printing".into()));
+        assert_eq!(g(mk("cad", &["bracket.sldprt", "bracket.step", "bracket.slddrw"])), Some("cad".into()));
+        assert_eq!(g(mk("art", &["robot.blend", "tex/a.png", "tex/b.png"])), Some("3d-art".into()));
+        assert_eq!(g(mk("code", &["Cargo.toml", "src/main.rs"])), Some("software".into()));
+        assert_eq!(g(mk("misc", &["a.png"])), None);
     }
 }

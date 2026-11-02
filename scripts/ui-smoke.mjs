@@ -77,16 +77,29 @@ const toastGone = async () => { while (await page.locator('.toast button').count
 
 await page.goto(base);
 
-await step('Empty dashboard', async () => { await page.getByText('Your vault is empty').waitFor(); });
+await step('First run: welcome screen', async () => {
+  await page.getByRole('button', { name: /Add a folder I already have/ }).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-welcome.png') });
+});
 
-await step('Create OMEN v2 linked project', async () => {
-  await page.getByRole('button', { name: 'New project' }).first().click();
-  await page.getByPlaceholder('D:\\Dev\\OMEN').fill(omen);
-  await page.getByPlaceholder('OMEN v2').fill('OMEN v2');
-  await page.locator('.modal select').first().selectOption('software');
-  await page.getByRole('button', { name: 'Create project' }).click();
+await step('Create OMEN v2 linked project from the welcome screen', async () => {
+  page.once('dialog', (d) => d.accept(omen));
+  await page.getByRole('button', { name: /Add a folder I already have/ }).click();
+  // the folder has GSC scripts, so the type is suggested
+  await page.getByText(/Suggested Game development because the folder has GSC scripts/).waitFor();
+  await page.locator('.wl-type.on').filter({ hasText: 'Game development' }).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-welcome-type.png') });
+  await page.locator('.wl-form input').fill('OMEN v2');
+  await page.locator('.wl-type').filter({ hasText: 'Software' }).click();
+  await page.getByRole('button', { name: 'Add project' }).click();
   await page.locator('.filerow').filter({ hasText: 'weapon_tuner.gsc' }).waitFor();
   await page.locator('.chip.on').filter({ hasText: 'All files' }).waitFor(); // never opens pre-filtered
+  await page.locator('.firsttips').waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-first-tips.png') });
+  await page.locator('.firsttips button').click();
+  await page.locator('.firsttips').waitFor({ state: 'detached' });
+  const p = (await api('projects.list')).data.find((x) => x.name === 'OMEN v2');
+  if (p.category !== 'software') throw new Error('type not saved: ' + p.category);
 });
 
 await step('Browse folder tree', async () => {
