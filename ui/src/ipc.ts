@@ -29,13 +29,13 @@ export async function pickFolder(title: string): Promise<string | null> {
   return typeof r === 'string' ? r : null;
 }
 
-export async function pickFiles(title: string): Promise<string[]> {
+export async function pickFiles(title: string, filters?: { name: string; extensions: string[] }[]): Promise<string[]> {
   if (!isTauri) {
     const s = window.prompt(title + ' (enter file paths separated by ;)');
     return s ? s.split(';').map((x) => x.trim()).filter(Boolean) : [];
   }
   const { open } = await import('@tauri-apps/plugin-dialog');
-  const r = await open({ multiple: true, title });
+  const r = await open({ multiple: true, title, filters });
   return Array.isArray(r) ? r : typeof r === 'string' ? [r] : [];
 }
 
@@ -78,7 +78,7 @@ export interface Project {
 export interface VFile {
   id: string; path: string; name: string; ext: string; kind: string; size: number; mtime: number;
   sha256?: string; state: 'present' | 'missing'; firstSeen: number; lastChanged: number;
-  changedSinceReview: boolean; hasDocs: boolean; purpose: string;
+  changedSinceReview: boolean; hasDocs: boolean; purpose: string; versions: number;
 }
 export interface LinkRef { linkId: string; type: 'file' | 'note' | 'task'; id: string; title: string; state: string; label: string }
 export interface FileDocs { purpose: string; notes: string; warnings: string; custom: Record<string, string>; updatedAt?: number; fileChangedSinceDoc: boolean }
@@ -93,4 +93,4 @@ export interface Task {
   dueAt?: number; milestoneId?: string; checklist: { text: string; done: boolean }[]; reproSteps: string; expected: string;
   actual: string; resolution: string; createdAt: number; updatedAt: number; completedAt?: number; tags: string[]; links?: LinkRef[];
 }
-export interface ScanReport { total: number; added: number; modified: number; moved: number; missing: number; restored: number; needsReview: number; errors: string[]; errorCount: number }
+export interface ScanReport { versioned: number; total: number; added: number; modified: number; moved: number; missing: number; restored: number; needsReview: number; errors: string[]; errorCount: number }

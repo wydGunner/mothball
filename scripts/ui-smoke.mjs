@@ -40,6 +40,9 @@ appendFileSync(join(omen, 'scripts/mp/weapon_tuner.gsc'), '\nonPlayerConnect() {
 let pvDir;
 if (pvSrc && existsSync(pvSrc)) { pvDir = join(tmp, 'PV'); cpSync(pvSrc, pvDir, { recursive: true }); }
 const backups = join(tmp, 'backups'); mkdirSync(backups);
+const bare = join(tmp, 'remote.git'); mkdirSync(bare);
+execFileSync('git', ['-C', bare, 'init', '--bare', '-q']);
+git('remote', 'add', 'origin', bare);
 
 // ---- server
 const exe = join(root, 'crates/vault-core/target/debug', process.platform === 'win32' ? 'vault-devserver.exe' : 'vault-devserver');
@@ -121,6 +124,18 @@ await step('Detect external modification', async () => {
   await page.getByText("content changed after this documentation was last written").waitFor();
 });
 
+await step('Compare file versions (no Git needed)', async () => {
+  await page.getByRole('button', { name: /^Versions/ }).click();
+  await page.locator('.verrow').nth(1).getByRole('button', { name: /vs now/ }).click();
+  await page.locator('.modal .dl.add, .modal .half.add').first().waitFor();
+  await page.locator('.modal').getByText('// tweak').first().waitFor();
+  await page.locator('.modal').getByRole('button', { name: /Unified/ }).click();
+  await page.locator('.modal .dl.add .tx').filter({ hasText: '// tweak' }).waitFor();
+  await page.locator('.modal').getByRole('button', { name: /Side by side/ }).click();
+  if (shots) await page.screenshot({ path: join(shots, 'x-diff.png') });
+  await page.keyboard.press('Escape');
+});
+
 await step('Git history for the file', async () => {
   await page.getByRole('button', { name: 'Git commits' }).click();
   await page.getByText('Add player connect hook').waitFor();
@@ -169,15 +184,28 @@ await step('Timeline with journal entry', async () => {
   await page.locator('.tlitem').filter({ hasText: 'File changes detected' }).first().waitFor();
 });
 
-await step('Git tab', async () => {
+await step('Git tab: commit and push', async () => {
   await page.getByRole('tab', { name: /Git/ }).click();
   await page.getByText('Initial OMEN import').waitFor();
   await page.getByText('Uncommitted changes').waitFor();
+  const id = page.getByPlaceholder('Your name');
+  if (await id.count()) { await id.fill('Dev'); await page.getByPlaceholder('you@example.com').fill('dev@example.com'); await page.getByRole('button', { name: 'Save', exact: true }).click(); }
+  await page.getByPlaceholder(/What did you change/).fill('Move weapon scripts');
+  await page.getByRole('button', { name: /^Commit \d+ file/ }).click();
+  await page.locator('.card').filter({ hasText: 'Move weapon scripts' }).first().waitFor();
+  await page.getByRole('button', { name: /Push/ }).click();
+  await page.getByText('Up to date with GitHub.').waitFor();
+  const remoteLog = execFileSync('git', ['-C', bare, 'log', '--oneline', '-1']).toString();
+  if (!remoteLog.includes('Move weapon scripts')) throw new Error('push did not reach remote');
 });
 
-await step('Overview', async () => {
+await step('Overview summary and edit dialog', async () => {
   await page.getByRole('tab', { name: /Overview/ }).click();
-  await page.getByText('Recent file activity').waitFor();
+  await page.getByText('Recent activity').waitFor();
+  await page.locator('.card').filter({ hasText: 'No description yet' }).getByRole('button', { name: 'Edit' }).click();
+  await page.locator('.modal textarea').first().fill('IW4X trickshot server mod');
+  await page.locator('.modal').getByRole('button', { name: 'Save' }).click();
+  await page.locator('.ov-desc').filter({ hasText: 'IW4X trickshot server mod' }).waitFor();
 });
 
 await step('Universal search', async () => {
@@ -205,14 +233,22 @@ if (pvDir) {
   });
   await step('3D printing project details', async () => {
     await page.locator('.pcard').filter({ hasText: 'Cat - Green And Yellow' }).click();
-    await page.getByText('3D printing details').waitFor();
-    if ((await page.locator('input[value="X2D"]').count()) < 1) throw new Error('printer not imported');
+    await page.getByText('Print details').waitFor();
+    await page.locator('.fact').filter({ hasText: 'X2D' }).waitFor();
+    await page.locator('.card').filter({ hasText: 'Print details' }).getByRole('button', { name: 'Edit' }).click();
     await page.getByPlaceholder('Notes (settings, what went wrong…)').fill('Gray layer showed through');
     await page.getByRole('button', { name: 'Log' }).click();
-    await page.getByRole('button', { name: 'Save changes' }).click();
-    await page.getByRole('tab', { name: /Files/ }).click();
+    await page.locator('.modal').getByRole('button', { name: 'Save' }).click();
+    await page.getByText('Gray layer showed through').waitFor();
+    if (shots) await page.screenshot({ path: join(shots, 'x-3d-overview.png') });
+    await page.locator('.groupcard').filter({ hasText: 'Meshes' }).click();
+    await page.locator('.chip.on').filter({ hasText: 'Meshes' }).waitFor();
     await page.locator('.filerow').filter({ hasText: 'fixed cat.stl' }).click();
     await page.getByText('Mesh bounds').waitFor();
+    if (await page.locator('.filerow').filter({ hasText: 'README.md' }).count()) throw new Error('type filter not applied');
+    await page.getByRole('button', { name: /^Versions/ }).click();
+    await page.locator('.verrow').first().waitFor();
+    if (shots) await page.screenshot({ path: join(shots, 'x-3d-files.png') });
   });
 }
 

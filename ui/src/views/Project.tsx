@@ -32,6 +32,9 @@ export interface ProjectCtx {
   openFile: (id: string) => void;
   openNote: (id: string) => void;
   openTask: (id: string) => void;
+  openFiles: (group?: string) => void;
+  openTimeline: () => void;
+  fileGroup?: string;
   focus?: { type: 'file' | 'note' | 'task'; id: string };
 }
 
@@ -43,6 +46,7 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
   const [scanning, setScanning] = useState(false);
   const [scanTick, setScanTick] = useState(0);
   const [dropping, setDropping] = useState(false);
+  const [fileGroup, setFileGroup] = useState<string | undefined>(undefined);
   const toast = useToast();
   const act = useAction();
   const confirm = useConfirm();
@@ -120,6 +124,9 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
     openFile: (fid) => { setFocus({ type: 'file', id: fid }); setTab('files'); },
     openNote: (nid) => { setFocus({ type: 'note', id: nid }); setTab('notes'); },
     openTask: (tid) => { setFocus({ type: 'task', id: tid }); setTab('tasks'); },
+    openFiles: (g) => { setFocus(undefined); setFileGroup(g || 'all'); setTab('files'); },
+    openTimeline: () => setTab('timeline'),
+    fileGroup,
   };
 
   return (

@@ -187,7 +187,7 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
       <div className="field"><label>Name</label><input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="OMEN v2" /></div>
       <div className="field"><label>Description</label><textarea className="input" value={desc} onChange={(e) => setDesc(e.target.value)} rows={2} /></div>
       <div className="grid2">
-        <div className="field"><label>Category</label>
+        <div className="field"><label>Project type</label>
           <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>{Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
           {category === 'game' && <span className="small dim">Unity Library/, Temp/, Logs/, obj/ and Build folders are skipped by default.</span>}
         </div>
@@ -195,7 +195,19 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
           <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>{['Planned', 'Active', 'Paused', 'Completed', 'Archived'].map((s) => <option key={s}>{s}</option>)}</select>
         </div>
       </div>
+      <TypeFocus category={category} />
     </Modal>
+  );
+}
+
+function TypeFocus({ category }: { category: string }) {
+  const groups = useLoad(() => call<{ id: string; label: string; exts: string[] }[]>('profiles.groups', { category }), [category]);
+  if (!groups.data?.length) return <p className="small dim" style={{ margin: 0 }}>All file types are treated equally for this project type.</p>;
+  return (
+    <div className="typefocus">
+      <div className="small muted" style={{ marginBottom: 6 }}>The Files view will put these first{category === '3d-printing' || category === 'electronics' ? ', and earlier versions of them are kept so you can compare and roll back' : ''}:</div>
+      {groups.data.map((g) => <div key={g.id} className="row small" style={{ gap: 6, padding: '2px 0' }}><b style={{ width: 130 }}>{g.label}</b><span className="dim mono">{g.exts.slice(0, 8).map((e) => '.' + e).join(' ')}</span></div>)}
+    </div>
   );
 }
 

@@ -105,6 +105,22 @@ impl Ignore {
 pub struct Seen {
     pub size: i64,
     pub mtime: i64,
+    /// OneDrive/cloud placeholder whose content is not on this PC. Reading it
+    /// would force a download, so it is indexed without hashing.
+    pub cloud_only: bool,
+}
+
+#[cfg(windows)]
+fn is_cloud_placeholder(m: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_OFFLINE: u32 = 0x1000;
+    const FILE_ATTRIBUTE_RECALL_ON_OPEN: u32 = 0x40000;
+    const FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS: u32 = 0x400000;
+    m.file_attributes() & (FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS) != 0
+}
+#[cfg(not(windows))]
+fn is_cloud_placeholder(_m: &std::fs::Metadata) -> bool {
+    false
 }
 
 pub struct Walk {
@@ -154,7 +170,7 @@ pub fn walk(root: &Path, ig: &Ignore) -> Walk {
                 match ent.metadata() {
                     Ok(m) => {
                         let mtime = m.modified().map(system_time_ms).unwrap_or(0);
-                        w.files.insert(rel, Seen { size: m.len() as i64, mtime });
+                        w.files.insert(rel, Seen { size: m.len() as i64, mtime, cloud_only: is_cloud_placeholder(&m) });
                     }
                     Err(e) => w.errors.push(format!("{}: {e}", path.display())),
                 }
@@ -181,6 +197,7 @@ pub struct ScanReport {
     pub needs_review: usize,
     pub errors: Vec<String>,
     pub hashed: usize,
+    pub versioned: usize,
 }
 
 impl ScanReport {
@@ -194,6 +211,7 @@ impl ScanReport {
             .with("restored", self.restored)
             .with("needsReview", self.needs_review)
             .with("hashed", self.hashed)
+            .with("versioned", self.versioned)
             .with("errors", Json::Arr(self.errors.iter().take(50).map(|e| Json::from(e.as_str())).collect()))
             .with("errorCount", self.errors.len())
     }
@@ -236,6 +254,9 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
     let by_path: HashMap<String, &Row> = existing.iter().map(|r| (r.s("rel_path"), r)).collect();
 
     let hash = |rel: &str, rep: &mut ScanReport| -> Option<String> {
+        if w.files.get(rel).map(|s| s.cloud_only).unwrap_or(false) {
+            return None;
+        }
         let ap = safe_join(&root, rel).ok()?;
         match sha256_file(&ap) {
             Ok(h) => {
@@ -409,6 +430,14 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
         }
         Ok(())
     })?;
+    // keep versions of eligible files (see versions.rs); failures are reported, not fatal
+    match crate::versions::capture(v, project_id) {
+        Ok((n, errs)) => {
+            rep.versioned = n;
+            rep.errors.extend(errs);
+        }
+        Err(e) => rep.errors.push(format!("Saving versions failed: {e}")),
+    }
     Ok(rep)
 }
 
@@ -518,10 +547,12 @@ fn file_json(r: &Row) -> Json {
         .with("changedSinceReview", r.b("changed_since_review"))
         .with("hasDocs", r.i("has_docs") > 0)
         .with("purpose", r.s("purpose"))
+        .with("versions", r.i("version_count"))
 }
 
 const FILE_SELECT: &str = "SELECT f.*, COALESCE(d.purpose,'') AS purpose,
-    (d.file_id IS NOT NULL AND (d.purpose!='' OR d.notes_md!='' OR d.warnings!='')) AS has_docs
+    (d.file_id IS NOT NULL AND (d.purpose!='' OR d.notes_md!='' OR d.warnings!='')) AS has_docs,
+    (SELECT count(*) FROM file_versions fv WHERE fv.file_id=f.id) AS version_count
     FROM files f LEFT JOIN file_docs d ON d.file_id=f.id";
 
 pub fn list(v: &Vault, project_id: &str, filter: &Json) -> DbResult<Json> {
@@ -532,6 +563,7 @@ pub fn list(v: &Vault, project_id: &str, filter: &Json) -> DbResult<Json> {
     let only_changed = filter.get("changedOnly").and_then(|x| x.as_bool()).unwrap_or(false);
     let undocumented = filter.get("undocumented").and_then(|x| x.as_bool()).unwrap_or(false);
     let limit = filter.get("limit").and_then(|x| x.as_i64()).unwrap_or(5000).clamp(1, 50000);
+    let exts = filter.get("exts").and_then(|x| x.as_arr()).map(|a| a.iter().filter_map(|e| e.as_str()).map(|e| e.to_lowercase()).collect::<Vec<_>>().join(",")).unwrap_or_default();
     let like = format!("%{}%", q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
     let dir_like = dir.as_ref().map(|d| format!("{}/%", d.trim_end_matches('/').replace('%', "\\%").replace('_', "\\_")));
     let sort = match filter.str_of("sort").as_deref() {
@@ -545,9 +577,10 @@ pub fn list(v: &Vault, project_id: &str, filter: &Json) -> DbResult<Json> {
             "{FILE_SELECT} WHERE f.project_id=? AND (?='' OR lower(f.rel_path) LIKE ? ESCAPE '\\')
              AND (? IS NULL OR f.kind=?) AND (? IS NULL OR f.state=?) AND (? IS NULL OR f.rel_path LIKE ? ESCAPE '\\')
              AND (?=0 OR f.changed_since_review=1) AND (?=0 OR d.file_id IS NULL OR (d.purpose='' AND d.notes_md=''))
+             AND (?='' OR instr(',' || ? || ',', ',' || f.ext || ',')>0)
              ORDER BY {sort} LIMIT ?"
         ),
-        p![project_id, q.clone(), like, kind.clone(), kind, state.clone(), state, dir_like.clone(), dir_like, only_changed, undocumented, limit],
+        p![project_id, q.clone(), like, kind.clone(), kind, state.clone(), state, dir_like.clone(), dir_like, only_changed, undocumented, exts.clone(), exts, limit],
     )?;
     Ok(Json::Arr(rows.iter().map(file_json).collect()))
 }
@@ -601,6 +634,30 @@ pub fn dirs(v: &Vault, project_id: &str) -> DbResult<Json> {
         e.1 += r.i("size");
     }
     Ok(Json::Arr(agg.into_iter().map(|(k, (n, b))| Json::obj().with("path", k).with("files", n).with("bytes", b)).collect()))
+}
+
+/// The project's file-type groups (from its category) with file counts.
+pub fn groups(v: &Vault, project_id: &str) -> DbResult<Json> {
+    let pr = v.db.one("SELECT category FROM projects WHERE id=?", p![project_id])?.ok_or("Project not found")?;
+    let counts: HashMap<String, i64> = v
+        .db
+        .query("SELECT ext, count(*) AS n FROM files WHERE project_id=? AND state='present' GROUP BY ext", p![project_id])?
+        .iter()
+        .map(|r| (r.s("ext"), r.i("n")))
+        .collect();
+    let mut out = Vec::new();
+    for g in crate::profiles::groups(&pr.s("category")) {
+        let n: i64 = g.exts.iter().map(|e| counts.get(*e).copied().unwrap_or(0)).sum();
+        out.push(
+            Json::obj()
+                .with("id", g.id)
+                .with("label", g.label)
+                .with("hint", g.hint)
+                .with("count", n)
+                .with("exts", Json::Arr(g.exts.iter().map(|e| Json::from(*e)).collect())),
+        );
+    }
+    Ok(Json::Arr(out))
 }
 
 pub fn events(v: &Vault, file_id: &str, limit: i64) -> DbResult<Json> {

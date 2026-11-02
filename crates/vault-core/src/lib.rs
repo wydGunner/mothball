@@ -8,17 +8,20 @@
 pub mod api;
 pub mod backup;
 pub mod db;
+pub mod diff;
 pub mod files;
 pub mod git;
 pub mod json;
 pub mod knowledge;
 pub mod legacy;
+pub mod profiles;
 pub mod projects;
 pub mod schema;
 pub mod search;
 pub mod tasks;
 pub mod timeline;
 pub mod util;
+pub mod versions;
 
 use db::{Db, DbResult};
 use std::path::{Path, PathBuf};
@@ -86,6 +89,25 @@ pub(crate) mod testutil {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
+    #[test]
+    fn upgrades_v1_database_with_backup() {
+        let t = TempDir::new("mig");
+        let data = t.0.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        {
+            let db = Db::open(&data.join("vault.db")).unwrap();
+            crate::schema::current_version(&db).unwrap();
+            db.batch(crate::schema::MIGRATIONS[0].1).unwrap();
+            db.exec("INSERT INTO schema_migrations VALUES (1, 0)", p![]).unwrap();
+            db.exec("INSERT INTO projects(id,name,mode,root_path,created_at,updated_at) VALUES ('x','Old','managed','/tmp',0,0)", p![]).unwrap();
+        }
+        let v = Vault::open(&data).unwrap();
+        assert_eq!(crate::schema::current_version(&v.db).unwrap(), crate::schema::latest_version());
+        assert_eq!(v.db.one("SELECT name FROM projects", p![]).unwrap().unwrap().s("name"), "Old");
+        let backups: Vec<_> = std::fs::read_dir(data.join("backups")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        assert!(backups.iter().any(|b| b.starts_with("pre-migration-v1")), "{backups:?}");
+    }
+
     pub fn vault() -> (TempDir, Vault) {
         let t = TempDir::new("vault");
         let v = Vault::open(&t.0.join("data")).unwrap();

@@ -5,7 +5,7 @@
 use crate::db::DbResult;
 use crate::json::Json;
 use crate::projects::NewProject;
-use crate::{backup, files, git, knowledge, legacy, projects, search, tasks, timeline, Vault};
+use crate::{backup, files, git, knowledge, legacy, profiles, projects, search, tasks, timeline, versions, Vault};
 use std::path::PathBuf;
 
 fn s(a: &Json, k: &str) -> DbResult<String> {
@@ -74,6 +74,19 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "files.forgetMissing" => files::forget_missing(v, &s(a, "id")?).and_then(|_| ok()),
         "files.markReviewed" => files::mark_reviewed(v, &strs(a, "ids")).and_then(|_| ok()),
         "files.duplicates" => files::duplicates(v, &s(a, "projectId")?),
+        "files.groups" => files::groups(v, &s(a, "projectId")?),
+        "profiles.groups" => Ok(profiles::groups_json(&s(a, "category")?)),
+
+        // versions
+        "versions.list" => versions::list(v, &s(a, "fileId")?),
+        "versions.save" => versions::save_manual(v, &s(a, "fileId")?, &os(a, "note").unwrap_or_default()),
+        "versions.compare" => versions::compare(v, &s(a, "fileId")?, &s(a, "old")?, &s(a, "new")?),
+        "versions.restore" => versions::restore(v, &s(a, "id")?),
+        "versions.delete" => versions::delete_version(v, &s(a, "id")?).and_then(|_| ok()),
+        "versions.prune" => versions::prune(v, &s(a, "projectId")?, a.get("keep").and_then(|x| x.as_i64()).unwrap_or(10)),
+        "versions.stats" => versions::stats(v, os(a, "projectId").as_deref()),
+        "versions.policy" => versions::policy_json(v, &s(a, "projectId")?),
+        "versions.setPolicy" => versions::set_policy(v, &s(a, "projectId")?, a.get("policy").unwrap_or(&Json::obj())),
         "files.activity" => files::recent_activity(v, &s(a, "projectId")?, a.get("limit").and_then(|x| x.as_i64()).unwrap_or(50)),
 
         // notes & links
@@ -120,6 +133,33 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "git.status" => git::status(&projects::root_of(v, &s(a, "projectId")?)?),
         "git.log" => git::log(&projects::root_of(v, &s(a, "projectId")?)?, os(a, "path").as_deref(), a.get("limit").and_then(|x| x.as_i64()).unwrap_or(100)),
         "git.diff" => git::diff(&projects::root_of(v, &s(a, "projectId")?)?, os(a, "rev").as_deref(), os(a, "path").as_deref()),
+
+        "git.init" => git::init(&projects::root_of(v, &s(a, "projectId")?)?),
+        "git.identity" => git::identity(&projects::root_of(v, &s(a, "projectId")?)?),
+        "git.setIdentity" => git::set_identity(&projects::root_of(v, &s(a, "projectId")?)?, &s(a, "name")?, &s(a, "email")?),
+        "git.commit" => {
+            let pid = s(a, "projectId")?;
+            let msg = s(a, "message")?;
+            let r = git::commit(&projects::root_of(v, &pid)?, &msg, &strs(a, "paths"))?;
+            timeline::add(v, &pid, "git", &format!("Committed: {}", msg.lines().next().unwrap_or("").trim()), "", None, false)?;
+            Ok(r)
+        }
+        "git.push" => {
+            let pid = s(a, "projectId")?;
+            let r = git::push(&projects::root_of(v, &pid)?)?;
+            timeline::add(v, &pid, "git", "Pushed commits to the remote", "", None, false)?;
+            Ok(r)
+        }
+        "git.pull" => git::pull(&projects::root_of(v, &s(a, "projectId")?)?),
+        "git.fetch" => git::fetch(&projects::root_of(v, &s(a, "projectId")?)?),
+        "git.setRemote" => git::set_remote(&projects::root_of(v, &s(a, "projectId")?)?, &s(a, "url")?),
+        "git.ghStatus" => Ok(git::gh_status(&projects::root_of(v, &s(a, "projectId")?)?)),
+        "git.ghCreate" => git::gh_create(
+            &projects::root_of(v, &s(a, "projectId")?)?,
+            &s(a, "name")?,
+            a.get("private").and_then(|x| x.as_bool()).unwrap_or(true),
+            &os(a, "description").unwrap_or_default(),
+        ),
 
         // backup & import
         "backup.create" => backup::create(v, &PathBuf::from(s(a, "dest")?), os(a, "projectId").as_deref()),

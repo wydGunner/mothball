@@ -214,6 +214,27 @@ CREATE VIRTUAL TABLE search_index USING fts5(
   title, body, tokenize = 'unicode61 remove_diacritics 2'
 );
 "#,
+), (
+    2,
+    r#"
+-- Stored file versions (content lives in the object store, deduplicated by SHA-256).
+CREATE TABLE file_versions (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  file_id TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  sha256 TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  rel_path TEXT NOT NULL,
+  reason TEXT NOT NULL,          -- baseline | auto | manual | before-restore
+  note TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX fv_file ON file_versions(file_id, created_at);
+CREATE INDEX fv_project ON file_versions(project_id, created_at);
+CREATE INDEX fv_sha ON file_versions(sha256);
+-- {"text":bool,"textMaxMb":n,"keyFiles":bool,"keyMaxMb":n}; missing keys use category defaults
+ALTER TABLE projects ADD COLUMN version_policy TEXT NOT NULL DEFAULT '{}';
+"#,
 )];
 
 pub fn current_version(db: &Db) -> DbResult<i64> {

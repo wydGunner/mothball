@@ -1,27 +1,31 @@
 import { useEffect, useState } from 'react';
-import { LuTriangleAlert, LuGitCompareArrows, LuPlus, LuTrash2, LuCircleCheck, LuCircleX, LuFileWarning, LuCopy } from 'react-icons/lu';
-import { call } from '../ipc';
-import { TagInput, useAction, useLoad, useConfirm, useToast, KindIcon } from '../components/common';
-import { ago, bytes, CATEGORY_LABELS, dateTime } from '../format';
+import {
+  LuTriangleAlert, LuGitCompareArrows, LuPlus, LuTrash2, LuCircleCheck, LuCircleX, LuFileWarning, LuPencil,
+  LuNotebookPen, LuListTodo, LuHistory, LuChevronRight, LuDiff,
+} from 'react-icons/lu';
+import { call, type Project } from '../ipc';
+import { Modal, StatusPill, TagInput, useAction, useLoad, useConfirm, useToast } from '../components/common';
+import { ago, bytes, CATEGORY_LABELS, cx, dateTime } from '../format';
+import { CompareDialog } from './Versions';
 import type { ProjectCtx } from './Project';
 
 type FieldDef = { key: string; label: string; multiline?: boolean; options?: string[]; placeholder?: string };
-const MODULES: Record<string, { title: string; fields: FieldDef[] }> = {
+export const MODULES: Record<string, { title: string; fields: FieldDef[] }> = {
   software: { title: 'Software details', fields: [
     { key: 'repoUrl', label: 'Repository URL' }, { key: 'language', label: 'Languages / runtime' },
     { key: 'buildInstructions', label: 'Build instructions', multiline: true }, { key: 'dependencies', label: 'Dependencies', multiline: true },
     { key: 'releaseHistory', label: 'Release history', multiline: true, placeholder: 'v1.2 — 2026-08-01 — …' },
   ] },
-  game: { title: 'Game development details', fields: [
+  game: { title: 'Game details', fields: [
     { key: 'engine', label: 'Engine', placeholder: 'Unity' }, { key: 'engineVersion', label: 'Engine version', placeholder: '6000.0.x' },
     { key: 'platforms', label: 'Target platforms' }, { key: 'renderPipeline', label: 'Render pipeline' },
     { key: 'sceneNotes', label: 'Scenes & key scripts', multiline: true }, { key: 'buildNotes', label: 'Build notes', multiline: true },
     { key: 'playtestNotes', label: 'Playtesting notes', multiline: true },
   ] },
-  '3d-printing': { title: '3D printing details', fields: [
+  '3d-printing': { title: 'Print details', fields: [
     { key: 'printStatus', label: 'Print status', options: ['', 'IDEA', 'MODELED', 'SOURCE_ONLY', 'SLICED_UNTESTED', 'TEST_FIT_PASSED', 'REPRINT_READY', 'NEEDS_WORK', 'FAILED_PRINT', 'ARCHIVED'] },
     { key: 'material', label: 'Material', placeholder: 'PLA' }, { key: 'filamentColor', label: 'Filament color(s)' },
-    { key: 'filamentGrams', label: 'Estimated filament (g)' }, { key: 'printTime', label: 'Print duration', placeholder: '5h 30m' },
+    { key: 'filamentGrams', label: 'Filament (g)' }, { key: 'printTime', label: 'Print time', placeholder: '5h 30m' },
     { key: 'printer', label: 'Printer' }, { key: 'nozzle', label: 'Nozzle' }, { key: 'layerHeight', label: 'Layer height' },
     { key: 'slicer', label: 'Slicer' }, { key: 'slicerProfile', label: 'Slicer profile' }, { key: 'dimensions', label: 'Dimensions (mm)' },
     { key: 'fitsContains', label: 'Fits / contains' },
@@ -33,168 +37,276 @@ const MODULES: Record<string, { title: string; fields: FieldDef[] }> = {
   ] },
 };
 
+const PRINT_STATUS_COLOR: Record<string, string> = { REPRINT_READY: '#3ecf8e', TEST_FIT_PASSED: '#3ecf8e', NEEDS_WORK: '#f5b94a', FAILED_PRINT: '#ff6b6b', SLICED_UNTESTED: '#4fb3ff' };
+
 export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const p = ctx.project;
   const act = useAction();
-  const [form, setForm] = useState({ name: p.name, description: p.description, icon: p.icon, ignoreGlobs: p.ignoreGlobs });
-  const [module, setModule] = useState<Record<string, any>>(p.module || {});
-  const [dirty, setDirty] = useState(false);
-  useEffect(() => { setForm({ name: p.name, description: p.description, icon: p.icon, ignoreGlobs: p.ignoreGlobs }); setModule(p.module || {}); setDirty(false); }, [p.id]);
-  const statuses = useLoad(() => call<{ name: string }[]>('projects.statuses'), []);
+  const confirm = useConfirm();
+  const [editing, setEditing] = useState<null | 'general' | 'details' | 'files'>(null);
+  const [compare, setCompare] = useState<{ fileId: string; name: string } | null>(null);
   const reviews = useLoad(() => call<any[]>('files.reviews', { projectId: p.id }), [p.id, ctx.scanTick]);
-  const activity = useLoad(() => call<any[]>('files.activity', { projectId: p.id, limit: 12 }), [p.id, ctx.scanTick]);
   const changed = useLoad(() => call<any[]>('files.list', { projectId: p.id, changedOnly: true, limit: 50 }), [p.id, ctx.scanTick]);
   const missing = useLoad(() => call<any[]>('files.list', { projectId: p.id, state: 'missing', limit: 50 }), [p.id, ctx.scanTick]);
+  const groups = useLoad(() => call<any[]>('files.groups', { projectId: p.id }), [p.id, ctx.scanTick]);
   const tasks = useLoad(() => call<any[]>('tasks.list', { projectId: p.id }), [p.id]);
-  const confirm = useConfirm();
-  const toast = useToast();
-  const [statusText, setStatusText] = useState('');
+  const notes = useLoad(() => call<any[]>('notes.tree', { projectId: p.id }), [p.id]);
+  const timeline = useLoad(() => call<any[]>('timeline.list', { projectId: p.id, limit: 8 }), [p.id, ctx.scanTick]);
 
-  const patch = async (pt: Record<string, unknown>) => { await act(() => call('projects.update', { id: p.id, patch: pt })); await ctx.reload(); ctx.nav.refreshProjects(); };
-  const saveForm = async () => { await patch({ ...form, module }); setDirty(false); toast('Saved', 'success'); };
   const mod = MODULES[p.category];
-  const nextTasks = (tasks.data || []).filter((t) => t.status !== 'done').slice(0, 6);
+  const filled = mod ? mod.fields.filter((f) => (p.module?.[f.key] || '').toString().trim()) : [];
+  const custom = Object.entries((p.module?.custom || {}) as Record<string, string>).filter(([, v]) => v);
+  const printLog: any[] = p.module?.printLog || [];
+  const nextTasks = (tasks.data || []).filter((t) => t.status !== 'done').slice(0, 5);
+  const attention = (reviews.data?.length || 0) + (changed.data?.length || 0) + (missing.data?.length || 0);
+  const recentNotes = [...(notes.data || [])].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
 
   return (
-    <div className="page" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(320px, 1fr)', gap: 18, alignItems: 'start' }}>
-      <div className="col" style={{ gap: 16 }}>
-        <div className="card pad">
-          <div className="statrow">
-            <div className="stat"><b>{p.fileCount}</b><span>files</span></div>
-            <div className="stat"><b>{bytes(p.bytes)}</b><span>storage</span></div>
-            <div className="stat"><b>{p.openTasks}</b><span>open tasks</span></div>
-            <div className="stat"><b style={{ color: p.changedFiles ? 'var(--warn)' : undefined }}>{p.changedFiles}</b><span>changed since reviewed</span></div>
-            <div className="stat"><b style={{ color: p.missingFiles ? 'var(--bad)' : undefined }}>{p.missingFiles}</b><span>missing</span></div>
+    <div className="page overview">
+      <div className="ov-main">
+        {/* ---------- about */}
+        <section className="card pad">
+          <div className="row" style={{ alignItems: 'flex-start' }}>
+            <div className="grow">
+              <div className="row wrap" style={{ gap: 8, marginBottom: 8 }}>
+                <StatusPill status={p.status} />
+                <span className="pill">{CATEGORY_LABELS[p.category]}</span>
+                {p.tags.map((t) => <span className="tag" key={t}>{t}</span>)}
+              </div>
+              {p.description
+                ? <p className="ov-desc">{p.description}</p>
+                : <p className="muted" style={{ margin: '4px 0' }}>No description yet. <a href="#" onClick={(e) => { e.preventDefault(); setEditing('general'); }}>Add one</a> so future-you knows what this is.</p>}
+            </div>
+            <button className="btn" onClick={() => setEditing('general')}><LuPencil /> Edit</button>
           </div>
-        </div>
+          <div className="row" style={{ marginTop: 12, gap: 10 }}>
+            <span className="small muted" style={{ width: 70 }}>Progress</span>
+            <div className="progress grow" style={{ height: 6 }}><div style={{ width: `${p.progress}%` }} /></div>
+            <span className="small">{p.progress}%</span>
+          </div>
+        </section>
 
-        {(reviews.data?.length || 0) > 0 && (
-          <div className="card pad">
-            <h2 className="row"><LuGitCompareArrows color="var(--warn)" /> Confirm file identity <span className="badge warn">{reviews.data!.length}</span></h2>
-            <p className="muted small">These files disappeared while a similar file appeared elsewhere, but the match wasn't certain enough to move documentation automatically. Confirm only if the new file really is the old one.</p>
-            {reviews.data!.map((r) => (
-              <div key={r.id} className="row" style={{ padding: '8px 0', borderTop: '1px solid var(--line)' }}>
+        {/* ---------- needs attention */}
+        {attention > 0 && (
+          <section className="card pad attention">
+            <h2 className="row"><LuTriangleAlert color="var(--warn)" /> Needs your attention</h2>
+            {(reviews.data || []).map((r) => (
+              <div key={r.id} className="att-row">
+                <LuGitCompareArrows color="var(--warn)" />
                 <div className="grow small">
-                  <div><span className="dim">was</span> <span className="mono">{r.missing.path}</span> {r.missing.hasDocs && <span className="tag">has notes</span>}</div>
-                  <div><span className="dim">now?</span> <span className="mono">{r.candidate.path}</span> <span className="dim">· {r.reason}</span></div>
+                  <div><b>Is this the same file?</b> <span className="mono">{r.missing.path}</span> disappeared and <span className="mono">{r.candidate.path}</span> appeared <span className="dim">({r.reason})</span>.</div>
+                  {r.missing.hasDocs && <div className="dim">Confirming moves its notes and history to the new path.</div>}
                 </div>
-                <button className="btn sm" onClick={async () => { await act(() => call('files.resolveReview', { id: r.id, accept: true }), 'Linked — notes and history now follow the file'); reviews.reload(); ctx.reload(); }}><LuCircleCheck /> Same file</button>
+                <button className="btn sm" onClick={async () => { await act(() => call('files.resolveReview', { id: r.id, accept: true }), 'Linked — notes now follow the file'); reviews.reload(); ctx.reload(); }}><LuCircleCheck /> Same file</button>
                 <button className="btn sm" onClick={async () => { await act(() => call('files.resolveReview', { id: r.id, accept: false })); reviews.reload(); ctx.reload(); }}><LuCircleX /> Different</button>
               </div>
             ))}
-          </div>
-        )}
-
-        {(changed.data?.length || 0) > 0 && (
-          <div className="card pad">
-            <h2 className="row"><LuFileWarning color="var(--warn)" /> Changed outside Project Vault
-              <button className="btn sm right" onClick={async () => { await act(() => call('files.markReviewed', { ids: changed.data!.map((f) => f.id) })); changed.reload(); ctx.reload(); }}>Mark all reviewed</button></h2>
-            {changed.data!.map((f) => (
-              <div key={f.id} className="row small" style={{ padding: '4px 0', cursor: 'pointer' }} onClick={() => ctx.openFile(f.id)}>
-                <KindIcon kind={f.kind} /><span className="mono grow">{f.path}</span>{f.hasDocs && <span className="tag">documented</span>}<span className="dim">{ago(f.lastChanged)}</span>
+            {(changed.data || []).map((f) => (
+              <div key={f.id} className="att-row">
+                <LuFileWarning color="var(--warn)" />
+                <div className="grow small"><span className="mono">{f.path}</span> <span className="dim">changed {ago(f.lastChanged)}</span>{f.hasDocs && <span className="dim"> · has notes, check they still apply</span>}</div>
+                {f.versions > 1 && <button className="btn sm" onClick={() => setCompare({ fileId: f.id, name: f.name })}><LuDiff /> What changed?</button>}
+                <button className="btn sm ghost" onClick={() => ctx.openFile(f.id)}>Open</button>
+                <button className="btn sm ghost" onClick={async () => { await act(() => call('files.markReviewed', { ids: [f.id] })); changed.reload(); ctx.reload(); }}>Dismiss</button>
               </div>
             ))}
-          </div>
-        )}
-
-        {(missing.data?.length || 0) > 0 && (
-          <div className="card pad">
-            <h2 className="row"><LuTriangleAlert color="var(--bad)" /> Missing files</h2>
-            <p className="muted small">No longer found on disk. Their documentation is kept; if a file comes back (or is restored from Git/backup) it is re-attached automatically.</p>
-            {missing.data!.map((f) => (
-              <div key={f.id} className="row small" style={{ padding: '3px 0' }}>
-                <KindIcon kind={f.kind} /><span className="mono grow" style={{ cursor: 'pointer' }} onClick={() => ctx.openFile(f.id)}>{f.path}</span>{f.hasDocs && <span className="tag">documented</span>}
-                <button className="btn ghost sm" onClick={async () => {
-                  if (await confirm({ title: 'Forget this file?', danger: true, confirm: 'Forget', body: <>The record for <span className="mono">{f.path}</span>{f.hasDocs ? ', including its documentation,' : ''} is deleted from the vault. Nothing on disk changes.</> })) {
+            {(missing.data || []).map((f) => (
+              <div key={f.id} className="att-row">
+                <LuTriangleAlert color="var(--bad)" />
+                <div className="grow small"><span className="mono">{f.path}</span> <span className="dim">is missing from disk</span>{f.hasDocs && <span className="dim"> · its notes are kept</span>}</div>
+                <button className="btn sm ghost" onClick={() => ctx.openFile(f.id)}>Open</button>
+                <button className="btn sm ghost" onClick={async () => {
+                  if (await confirm({ title: 'Forget this file?', danger: true, confirm: 'Forget', body: <>The record for <span className="mono">{f.path}</span>{f.hasDocs ? ', including its notes,' : ''} is removed from the vault. Nothing on disk changes.</> })) {
                     await act(() => call('files.forgetMissing', { id: f.id })); missing.reload(); ctx.reload();
                   }
                 }}>Forget</button>
               </div>
             ))}
-          </div>
+            {(changed.data?.length || 0) > 1 && <button className="btn sm" style={{ marginTop: 6 }} onClick={async () => { await act(() => call('files.markReviewed', { ids: changed.data!.map((f) => f.id) })); changed.reload(); ctx.reload(); }}>Dismiss all changes</button>}
+          </section>
         )}
 
-        <div className="card pad">
-          <h2 style={{ marginBottom: 12 }}>Project</h2>
-          <div className="grid2">
-            <div className="field"><label>Name</label><input className="input" value={form.name} onChange={(e) => { setForm({ ...form, name: e.target.value }); setDirty(true); }} /></div>
-            <div className="field"><label>Icon (emoji, optional)</label><input className="input" maxLength={4} value={form.icon} onChange={(e) => { setForm({ ...form, icon: e.target.value }); setDirty(true); }} placeholder="🛠" /></div>
-          </div>
-          <div className="field"><label>Description</label><textarea className="input" rows={3} value={form.description} onChange={(e) => { setForm({ ...form, description: e.target.value }); setDirty(true); }} /></div>
-          <div className="grid3">
-            <div className="field"><label>Status</label>
-              <select className="input" value={p.status} onChange={(e) => patch({ status: e.target.value })}>{(statuses.data || []).map((s) => <option key={s.name}>{s.name}</option>)}</select>
-            </div>
-            <div className="field"><label>Custom status</label>
-              <div className="row"><input className="input" value={statusText} onChange={(e) => setStatusText(e.target.value)} placeholder="e.g. Waiting on parts" /><button className="btn" disabled={!statusText.trim()} onClick={() => { patch({ status: statusText.trim() }); setStatusText(''); }}>Set</button></div>
-            </div>
-            <div className="field"><label>Category</label>
-              <select className="input" value={p.category} onChange={(e) => patch({ category: e.target.value })}>{Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-            </div>
-          </div>
-          <div className="field"><label>Progress — {p.progress}%</label><input type="range" min={0} max={100} step={5} defaultValue={p.progress} key={p.progress} onMouseUp={(e) => patch({ progress: Number((e.target as HTMLInputElement).value) })} onKeyUp={(e) => patch({ progress: Number((e.target as HTMLInputElement).value) })} /></div>
-          <div className="field"><label>Tags</label><TagInput value={p.tags} onChange={(tags) => patch({ tags })} /></div>
-          {mod && <>
-            <h2 style={{ margin: '18px 0 12px' }}>{mod.title}</h2>
-            <div className="grid2">
-              {mod.fields.filter((f) => !f.multiline).map((f) => (
-                <div className="field" key={f.key}><label>{f.label}</label>
-                  {f.options
-                    ? <select className="input" value={module[f.key] || ''} onChange={(e) => { setModule({ ...module, [f.key]: e.target.value }); setDirty(true); }}>{f.options.map((o) => <option key={o} value={o}>{o || '—'}</option>)}</select>
-                    : <input className="input" value={module[f.key] || ''} placeholder={f.placeholder} onChange={(e) => { setModule({ ...module, [f.key]: e.target.value }); setDirty(true); }} />}
+        {/* ---------- category details */}
+        {mod && (
+          <section className="card pad">
+            <div className="row" style={{ marginBottom: 10 }}><h2 className="grow">{mod.title}</h2><button className="btn sm ghost" onClick={() => setEditing('details')}><LuPencil /> Edit</button></div>
+            {filled.length === 0 && !custom.length ? (
+              <p className="muted small" style={{ margin: 0 }}>Nothing filled in yet. <a href="#" onClick={(e) => { e.preventDefault(); setEditing('details'); }}>Add {p.category === '3d-printing' ? 'material, printer, print time…' : 'details'}</a></p>
+            ) : (
+              <>
+                <div className="facts">
+                  {filled.filter((f) => !f.multiline).map((f) => (
+                    <div key={f.key} className="fact"><span>{f.label}</span>
+                      {f.key === 'printStatus'
+                        ? <b><span className="pill"><span className="dot" style={{ background: PRINT_STATUS_COLOR[p.module[f.key]] || '#8b93a7' }} />{p.module[f.key].replace(/_/g, ' ').toLowerCase()}</span></b>
+                        : <b>{p.module[f.key]}</b>}
+                    </div>
+                  ))}
+                  {custom.map(([k, v]) => <div key={k} className="fact"><span>{k}</span><b>{v}</b></div>)}
                 </div>
+                {filled.filter((f) => f.multiline).map((f) => (
+                  <div key={f.key} style={{ marginTop: 12 }}><h3>{f.label}</h3><div className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{p.module[f.key]}</div></div>
+                ))}
+              </>
+            )}
+            {p.category === '3d-printing' && printLog.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <h3>Print history <span className="dim small">({printLog.filter((e) => e.result === 'success').length} ok · {printLog.filter((e) => e.result !== 'success').length} failed)</span></h3>
+                {printLog.slice(-4).reverse().map((e, i) => (
+                  <div key={i} className="row small" style={{ padding: '3px 0' }}>{e.result === 'success' ? <LuCircleCheck color="var(--ok)" /> : <LuCircleX color="var(--bad)" />}<span style={{ width: 90 }}>{e.date}</span><span className="grow muted">{e.notes}</span></div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* ---------- key files */}
+        <section className="card pad">
+          <div className="row" style={{ marginBottom: 10 }}><h2 className="grow">Files</h2><button className="btn sm ghost" onClick={() => ctx.openFiles()}>Browse all {p.fileCount} <LuChevronRight /></button></div>
+          {(groups.data || []).length > 0 ? (
+            <div className="groupgrid">
+              {groups.data!.map((g) => (
+                <button key={g.id} className="groupcard" onClick={() => ctx.openFiles(g.id)} disabled={!g.count}>
+                  <b>{g.count}</b><span>{g.label}</span><small>{g.exts.slice(0, 4).map((e: string) => '.' + e).join(' ')}</small>
+                </button>
               ))}
             </div>
-            {mod.fields.filter((f) => f.multiline).map((f) => (
-              <div className="field" key={f.key}><label>{f.label}</label><textarea className="input" rows={3} value={module[f.key] || ''} placeholder={f.placeholder} onChange={(e) => { setModule({ ...module, [f.key]: e.target.value }); setDirty(true); }} /></div>
-            ))}
-          </>}
-          {p.category === '3d-printing' && <PrintLog log={module.printLog || []} onChange={(printLog) => { setModule({ ...module, printLog }); setDirty(true); }} />}
-          <CustomFields value={module.custom || {}} onChange={(custom) => { setModule({ ...module, custom }); setDirty(true); }} />
-          <details style={{ marginTop: 10 }}>
-            <summary className="muted" style={{ cursor: 'pointer' }}>Indexing rules (folders and file types to skip)</summary>
-            <p className="small dim">One rule per line: <code>Library/</code> (folder anywhere), <code>Assets/Generated/</code> (folder path), <code>*.tmp</code>, or a file name. .git, node_modules and system files are always skipped.</p>
-            <textarea className="input code" rows={5} value={form.ignoreGlobs} onChange={(e) => { setForm({ ...form, ignoreGlobs: e.target.value }); setDirty(true); }} />
-          </details>
-          <div className="row" style={{ marginTop: 14 }}>
-            <button className="btn primary" disabled={!dirty} onClick={saveForm}>Save changes</button>
-            {dirty && <span className="small" style={{ color: 'var(--warn)' }}>Unsaved changes</span>}
-          </div>
-        </div>
+          ) : <div className="small muted">{p.fileCount} files · {bytes(p.bytes)}</div>}
+        </section>
       </div>
 
-      <div className="col" style={{ gap: 16 }}>
-        <div className="card pad">
-          <h2 style={{ marginBottom: 10 }}>What's next</h2>
+      <div className="ov-side">
+        <section className="card pad">
+          <div className="row" style={{ marginBottom: 8 }}><h2 className="grow"><LuListTodo /> Next up</h2><button className="btn sm ghost" onClick={() => ctx.openTask('')}>Board <LuChevronRight /></button></div>
           {nextTasks.length ? nextTasks.map((t) => (
-            <div key={t.id} className="row small" style={{ padding: '4px 0', cursor: 'pointer' }} onClick={() => ctx.openTask(t.id)}>
+            <div key={t.id} className="linkrow" onClick={() => ctx.openTask(t.id)}>
               <span className={`prio p${t.priority}`}>{['low', 'normal', 'high', 'urgent'][t.priority]}</span>
-              <span className="grow">{t.kind === 'bug' ? '🐞 ' : ''}{t.title}</span><span className="dim">{t.status.replace('_', ' ')}</span>
+              <span className="grow">{t.kind === 'bug' ? '🐞 ' : ''}{t.title}</span><span className="dim small">{t.status.replace('_', ' ')}</span>
             </div>
-          )) : <div className="muted small">No open tasks.</div>}
-          <button className="btn sm" style={{ marginTop: 8 }} onClick={() => ctx.openTask('')}>Open task board</button>
-        </div>
-        <div className="card pad">
-          <h2 style={{ marginBottom: 10 }}>Recent file activity</h2>
-          {(activity.data || []).length ? activity.data!.map((a, i) => (
-            <div key={i} className="row small" style={{ padding: '3px 0', cursor: 'pointer' }} onClick={() => ctx.openFile(a.fileId)}>
-              <span className="pill" style={{ minWidth: 70, justifyContent: 'center' }}>{a.kind}</span>
-              <span className="mono grow" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={a.detail || a.path}>{a.kind === 'moved' ? a.detail : a.path}</span>
-              <span className="dim">{ago(a.at)}</span>
-            </div>
-          )) : <div className="muted small">No changes detected since the project was indexed.</div>}
-        </div>
-        <div className="card pad">
-          <h2 style={{ marginBottom: 10 }}>Storage</h2>
+          )) : <div className="muted small">Nothing planned. Add tasks so you know where to pick up next time.</div>}
+        </section>
+
+        <section className="card pad">
+          <div className="row" style={{ marginBottom: 8 }}><h2 className="grow"><LuNotebookPen /> Notes</h2><button className="btn sm ghost" onClick={() => ctx.openNote('')}>All <LuChevronRight /></button></div>
+          {recentNotes.length ? recentNotes.map((n) => (
+            <div key={n.id} className="linkrow" onClick={() => ctx.openNote(n.id)}><span className="grow">{n.title}</span><span className="dim small">{ago(n.updatedAt)}</span></div>
+          )) : <div className="muted small">No notes yet.</div>}
+        </section>
+
+        <section className="card pad">
+          <div className="row" style={{ marginBottom: 8 }}><h2 className="grow"><LuHistory /> Recent activity</h2><button className="btn sm ghost" onClick={() => ctx.openTimeline()}>Timeline <LuChevronRight /></button></div>
+          {(timeline.data || []).map((e) => (
+            <div key={e.id} className="row small" style={{ padding: '3px 0', alignItems: 'baseline' }}><span className="grow" style={e.manual ? { fontWeight: 600 } : undefined}>{e.summary}</span><span className="dim" style={{ whiteSpace: 'nowrap' }}>{ago(e.at)}</span></div>
+          ))}
+        </section>
+
+        <section className="card pad small">
           <div className="kv">
-            <span>Mode</span><span>{p.mode === 'linked' ? 'Linked folder (files stay where they are)' : 'Managed by Project Vault'}</span>
-            <span>Location</span><span className="mono row">{p.rootPath}<button className="btn ghost sm icon" title="Copy path" onClick={() => { navigator.clipboard.writeText(p.rootPath); toast('Path copied'); }}><LuCopy /></button></span>
+            <span>Folder</span><span className="mono" style={{ wordBreak: 'break-all' }}>{p.rootPath}</span>
+            <span>Mode</span><span>{p.mode === 'linked' ? 'Linked (files stay where they are)' : 'Managed by Project Vault'}</span>
+            <span>Size</span><span>{p.fileCount} files · {bytes(p.bytes)}</span>
             <span>Created</span><span>{dateTime(p.createdAt)}</span>
-            <span>Last scan</span><span>{dateTime(p.lastScanAt)}</span>
+          </div>
+        </section>
+      </div>
+
+      {editing && <EditProjectDialog ctx={ctx} initialTab={editing} onClose={() => setEditing(null)} />}
+      {compare && <CompareDialog fileId={compare.fileId} title={compare.name} onClose={() => setCompare(null)} onRestored={() => { ctx.scan(true); }} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- edit dialog
+
+export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCtx; initialTab: 'general' | 'details' | 'files'; onClose: () => void }) {
+  const p = ctx.project;
+  const act = useAction();
+  const toast = useToast();
+  const [tab, setTab] = useState(initialTab);
+  const [f, setF] = useState({ name: p.name, description: p.description, icon: p.icon, status: p.status, category: p.category, progress: p.progress, tags: p.tags, ignoreGlobs: p.ignoreGlobs });
+  const [module, setModule] = useState<Record<string, any>>(p.module || {});
+  const [customStatus, setCustomStatus] = useState('');
+  const statuses = useLoad(() => call<{ name: string }[]>('projects.statuses'), []);
+  const policy = useLoad(() => call<any>('versions.policy', { projectId: p.id }), [p.id]);
+  const stats = useLoad(() => call<any>('versions.stats', { projectId: p.id }), [p.id]);
+  const [pol, setPol] = useState<any>(null);
+  useEffect(() => { if (policy.data && !pol) setPol(policy.data); }, [policy.data, pol]);
+  const mod = MODULES[f.category];
+
+  const save = async () => {
+    const r = await act(() => call<Project>('projects.update', { id: p.id, patch: { ...f, status: customStatus.trim() || f.status, module } }));
+    if (!r) return;
+    if (pol) await act(() => call('versions.setPolicy', { projectId: p.id, policy: pol }));
+    toast('Project saved', 'success');
+    await ctx.reload();
+    ctx.nav.refreshProjects();
+    if (f.ignoreGlobs !== p.ignoreGlobs || f.category !== p.category) ctx.scan(true);
+    onClose();
+  };
+
+  return (
+    <Modal wide title={`Edit “${p.name}”`} onClose={onClose} footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save}>Save</button></>}>
+      <div className="seg" style={{ marginBottom: 16 }}>
+        <button className={cx(tab === 'general' && 'on')} onClick={() => setTab('general')}>General</button>
+        <button className={cx(tab === 'details' && 'on')} onClick={() => setTab('details')}>{mod ? mod.title : 'Details'}</button>
+        <button className={cx(tab === 'files' && 'on')} onClick={() => setTab('files')}>Files & versions</button>
+      </div>
+
+      {tab === 'general' && <>
+        <div className="grid2">
+          <div className="field"><label>Name</label><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></div>
+          <div className="field"><label>Icon (an emoji, optional)</label><input className="input" maxLength={4} value={f.icon} onChange={(e) => setF({ ...f, icon: e.target.value })} placeholder="🛠" /></div>
+        </div>
+        <div className="field"><label>Description</label><textarea className="input" rows={3} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder="What is this project and why does it exist?" /></div>
+        <div className="grid3">
+          <div className="field"><label>Status</label>
+            <select className="input" value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>{[...new Set([...(statuses.data || []).map((s) => s.name), f.status])].map((s) => <option key={s}>{s}</option>)}</select>
+          </div>
+          <div className="field"><label>…or a custom status</label><input className="input" value={customStatus} onChange={(e) => setCustomStatus(e.target.value)} placeholder="e.g. Waiting on parts" /></div>
+          <div className="field"><label>Project type</label>
+            <select className="input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
           </div>
         </div>
-      </div>
-    </div>
+        <div className="field"><label>Progress — {f.progress}%</label><input type="range" min={0} max={100} step={5} value={f.progress} onChange={(e) => setF({ ...f, progress: Number(e.target.value) })} /></div>
+        <div className="field"><label>Tags</label><TagInput value={f.tags} onChange={(tags) => setF({ ...f, tags })} /></div>
+      </>}
+
+      {tab === 'details' && <>
+        {mod ? <>
+          <div className="grid2">
+            {mod.fields.filter((x) => !x.multiline).map((x) => (
+              <div className="field" key={x.key}><label>{x.label}</label>
+                {x.options
+                  ? <select className="input" value={module[x.key] || ''} onChange={(e) => setModule({ ...module, [x.key]: e.target.value })}>{x.options.map((o) => <option key={o} value={o}>{o ? o.replace(/_/g, ' ').toLowerCase() : '—'}</option>)}</select>
+                  : <input className="input" value={module[x.key] || ''} placeholder={x.placeholder} onChange={(e) => setModule({ ...module, [x.key]: e.target.value })} />}
+              </div>
+            ))}
+          </div>
+          {mod.fields.filter((x) => x.multiline).map((x) => (
+            <div className="field" key={x.key}><label>{x.label}</label><textarea className="input" rows={3} value={module[x.key] || ''} placeholder={x.placeholder} onChange={(e) => setModule({ ...module, [x.key]: e.target.value })} /></div>
+          ))}
+        </> : <p className="muted small">This project type has no special fields. Use custom fields below, or change the project type under General.</p>}
+        {f.category === '3d-printing' && <PrintLog log={module.printLog || []} onChange={(printLog) => setModule({ ...module, printLog })} />}
+        <CustomFields value={module.custom || {}} onChange={(custom) => setModule({ ...module, custom })} />
+      </>}
+
+      {tab === 'files' && <>
+        <h3 style={{ marginBottom: 6 }}>Keep earlier versions of files</h3>
+        <p className="small muted" style={{ marginTop: 0 }}>Project Vault stores a copy whenever a file changes, so you can compare versions and roll back — even without Git. Identical content is only stored once.</p>
+        {pol && <>
+          <label className="row small" style={{ marginBottom: 6 }}><input type="checkbox" checked={pol.text} onChange={(e) => setPol({ ...pol, text: e.target.checked })} /> Code, config and text files up to <input className="input" type="number" min={0.1} step={0.5} style={{ width: 70, padding: '2px 6px' }} value={pol.textMaxMb} onChange={(e) => setPol({ ...pol, textMaxMb: Number(e.target.value) })} /> MB</label>
+          {pol.keyExts.length > 0 && <label className="row small" style={{ marginBottom: 6 }}><input type="checkbox" checked={pol.keyFiles} onChange={(e) => setPol({ ...pol, keyFiles: e.target.checked })} /> Project files ({pol.keyExts.map((x: string) => '.' + x).join(', ')}) up to <input className="input" type="number" min={1} step={10} style={{ width: 80, padding: '2px 6px' }} value={pol.keyMaxMb} onChange={(e) => setPol({ ...pol, keyMaxMb: Number(e.target.value) })} /> MB</label>}
+          <p className="small dim">Any file can also be saved by hand from its History panel.</p>
+        </>}
+        {stats.data && <div className="row small" style={{ margin: '10px 0' }}>
+          <span className="grow">Stored: <b>{stats.data.versions}</b> versions of {stats.data.files} files · <b>{bytes(stats.data.bytes)}</b></span>
+          <button className="btn sm" onClick={async () => { const r: any = await act(() => call('versions.prune', { projectId: p.id, keep: 10 })); if (r) { toast(`Removed ${r.deletedVersions} old versions, freed ${bytes(r.freedBytes)}`, 'success'); stats.reload(); } }}>Keep only the last 10 per file</button>
+        </div>}
+        <h3 style={{ margin: '16px 0 6px' }}>Folders and file types to skip</h3>
+        <p className="small dim" style={{ marginTop: 0 }}>One per line: <code>Library/</code> (folder anywhere), <code>Assets/Generated/</code> (folder path), <code>*.tmp</code>, or a file name. .git and node_modules are always skipped.</p>
+        <textarea className="input code" rows={5} value={f.ignoreGlobs} onChange={(e) => setF({ ...f, ignoreGlobs: e.target.value })} />
+      </>}
+    </Modal>
   );
 }
 
@@ -244,3 +356,4 @@ export function CustomFields({ value, onChange }: { value: Record<string, string
     </div>
   );
 }
+

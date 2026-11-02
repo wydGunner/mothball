@@ -26,7 +26,10 @@
 │   tasks.rs      tasks, bugs, milestones                        │
 │   timeline.rs   grouped activity + manual journal              │
 │   search.rs     FTS5 index + safe query building               │
-│   git.rs        read-only git CLI integration                  │
+│   git.rs        git CLI: history, diff, commit/push/pull, gh   │
+│   versions.rs   stored file versions, compare, restore        │
+│   diff.rs       Myers line diff → hunks                        │
+│   profiles.rs   file-type groups per project type              │
 │   backup.rs     verified metadata backups + Markdown export    │
 │   legacy.rs     Print Vault importer                           │
 └───────────────────────────────────────────────────────────────┘
@@ -44,6 +47,7 @@ exercises the real backend code.
 |---|---|
 | `vault.db` (+ `-wal`, `-shm`) | SQLite database, WAL mode |
 | `managed/<slug>-<id8>/` | files of managed projects |
+| `objects/ab/cdef…` | stored file versions, named by SHA-256 (each distinct content stored once) |
 | `backups/pre-migration-*.db` | automatic copy taken before any schema upgrade |
 
 Linked projects stay where they are. Project Vault never renames, moves or
@@ -66,7 +70,8 @@ explicitly import/drop files, never overwriting).
 | `tasks`, `milestones` | tasks and bug reports (repro/expected/actual/resolution), checklists |
 | `links` | undirected relations between files, notes and tasks |
 | `timeline` | grouped activity entries and manual journal entries |
-| `search_index` | FTS5 (`unicode61`, diacritics removed), one row per entity |
+| `file_versions` (v2) | stored versions: file, SHA-256 (object name), path, reason (baseline/auto/manual/before-restore), note |
+| `search_keys`, `search_index` | FTS5 (`unicode61`, diacritics removed), one row per entity |
 
 IDs are UUID-v4 strings, timestamps Unix milliseconds. Migrations are
 append-only; a database newer than the app is refused instead of opened.
@@ -92,9 +97,12 @@ A scan (manual, on project open, on window focus, every 60 s while visible):
 
 File-system activity is written to the timeline as one summary per scan.
 
-Detected changes record *that* a file changed (hash, time). Earlier file
-**contents** are not preserved by Project Vault — that is Git’s job (shown in
-the Git tab / file history), and the planned snapshot system (see STATUS.md).
+After each scan, `versions::capture` copies the new content of eligible files
+(code/text ≤ 2 MB, plus the project type's key files ≤ 150 MB, both
+configurable) into the object store, so any two versions can be diffed
+(`diff.rs`, Myers line diff) and restored. Restoring first stores the current
+content, then writes via temp file + hash check + rename. OneDrive
+online-only placeholders are indexed but never read (that would download them).
 
 ## Safety measures
 
@@ -105,8 +113,9 @@ the Git tab / file history), and the planned snapshot system (see STATUS.md).
 * Metadata writes are SQLite transactions (savepoints); exports use atomic
   temp-file + rename writes.
 * Integrity check on open; pre-migration backup.
-* Git is invoked with argv (no shell), `GIT_OPTIONAL_LOCKS=0` so Project Vault
-  never takes index locks, and is read-only.
+* Git is invoked with argv (no shell). Reads use `GIT_OPTIONAL_LOCKS=0`; writes
+  happen only from explicit buttons (commit, push, pull --ff-only, remote).
+  Remote URLs are validated (https/ssh only).
 * Rendered Markdown is sanitized (allow-list) and the webview CSP forbids
   inline scripts.
 * Removing a project never deletes a linked folder; completed tasks cannot be

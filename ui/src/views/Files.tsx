@@ -8,6 +8,7 @@ import { Empty, KindIcon, Markdown, SaveState, TagInput, useAction, useAutosave,
 import { ago, bytes, cx, dateTime } from '../format';
 import { LinkPicker, LinkList } from './Links';
 import { CustomFields } from './Overview';
+import { VersionsPanel } from './Versions';
 import { DiffView } from './Git';
 import type { ProjectCtx } from './Project';
 
@@ -35,6 +36,18 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   const [kind, setKind] = useState('');
   const [show, setShow] = useState<'all' | 'changed' | 'undocumented' | 'missing'>('all');
   const [sort, setSort] = useState('path');
+  const [group, setGroup] = useState<string>(ctx.fileGroup || (ctx.focus?.type === 'file' ? 'all' : 'auto'));
+  const groups = useLoad(() => call<{ id: string; label: string; hint: string; count: number; exts: string[] }[]>('files.groups', { projectId: pid }), [pid, ctx.scanTick]);
+  useEffect(() => { if (ctx.fileGroup) setGroup(ctx.fileGroup); }, [ctx.fileGroup]);
+  useEffect(() => {
+    if (group === 'auto' && groups.data) setGroup(groups.data.some((g) => g.count > 0) ? 'key' : 'all');
+  }, [group, groups.data]);
+  const exts = useMemo(() => {
+    const gs = groups.data || [];
+    if (group === 'key') return [...new Set(gs.flatMap((g) => g.exts))];
+    const g = gs.find((x) => x.id === group);
+    return g ? g.exts : null;
+  }, [group, groups.data]);
   const [selected, setSelected] = useState<string | null>(ctx.focus?.type === 'file' ? ctx.focus.id : null);
   const [multi, setMulti] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['']));
@@ -47,10 +60,10 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   useEffect(() => { if (ctx.focus?.type === 'file') setSelected(ctx.focus.id); }, [ctx.focus]);
 
   const dirs = useLoad(() => call<{ path: string; files: number }[]>('files.dirs', { projectId: pid }), [pid, ctx.scanTick]);
-  const files = useLoad(() => call<VFile[]>('files.list', {
-    projectId: pid, query, kind: kind || null, dir: dir || null, sort,
+  const files = useLoad(() => group === 'auto' ? Promise.resolve([] as VFile[]) : call<VFile[]>('files.list', {
+    projectId: pid, query, kind: kind || null, dir: dir || null, sort, exts,
     state: show === 'missing' ? 'missing' : null, changedOnly: show === 'changed', undocumented: show === 'undocumented', limit: 5000,
-  }), [pid, query, kind, dir, show, sort, ctx.scanTick]);
+  }), [pid, query, kind, dir, show, sort, ctx.scanTick, group, exts?.join(',')]);
   const root = useMemo(() => buildTree(dirs.data || []), [dirs.data]);
 
   // reveal the selected file's folder in the tree
@@ -62,7 +75,13 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   }, [selected, files.data]);
 
   const importFiles = async () => {
-    const paths = await pickFiles('Choose files to copy into this project');
+    const gs = (groups.data || []).filter((g) => g.exts.length);
+    const filters = gs.length ? [
+      { name: `${ctx.project.name} files (${[...new Set(gs.flatMap((g) => g.exts))].slice(0, 8).map((e) => '.' + e).join(' ')}…)`, extensions: [...new Set(gs.flatMap((g) => g.exts))] },
+      ...gs.map((g) => ({ name: g.label, extensions: g.exts })),
+      { name: 'All files', extensions: ['*'] },
+    ] : undefined;
+    const paths = await pickFiles('Choose files to copy into this project', filters);
     if (!paths.length) return;
     const r: any = await act(() => call('files.import', { projectId: pid, paths, destDir: dir }));
     if (r) { toast(`Imported ${r.imported.length}, skipped ${r.skipped.length}${r.skipped.length ? ` (${r.skipped.map((s: any) => s.reason).slice(0, 2).join('; ')})` : ''}`, 'success'); ctx.scan(true); }
@@ -127,15 +146,22 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
       {tree.handle}
       <div className="pane" style={{ width: listW.width, flex: 'none', borderRight: '1px solid var(--line)', display: 'flex', flexDirection: 'column' }}>
         <div className="panehead" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6, background: 'var(--bg0)' }}>
+          {(groups.data || []).length > 0 && (
+            <div className="chips">
+              <button className={cx('chip', group === 'key' && 'on')} onClick={() => setGroup('key')} title="Files that matter for this project type">Key files <span>{groups.data!.reduce((a, g) => a + g.count, 0)}</span></button>
+              {groups.data!.map((g) => <button key={g.id} className={cx('chip', group === g.id && 'on')} onClick={() => setGroup(g.id)} title={`${g.hint}${g.hint ? ' — ' : ''}${g.exts.map((e) => '.' + e).join(' ')}`} disabled={!g.count}>{g.label} <span>{g.count}</span></button>)}
+              <button className={cx('chip', group === 'all' && 'on')} onClick={() => setGroup('all')}>All files <span>{ctx.project.fileCount}</span></button>
+            </div>
+          )}
           <div className="row"><LuSearch className="dim" /><input className="input" placeholder="Filter by name or path…" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
           <div className="row wrap">
             <div className="seg">
               {([['all', 'All'], ['changed', 'Changed'], ['undocumented', 'No notes'], ['missing', 'Missing']] as const).map(([s, l]) => <button key={s} className={cx(show === s && 'on')} onClick={() => setShow(s)} title={s === 'undocumented' ? 'Files without a purpose or notes' : undefined}>{l}</button>)}
             </div>
-            <select className="input" style={{ width: 110 }} value={kind} onChange={(e) => setKind(e.target.value)} aria-label="File type"><option value="">All types</option>{KINDS.map((k) => <option key={k}>{k}</option>)}</select>
+            {!(groups.data || []).length && <select className="input" style={{ width: 110 }} value={kind} onChange={(e) => setKind(e.target.value)} aria-label="File type"><option value="">All types</option>{KINDS.map((k) => <option key={k}>{k}</option>)}</select>}
             <select className="input" style={{ width: 100 }} value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort"><option value="path">Path</option><option value="name">Name</option><option value="changed">Changed</option><option value="size">Size</option></select>
           </div>
-          <div className="small dim">{files.data ? `${files.data.length}${files.data.length >= 5000 ? '+' : ''} files${dir ? ` in ${dir}/` : ''}` : 'Loading…'}{multi.size > 1 && ` · ${multi.size} selected`}</div>
+          <div className="small dim">{files.data ? `${files.data.length}${files.data.length >= 5000 ? '+' : ''} files${dir ? ` in ${dir}/` : ''}${exts ? ' (filtered by type)' : ''}` : 'Loading…'}{multi.size > 1 && ` · ${multi.size} selected`}</div>
         </div>
         <div style={{ overflow: 'auto', flex: 1 }} tabIndex={0} onKeyDown={keyNav}>
           {files.data?.map((f, i) => (
@@ -144,14 +170,15 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
               onContextMenu={(e) => fileMenu(e, f)}>
               <KindIcon kind={f.kind} />
               <div style={{ minWidth: 0 }}>
-                <div className="fname" title={f.path}>{f.name} {f.changedSinceReview && <span className="badge warn" title="Changed outside Project Vault since last reviewed">changed</span>} {f.state === 'missing' && <span className="badge bad">missing</span>}</div>
+                <div className="fname" title={f.path}>{f.name} {f.versions > 1 && <span className="badge" title={`${f.versions} stored versions`}>v{f.versions}</span>} {f.changedSinceReview && <span className="badge warn" title="Changed outside Project Vault since last reviewed">changed</span>} {f.state === 'missing' && <span className="badge bad">missing</span>}</div>
                 <div className="fpurpose">{f.purpose || (dir ? f.path.slice(dir.length + 1) : f.path)}</div>
               </div>
               <span className="small dim" style={{ textAlign: 'right' }}>{bytes(f.size)}</span>
               <span className="small dim" style={{ textAlign: 'right' }}>{ago(f.lastChanged)}</span>
             </div>
           ))}
-          {files.data && !files.data.length && <Empty icon={<LuFileQuestion />} title={ctx.project.fileCount ? 'No files match' : 'No files yet'}>
+          {files.data && !files.data.length && group !== 'auto' && <Empty icon={<LuFileQuestion />} title={ctx.project.fileCount ? 'No files match' : 'No files yet'}>
+            {ctx.project.fileCount > 0 && exts && <button className="btn sm" onClick={() => setGroup('all')}>Show all files</button>}
             {!ctx.project.fileCount && <p>{ctx.project.mode === 'managed' ? 'Import files or drag them onto the window.' : 'Click Rescan to index the folder.'}</p>}
           </Empty>}
         </div>
@@ -314,7 +341,7 @@ function FilePreview({ f }: { f: FileDetail }) {
 }
 
 function FileHistory({ f, ctx }: { f: FileDetail; ctx: ProjectCtx }) {
-  const [tab, setTab] = useState<'changes' | 'git' | 'revisions'>('changes');
+  const [tab, setTab] = useState<'versions' | 'changes' | 'git' | 'revisions'>('versions');
   const git = useLoad(() => tab === 'git' ? call<any[]>('git.log', { projectId: ctx.project.id, path: f.path, limit: 50 }) : Promise.resolve([]), [tab, f.id]);
   const revs = useLoad(() => tab === 'revisions' ? call<any[]>('files.docRevisions', { id: f.id }) : Promise.resolve([]), [tab, f.id]);
   const [diff, setDiff] = useState<{ title: string; text: string } | null>(null);
@@ -323,16 +350,19 @@ function FileHistory({ f, ctx }: { f: FileDetail; ctx: ProjectCtx }) {
       <div className="row" style={{ marginBottom: 8 }}>
         <h3 className="grow"><LuHistory /> History</h3>
         <div className="seg">
-          <button className={cx(tab === 'changes' && 'on')} onClick={() => setTab('changes')}>Detected changes</button>
+          <button className={cx(tab === 'versions' && 'on')} onClick={() => setTab('versions')}>Versions{f.versions ? ` (${f.versions})` : ''}</button>
+          <button className={cx(tab === 'changes' && 'on')} onClick={() => setTab('changes')}>Activity</button>
           <button className={cx(tab === 'git' && 'on')} onClick={() => setTab('git')}>Git commits</button>
           <button className={cx(tab === 'revisions' && 'on')} onClick={() => setTab('revisions')}>Note revisions</button>
         </div>
       </div>
       <p className="small dim" style={{ marginTop: 0 }}>
-        {tab === 'changes' && 'Changes Project Vault noticed by scanning. These record that the file changed — previous contents are not stored here (use Git for that).'}
+        {tab === 'versions' && 'Stored copies of this file. Compare any two, or roll back.'}
+        {tab === 'changes' && 'When Project Vault noticed the file being added, edited, moved or deleted.'}
         {tab === 'git' && 'Commits from the Git repository that touched this file (follows renames).'}
         {tab === 'revisions' && 'Earlier versions of this file’s documentation.'}
       </p>
+      {tab === 'versions' && <VersionsPanel fileId={f.id} fileName={f.name} present={f.state === 'present'} refreshKey={`${f.sha256}-${f.versions}-${ctx.scanTick}`} onRestored={() => ctx.scan(true)} />}
       {tab === 'changes' && (f.events.length ? f.events.map((e, i) => (
         <div key={i} className="row small" style={{ padding: '3px 0' }}><span className="pill" style={{ minWidth: 72, justifyContent: 'center' }}>{e.kind}</span><span className="grow">{e.detail}</span><span className="dim" title={dateTime(e.at)}>{ago(e.at)}</span></div>
       )) : <div className="small muted">No changes since it was first indexed ({dateTime(f.firstSeen)}).</div>)}

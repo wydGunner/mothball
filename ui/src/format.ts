@@ -31,3 +31,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
 export function cx(...c: (string | false | null | undefined)[]) {
   return c.filter(Boolean).join(' ');
 }
+
+export function slug(s: string) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
+}
