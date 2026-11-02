@@ -238,63 +238,151 @@ fn row_json(v: &Vault, r: &Row) -> DbResult<Json> {
         .with("recentFiles", Json::Arr(recent_files)))
 }
 
-/// The picture shown on a project's card: the one the user picked, else the
-/// newest .3mf's plate image, else an image whose name suggests a cover,
-/// else the newest image. Images over 4 MB are skipped.
+/// The picture shown on a project's card. Settings live in the project's
+/// module JSON under "thumb": {mode: auto|file|custom|none, fileId, fit:
+/// cover|contain, x, y (0–100 focus)}. `auto` = newest .3mf plate image,
+/// else an image whose name suggests a cover, else the newest image.
 pub fn thumbnail(v: &Vault, id: &str) -> DbResult<Json> {
     let pr = v.db.one("SELECT module_json FROM projects WHERE id=?", p![id])?.ok_or("Project not found")?;
     let module = Json::parse(&pr.s("module_json")).unwrap_or(Json::obj());
-    let picked = module.str_of("thumbFileId");
-    let try_file = |fid: &str| -> DbResult<Option<Json>> {
-        let Some(f) = v.db.one("SELECT ext, size, state FROM files WHERE id=?", p![fid])? else { return Ok(None) };
-        if f.s("state") != "present" {
-            return Ok(None);
+    let t = thumb_settings(&module);
+    let mode = t.str_of("mode").unwrap_or_else(|| "auto".into());
+    let style = |j: Json| j.with("fit", t.str_of("fit").unwrap_or_else(|| "cover".into())).with("x", t.get("x").cloned().unwrap_or(Json::from(50))).with("y", t.get("y").cloned().unwrap_or(Json::from(50))).with("mode", mode.as_str());
+    match mode.as_str() {
+        "none" => return Ok(Json::Null),
+        "custom" => {
+            if let Some(src) = custom_image(v, id) {
+                return Ok(style(Json::obj().with("src", src)));
+            }
         }
-        if f.s("ext") == "3mf" {
-            let Some(row) = v.db.one("SELECT project_id, rel_path FROM files WHERE id=?", p![fid])? else { return Ok(None) };
-            let path = crate::util::safe_join(&root_of(v, &row.s("project_id"))?, &row.s("rel_path"))?;
-            return Ok(crate::models::threemf_thumbnail(&path).map(|t| Json::obj().with("src", t).with("fileId", fid)));
+        "file" => {
+            if let Some(fid) = t.str_of("fileId") {
+                if let Some(src) = file_picture(v, &fid)? {
+                    return Ok(style(Json::obj().with("src", src).with("fileId", fid)));
+                }
+            }
         }
-        if f.i("size") > 4 * 1024 * 1024 {
-            return Ok(None);
-        }
-        let img = crate::files::read_base64(v, fid, 4 * 1024 * 1024)?;
-        Ok(Some(Json::obj().with("src", format!("data:{};base64,{}", img.str_of("mime").unwrap_or_default(), img.str_of("base64").unwrap_or_default())).with("fileId", fid)))
-    };
-    if let Some(fid) = picked {
-        if let Some(t) = try_file(&fid)? {
-            return Ok(t.with("picked", true));
-        }
+        _ => {}
     }
     for r in v.db.query("SELECT id FROM files WHERE project_id=? AND state='present' AND ext='3mf' ORDER BY last_changed DESC LIMIT 3", p![id])? {
-        if let Some(t) = try_file(&r.s("id"))? {
-            return Ok(t);
+        if let Some(src) = file_picture(v, &r.s("id"))? {
+            return Ok(style(Json::obj().with("src", src).with("fileId", r.s("id"))));
         }
     }
     let imgs = v.db.query(
-        "SELECT id, lower(name) AS n FROM files WHERE project_id=? AND state='present' AND ext IN ('png','jpg','jpeg','webp','gif') AND size<=4194304
+        "SELECT id FROM files WHERE project_id=? AND state='present' AND ext IN ('png','jpg','jpeg','webp','gif') AND size<=4194304
          ORDER BY (instr(lower(name),'cover')>0 OR instr(lower(name),'preview')>0 OR instr(lower(name),'thumb')>0 OR instr(lower(name),'screenshot')>0 OR instr(lower(name),'photo')>0) DESC,
                   (instr(lower(rel_path),'icon')>0 OR instr(lower(rel_path),'texture')>0 OR instr(lower(rel_path),'node_modules')>0) ASC, last_changed DESC LIMIT 1",
         p![id],
     )?;
     if let Some(r) = imgs.first() {
-        if let Some(t) = try_file(&r.s("id"))? {
-            return Ok(t);
+        if let Some(src) = file_picture(v, &r.s("id"))? {
+            return Ok(style(Json::obj().with("src", src).with("fileId", r.s("id"))));
         }
     }
     Ok(Json::Null)
 }
 
-/// Uses a file (image or .3mf) as the project's card picture; `None` = automatic.
-pub fn set_thumbnail(v: &Vault, id: &str, file_id: Option<&str>) -> DbResult<Json> {
+fn thumb_settings(module: &Json) -> Json {
+    match module.get("thumb") {
+        Some(t @ Json::Obj(_)) => t.clone(),
+        // older builds stored only the chosen file id
+        _ => match module.str_of("thumbFileId") {
+            Some(f) => Json::obj().with("mode", "file").with("fileId", f),
+            None => Json::obj(),
+        },
+    }
+}
+
+/// An image file or a .3mf's plate picture as a data URL.
+pub fn file_picture(v: &Vault, fid: &str) -> DbResult<Option<String>> {
+    let Some(f) = v.db.one("SELECT project_id, rel_path, ext, size, state FROM files WHERE id=?", p![fid])? else { return Ok(None) };
+    if f.s("state") != "present" {
+        return Ok(None);
+    }
+    let path = crate::util::safe_join(&root_of(v, &f.s("project_id"))?, &f.s("rel_path"))?;
+    if f.s("ext") == "3mf" {
+        return Ok(crate::models::threemf_thumbnail(&path));
+    }
+    if f.i("size") > 8 * 1024 * 1024 {
+        return Ok(None);
+    }
+    let img = crate::files::read_base64(v, fid, 8 * 1024 * 1024)?;
+    Ok(Some(format!("data:{};base64,{}", img.str_of("mime").unwrap_or_default(), img.str_of("base64").unwrap_or_default())))
+}
+
+fn custom_dir(v: &Vault) -> PathBuf {
+    v.data_dir.join("pictures")
+}
+fn custom_image(v: &Vault, id: &str) -> Option<String> {
+    for ext in ["png", "jpg", "webp", "gif"] {
+        let p = custom_dir(v).join(format!("{id}.{ext}"));
+        if let Ok(d) = std::fs::read(&p) {
+            let mime = match ext {
+                "jpg" => "image/jpeg",
+                e => return Some(format!("data:image/{e};base64,{}", crate::files::base64(&d))),
+            };
+            return Some(format!("data:{mime};base64,{}", crate::files::base64(&d)));
+        }
+    }
+    None
+}
+
+/// Changes the card picture. `patch` may hold mode, fileId, path (an image
+/// anywhere on disk: copied into the vault's pictures folder), fit, x, y.
+pub fn set_thumbnail(v: &Vault, id: &str, patch: &Json) -> DbResult<Json> {
     let pr = v.db.one("SELECT module_json FROM projects WHERE id=?", p![id])?.ok_or("Project not found")?;
     let mut module = Json::parse(&pr.s("module_json")).unwrap_or(Json::obj());
-    match file_id {
-        Some(f) => module.set("thumbFileId", f),
-        None => module.remove("thumbFileId"),
+    let mut t = thumb_settings(&module);
+    if let Some(path) = patch.str_of("path") {
+        let src = PathBuf::from(&path);
+        let ext = src.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let ext = match ext.as_str() {
+            "png" | "webp" | "gif" => ext,
+            "jpg" | "jpeg" => "jpg".into(),
+            _ => return Err("Choose a PNG, JPG, WebP or GIF image".into()),
+        };
+        let size = std::fs::metadata(&src).map_err(|e| format!("{}: {e}", src.display()))?.len();
+        if size > 8 * 1024 * 1024 {
+            return Err("That image is larger than 8 MB; pick a smaller one".into());
+        }
+        std::fs::create_dir_all(custom_dir(v)).map_err(|e| e.to_string())?;
+        for old in ["png", "jpg", "webp", "gif"] {
+            let _ = std::fs::remove_file(custom_dir(v).join(format!("{id}.{old}")));
+        }
+        std::fs::copy(&src, custom_dir(v).join(format!("{id}.{ext}"))).map_err(|e| e.to_string())?;
+        t.set("mode", "custom");
+        t.remove("fileId");
     }
+    for k in ["mode", "fileId", "fit", "x", "y"] {
+        if let Some(x) = patch.get(k) {
+            t.set(k, x.clone());
+        }
+    }
+    if let Some(m) = t.str_of("mode") {
+        if !["auto", "file", "custom", "none"].contains(&m.as_str()) {
+            return Err(format!("Unknown picture mode {m}"));
+        }
+        if m != "custom" {
+            for old in ["png", "jpg", "webp", "gif"] {
+                let _ = std::fs::remove_file(custom_dir(v).join(format!("{id}.{old}")));
+            }
+        }
+    }
+    module.remove("thumbFileId");
+    module.set("thumb", t);
     v.db.exec("UPDATE projects SET module_json=? WHERE id=?", p![module.to_string(), id])?;
-    Ok(Json::obj().with("ok", true))
+    thumbnail(v, id)
+}
+
+/// Images and .3mf files in the project that can be used as its picture.
+pub fn thumbnail_candidates(v: &Vault, id: &str) -> DbResult<Json> {
+    let rows = v.db.query(
+        "SELECT id, rel_path, ext, size FROM files WHERE project_id=? AND state='present' AND (ext='3mf' OR (ext IN ('png','jpg','jpeg','webp','gif') AND size<=8388608))
+         ORDER BY ext='3mf' DESC, last_changed DESC LIMIT 60",
+        p![id],
+    )?;
+    Ok(Json::Arr(rows.iter().map(|r| Json::obj().with("fileId", r.s("id")).with("path", r.s("rel_path")).with("ext", r.s("ext"))).collect()))
 }
 
 pub fn get(v: &Vault, id: &str) -> DbResult<Json> {
@@ -487,8 +575,21 @@ mod tests {
         let th = thumbnail(&v, &id).unwrap();
         assert!(th.str_of("src").unwrap().starts_with("data:image/jpeg;base64,"), "cover-like name wins");
         let grass = v.db.one("SELECT id FROM files WHERE name='grass.png'", p![]).unwrap().unwrap().s("id");
-        set_thumbnail(&v, &id, Some(&grass)).unwrap();
-        assert_eq!(thumbnail(&v, &id).unwrap().str_of("fileId").unwrap(), grass);
+        set_thumbnail(&v, &id, &Json::obj().with("mode", "file").with("fileId", grass.as_str()).with("y", 20)).unwrap();
+        let th = thumbnail(&v, &id).unwrap();
+        assert_eq!(th.str_of("fileId").unwrap(), grass);
+        assert_eq!(th.get("y").unwrap().as_i64(), Some(20));
+        // a picture from anywhere on disk is copied into the vault
+        let ext_img = t.path().join("Desktop/me.png");
+        std::fs::create_dir_all(ext_img.parent().unwrap()).unwrap();
+        std::fs::write(&ext_img, "PNGDATA").unwrap();
+        set_thumbnail(&v, &id, &Json::obj().with("path", ext_img.to_string_lossy().to_string())).unwrap();
+        std::fs::remove_file(&ext_img).unwrap();
+        assert!(thumbnail(&v, &id).unwrap().str_of("src").unwrap().starts_with("data:image/png"));
+        set_thumbnail(&v, &id, &Json::obj().with("mode", "none")).unwrap();
+        assert!(matches!(thumbnail(&v, &id).unwrap(), Json::Null));
+        assert!(!v.data_dir.join("pictures").join(format!("{id}.png")).exists(), "custom copy removed when no longer used");
+        assert!(thumbnail_candidates(&v, &id).unwrap().as_arr().unwrap().len() == 2);
         let pj = get(&v, &id).unwrap();
         assert!(pj.str_of("lastFile").is_some());
     }

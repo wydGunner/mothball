@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuDownload, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine, LuImage, LuFileCode } from 'react-icons/lu';
-import { call, pickFolder, revealPath, isTauri, type Project } from '../ipc';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuDownload, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine, LuImage, LuFileCode, LuUpload } from 'react-icons/lu';
+import { call, pickFiles, pickFolder, revealPath, isTauri, type Project } from '../ipc';
 import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, useLoad, useConfirm, usePrompt } from '../components/common';
 import { ago, bytes, CATEGORY_LABELS, cx } from '../format';
 import type { Nav } from '../main';
@@ -22,6 +22,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   const [collapsed, setCollapsedRaw] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pv.dashCollapsed') || '[]'); } catch { return []; } });
   const toggleCollapsed = (g: string) => setCollapsedRaw((c) => { const n = c.includes(g) ? c.filter((x) => x !== g) : [...c, g]; try { localStorage.setItem('pv.dashCollapsed', JSON.stringify(n)); } catch { /* ignore */ } return n; });
   const [dragOver, setDragOver] = useState<string | null>(null);
+  const [pictureFor, setPictureFor] = useState<Project | null>(null);
   const prompt = usePrompt();
   const [attention, setAttention] = useState(false);
   const [importPV, setImportPV] = useState(false);
@@ -88,7 +89,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
     { label: 'Open', icon: <LuFolderOpen />, onClick: () => nav.go({ view: 'project', id: p.id }) },
     { label: p.favorite ? 'Remove from favorites' : 'Add to favorites', icon: <LuStar />, onClick: () => toggleFav(p) },
     { label: p.group ? 'Change group…' : 'Add to a group…', icon: <LuFolderInput />, onClick: () => askGroup(p) },
-    ...(p.module?.thumbFileId ? [{ label: 'Use automatic card picture', icon: <LuImage />, onClick: async () => { await act(() => call('projects.setThumbnail', { id: p.id, fileId: null })); thumbCache.delete(p.id); nav.refreshProjects(); } }] : []),
+    { label: 'Change picture…', icon: <LuImage />, onClick: () => setPictureFor(p) },
     ...(p.group ? [{ label: `Remove from “${p.group}”`, onClick: () => setGroup([p.id], '') }] : []),
     { label: 'Show folder in Explorer', icon: <LuHardDrive />, onClick: () => act(() => revealPath(p.rootPath)), disabled: !isTauri },
     { label: 'Project notes', onClick: () => nav.go({ view: 'project', id: p.id, tab: 'notes' }) },
@@ -161,7 +162,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
       {mode === 'grid' ? (
         <div className="pgrid">
           {sec.items.map((p) => (
-            <ProjectCard key={p.id} p={p} colors={colors} onOpen={() => nav.go({ view: 'project', id: p.id })} onMenu={(e) => ctx(e, p)} onFav={() => toggleFav(p)} />
+            <ProjectCard key={p.id} p={p} colors={colors} onOpen={() => nav.go({ view: 'project', id: p.id })} onMenu={(e) => ctx(e, p)} onFav={() => toggleFav(p)} onPictureChanged={nav.refreshProjects} />
           ))}
         </div>
       ) : (
@@ -187,30 +188,123 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
       })}
       {!list.length && <Empty title="No projects match these filters" />}
       {importPV && <ImportPrintVault onClose={() => setImportPV(false)} onDone={nav.refreshProjects} />}
+      {pictureFor && <PictureDialog p={pictureFor} onClose={() => setPictureFor(null)} onSaved={() => { setPictureFor(null); nav.refreshProjects(); }} />}
     </div>
   );
 }
 
-// card pictures, fetched once per project (until its files change)
-export const thumbCache = new Map<string, { key: string; src: string | null }>();
+// card pictures, fetched once per project (until its files or picture settings change)
+interface Thumb { src: string; fit?: 'cover' | 'contain'; x?: number; y?: number; mode?: string; fileId?: string }
+export const thumbCache = new Map<string, { key: string; t: Thumb | null }>();
+const thumbKey = (p: Project) => `${p.fileCount}:${p.bytes}:${JSON.stringify(p.module?.thumb || p.module?.thumbFileId || '')}`;
 
 function useThumb(p: Project) {
-  const key = `${p.fileCount}:${p.bytes}:${p.module?.thumbFileId || ''}`;
+  const key = thumbKey(p);
   const cached = thumbCache.get(p.id);
-  const [src, setSrc] = useState<string | null | undefined>(cached?.key === key ? cached.src : undefined);
+  const [t, setT] = useState<Thumb | null | undefined>(cached?.key === key ? cached.t : undefined);
   useEffect(() => {
-    if (cached?.key === key) return;
+    const c = thumbCache.get(p.id);
+    if (c?.key === key) { setT(c.t); return; }
     let alive = true;
-    call<{ src: string } | null>('projects.thumbnail', { id: p.id }).then((t) => { thumbCache.set(p.id, { key, src: t?.src || null }); if (alive) setSrc(t?.src || null); }, () => alive && setSrc(null));
+    call<Thumb | null>('projects.thumbnail', { id: p.id }).then((r) => { thumbCache.set(p.id, { key, t: r }); if (alive) setT(r); }, () => alive && setT(null));
+    return () => { alive = false; };
+  }, [p.id, key]);
+  return t;
+}
+
+const imgStyle = (t: Thumb): React.CSSProperties => ({ objectFit: t.fit || 'cover', objectPosition: `${t.x ?? 50}% ${t.y ?? 50}%` });
+
+/** Choose and frame the picture on a project's card. */
+export function PictureDialog({ p, onClose, onSaved }: { p: Project; onClose: () => void; onSaved: () => void }) {
+  const cur = useLoad(() => call<Thumb | null>('projects.thumbnail', { id: p.id }), [p.id]);
+  const cands = useLoad(() => call<{ fileId: string; path: string; ext: string }[]>('projects.thumbnailCandidates', { id: p.id }), [p.id]);
+  const [mode, setMode] = useState<string | null>(null);
+  const [fileId, setFileId] = useState<string | undefined>(undefined);
+  const [src, setSrc] = useState<string | null | undefined>(undefined);
+  const [fit, setFit] = useState<'cover' | 'contain'>('cover');
+  const [pos, setPos] = useState({ x: 50, y: 50 });
+  const [pics, setPics] = useState<Record<string, string | null>>({});
+  const act = useAction();
+  const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  useEffect(() => {
+    if (cur.data === undefined || mode !== null) return;
+    const t = cur.data;
+    setMode(t?.mode || (p.module?.thumb?.mode === 'none' ? 'none' : 'auto'));
+    setFileId(t?.fileId); setSrc(t?.src ?? null); setFit(t?.fit || 'cover'); setPos({ x: t?.x ?? 50, y: t?.y ?? 50 });
+  }, [cur.data, mode, p.module]);
+  // load candidate previews a few at a time
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      for (const c of cands.data || []) {
+        if (!alive) return;
+        if (pics[c.fileId] !== undefined) continue;
+        const v = await call<string | null>('files.picture', { id: c.fileId }).catch(() => null);
+        if (alive) setPics((m) => ({ ...m, [c.fileId]: v }));
+      }
+    })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.id, key]);
-  return src;
+  }, [cands.data]);
+  const fromComputer = async () => {
+    const f = (await pickFiles('Choose a picture for this project', [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }]))[0];
+    if (!f) return;
+    const r = await act(() => call<Thumb>('projects.setThumbnail', { id: p.id, thumb: { path: f, fit, x: pos.x, y: pos.y } }));
+    if (r) { setMode('custom'); setFileId(undefined); setSrc(r.src); }
+  };
+  const save = async () => {
+    const thumb: any = { mode, fit, x: Math.round(pos.x), y: Math.round(pos.y) };
+    if (mode === 'file') thumb.fileId = fileId;
+    // the result is null when the card has no picture, so check for failure explicitly
+    const r = await act(() => call('projects.setThumbnail', { id: p.id, thumb }).then(() => true), 'Picture saved');
+    if (r) { thumbCache.delete(p.id); onSaved(); }
+  };
+  const shown = mode === 'none' ? null : src;
+  const usable = (cands.data || []).filter((c) => pics[c.fileId] !== null);
+  return (
+    <Modal wide title={`Picture for ${p.name}`} onClose={onClose} footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={mode === null || (mode === 'file' && !fileId)} onClick={save}>Save</button></>}>
+      <div className="picdlg">
+        <div>
+          <div className={cx('pic-preview', fit === 'cover' && shown && 'draggable')}
+            onPointerDown={(e) => { if (fit !== 'cover' || !shown) return; drag.current = { x: e.clientX, y: e.clientY, px: pos.x, py: pos.y }; (e.target as HTMLElement).setPointerCapture(e.pointerId); }}
+            onPointerMove={(e) => { const d = drag.current; if (!d) return; const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setPos({ x: Math.max(0, Math.min(100, d.px - ((e.clientX - d.x) / r.width) * 100)), y: Math.max(0, Math.min(100, d.py - ((e.clientY - d.y) / r.height) * 100)) }); }}
+            onPointerUp={() => { drag.current = null; }}>
+            {shown ? <img src={shown} alt="" style={imgStyle({ src: shown, fit, x: pos.x, y: pos.y })} draggable={false} /> : <div className="small muted" style={{ padding: 20 }}>{mode === 'none' ? 'No picture: the card shows the most recently changed files.' : cur.data === undefined ? 'Loading…' : 'No picture found in this project.'}</div>}
+          </div>
+          <div className="small dim" style={{ margin: '6px 0' }}>This is how it appears on the dashboard card.{fit === 'cover' && shown ? ' Drag the picture to choose which part shows.' : ''}</div>
+          {shown && <div className="row" style={{ flexWrap: 'wrap' }}>
+            <div className="seg"><button className={cx(fit === 'cover' && 'on')} onClick={() => setFit('cover')}>Fill the card</button><button className={cx(fit === 'contain' && 'on')} onClick={() => setFit('contain')}>Show the whole picture</button></div>
+            {fit === 'cover' && <button className="btn sm ghost" onClick={() => setPos({ x: 50, y: 50 })}>Center</button>}
+          </div>}
+        </div>
+        <div className="pic-side">
+          <div className="pic-options">
+            <label className={cx('opcard', mode === 'auto' && 'on')}><input type="radio" checked={mode === 'auto'} onChange={() => { setMode('auto'); setFileId(undefined); call<Thumb | null>('projects.thumbnail', { id: p.id }).then(() => {}); }} />
+              <div><b>Automatic</b><div className="small dim">The newest .3mf plate image, else an image named like “cover” or “screenshot”.</div></div></label>
+            <label className={cx('opcard', mode === 'none' && 'on')}><input type="radio" checked={mode === 'none'} onChange={() => setMode('none')} />
+              <div><b>No picture</b><div className="small dim">Show the most recently changed files instead.</div></div></label>
+          </div>
+          <div className="row" style={{ margin: '12px 0 6px' }}><b className="grow small">From this project</b><button className="btn sm" onClick={fromComputer}><LuUpload /> Use an image from your computer…</button></div>
+          {cands.data && !cands.data.length && <div className="small muted">No images or .3mf files in this project.</div>}
+          <div className="pic-grid">
+            {usable.map((c) => (
+              <button key={c.fileId} className={cx('pic-cand', mode === 'file' && fileId === c.fileId && 'on')} title={c.path}
+                onClick={() => { setMode('file'); setFileId(c.fileId); setSrc(pics[c.fileId] || null); }}>
+                {pics[c.fileId] ? <img src={pics[c.fileId]!} alt="" /> : <span className="small dim">…</span>}
+                <span className="small">{c.path.split('/').pop()}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
 }
 
 /** A project card: its picture (print plate, cover image) or, for code, the file you touched last. */
-function ProjectCard({ p, colors, onOpen, onMenu, onFav }: { p: Project; colors: Record<string, string>; onOpen: () => void; onMenu: (e: React.MouseEvent) => void; onFav: () => void }) {
+function ProjectCard({ p, colors, onOpen, onMenu, onFav, onPictureChanged }: { p: Project; colors: Record<string, string>; onOpen: () => void; onMenu: (e: React.MouseEvent) => void; onFav: () => void; onPictureChanged: () => void }) {
   const thumb = useThumb(p);
+  const [picking, setPicking] = useState(false);
   const attention = p.changedFiles + p.pendingReviews;
   return (
     <div className={cx('pcard', p.favorite && 'isfav')} style={p.color ? ({ '--pc': p.color } as React.CSSProperties) : undefined}
@@ -218,7 +312,8 @@ function ProjectCard({ p, colors, onOpen, onMenu, onFav }: { p: Project; colors:
       draggable onDragStart={(e) => { e.dataTransfer.setData('text/pv-project', p.id); e.dataTransfer.effectAllowed = 'move'; }}
       onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }} onContextMenu={onMenu}>
       <div className={cx('pc-face', thumb ? 'pic' : 'nopic')}>
-        {thumb ? <img src={thumb} alt="" loading="lazy" />
+        <button className="pc-edit btn sm" title="Change the picture" onClick={(e) => { e.stopPropagation(); setPicking(true); }}><LuImage /> Picture</button>
+        {thumb ? <img src={thumb.src} alt="" loading="lazy" style={imgStyle(thumb)} />
           : p.recentFiles?.length ? <div className="pc-recent" title="Most recently changed files">{p.recentFiles.map((r) => {
               const d = r.path.includes('/') ? r.path.slice(0, r.path.lastIndexOf('/') + 1) : '';
               return <div key={r.path} className="pc-rf"><LuFileCode /><span className="pc-file">{r.path.slice(d.length)}</span><span className="pc-dir">{d}</span><span className="pc-when">{ago(r.at)}</span></div>;
@@ -242,6 +337,7 @@ function ProjectCard({ p, colors, onOpen, onMenu, onFav }: { p: Project; colors:
         </div>
         {p.progress > 0 && <div className="pc-progress" title={`${p.progress}% done`}><div style={{ width: `${p.progress}%` }} /></div>}
       </div>
+      {picking && <div onClick={(e) => e.stopPropagation()} onContextMenu={(e) => e.stopPropagation()}><PictureDialog p={p} onClose={() => setPicking(false)} onSaved={() => { setPicking(false); onPictureChanged(); }} /></div>}
     </div>
   );
 }

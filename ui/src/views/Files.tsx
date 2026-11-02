@@ -195,7 +195,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
       extra: [
         { label: sel.length > 1 ? `Mark ${sel.length} files reviewed` : 'Mark reviewed', icon: <LuCircleCheck />, onClick: async () => { await act(() => call('files.markReviewed', { ids: sel.map((x) => x.id) })); files.reload(); ctx.reload(); } },
         ...(sel.length === 1 && f.state === 'present' && ['png', 'jpg', 'jpeg', 'webp', 'gif', '3mf'].includes(f.ext)
-          ? [{ label: 'Use as the project picture', icon: <LuImage />, onClick: async () => { if (await act(() => call('projects.setThumbnail', { id: pid, fileId: f.id }), 'Shown on the project card')) ctx.nav.refreshProjects(); } }] : []),
+          ? [{ label: 'Use as the project picture', icon: <LuImage />, onClick: async () => { if (await act(() => call('projects.setThumbnail', { id: pid, thumb: { mode: 'file', fileId: f.id } }), 'Shown on the project card')) ctx.nav.refreshProjects(); } }] : []),
       ],
     }));
   };

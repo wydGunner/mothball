@@ -409,8 +409,8 @@ await step('Keyboard: context menu without the mouse', async () => {
   await page.keyboard.press('Shift+F10');
   await page.locator('.ctx').waitFor();
   await page.keyboard.press('ArrowDown');
-  const focused = await page.evaluate(() => document.activeElement?.closest('.ctx') != null);
-  if (!focused) throw new Error('menu items are not keyboard-focusable');
+  // focus moves into the menu (allow a frame for it to render)
+  await page.waitForFunction(() => document.activeElement?.closest('.ctx') != null, null, { timeout: 3000 }).catch(() => { throw new Error('menu items are not keyboard-focusable'); });
   await page.keyboard.press('Escape');
   await page.locator('.ctx').waitFor({ state: 'detached' });
 });
@@ -740,6 +740,31 @@ await step('Files: group the list by folder', async () => {
   await page.locator('.dd-item').filter({ hasText: 'No grouping' }).click();
   await page.keyboard.press('Escape');
   await page.locator('.filesec').first().waitFor({ state: 'detached' });
+});
+
+await step('Dashboard: change a project picture', async () => {
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  const card = page.locator('.pcard').filter({ hasText: 'Cat - Green And Yellow' });
+  await card.locator('.pc-face img').waitFor();
+  const before = await card.locator('.pc-face img').getAttribute('src');
+  await card.hover();
+  await card.getByRole('button', { name: 'Picture' }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Picture for' });
+  const cand = m.locator('.pic-cand').filter({ hasText: 'Green and yellow cat.png' });
+  await cand.locator('img').waitFor({ timeout: 30000 });
+  await cand.click();
+  await m.getByRole('button', { name: 'Show the whole picture' }).click();
+  if (shots) await page.screenshot({ path: join(shots, 'x-picture-dialog.png') });
+  await m.getByRole('button', { name: 'Save' }).click();
+  await m.waitFor({ state: 'detached' });
+  await page.waitForFunction((b) => { const i = [...document.querySelectorAll('.pcard')].find((c) => c.textContent.includes('Cat - Green And Yellow'))?.querySelector('.pc-face img'); return i && i.getAttribute('src') !== b && i.style.objectFit === 'contain'; }, before);
+  // and back to no picture: the card lists recent files
+  await card.hover();
+  await card.getByRole('button', { name: 'Picture' }).click();
+  await m.locator('.opcard').filter({ hasText: 'No picture' }).click();
+  await m.getByRole('button', { name: 'Save' }).click();
+  await card.locator('.pc-recent').waitFor();
+  await toastGone();
 });
 
 await step('Dashboard: project groups', async () => {

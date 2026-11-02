@@ -156,6 +156,13 @@ pub fn create_opts(v: &Vault, dest: &Path, project_id: Option<&str>, o: Opts) ->
             }
             proj_json.push(pj);
         }
+        // project card pictures chosen from outside the projects
+        if let Ok(rd) = std::fs::read_dir(v.data_dir.join("pictures")) {
+            std::fs::create_dir_all(tmp.join("pictures")).map_err(|e| e.to_string())?;
+            for e in rd.flatten() {
+                std::fs::copy(e.path(), tmp.join("pictures").join(e.file_name())).map_err(|e| e.to_string())?;
+            }
+        }
         let mut entries = Vec::new();
         let w = crate::files::walk(&tmp, &crate::files::Ignore::parse(""));
         for (rel, s) in &w.files {
@@ -462,6 +469,19 @@ pub fn stage_database_restore(v: &Vault, path: &Path) -> DbResult<Json> {
         _ => {
             let _ = std::fs::remove_file(&pending);
             return Err("The staged database failed its integrity check; nothing will change.".into());
+        }
+    }
+    // card pictures that belong to the restored database
+    let names: Vec<String> = m.get("files").and_then(|x| x.as_arr()).cloned().unwrap_or_default().iter().filter_map(|f| f.str_of("path")).filter(|p| p.starts_with("pictures/")).collect();
+    if !names.is_empty() {
+        let dir = v.data_dir.join("pictures");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        for n in names {
+            let data = src.read(&n)?;
+            let fname = n.trim_start_matches("pictures/");
+            if !fname.contains('/') && !fname.contains("..") {
+                atomic_write(&dir.join(fname), &data).map_err(|e| e.to_string())?;
+            }
         }
     }
     Ok(Json::obj().with("staged", true).with("restartRequired", true))
