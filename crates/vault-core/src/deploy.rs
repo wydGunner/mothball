@@ -188,7 +188,7 @@ pub fn preview(v: &Vault, pid: &str) -> DbResult<Json> {
     Ok(plan_json(&plan(v, pid)?))
 }
 
-fn copy_verified(src: &Path, dest: &Path, sha: &str) -> Result<(), String> {
+pub(crate) fn copy_verified(src: &Path, dest: &Path, sha: &str) -> Result<(), String> {
     let dir = dest.parent().ok_or("bad destination")?;
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let tmp = dir.join(format!(".pv-deploy-{}", &new_id()[..8]));
@@ -272,7 +272,9 @@ pub fn run(v: &Vault, pid: &str, force: bool) -> DbResult<Json> {
     let mut cfg = meta_get(v, &key(pid))?;
     cfg.set("last", last);
     meta_set(v, &key(pid), &cfg)?;
-    Ok(Json::obj().with("copied", copied).with("removed", removed).with("unchanged", unchanged).with("errors", Json::Arr(errors)).with("dest", pl.dest.to_string_lossy().to_string()))
+    // files the project needs elsewhere (e.g. the game's modded DLL)
+    let deps = crate::deps::install(v, pid, None)?;
+    Ok(Json::obj().with("copied", copied).with("removed", removed).with("unchanged", unchanged).with("errors", Json::Arr(errors)).with("dest", pl.dest.to_string_lossy().to_string()).with("dependencies", deps))
 }
 
 /// Splits a command line into arguments ("quoted parts" stay together).
@@ -312,6 +314,11 @@ pub fn launch(v: &Vault, pid: &str) -> DbResult<Json> {
     let exe = PathBuf::from(exe);
     if !exe.is_file() {
         return Err(format!("{} doesn't exist", exe.display()));
+    }
+    // the right DLLs etc. must be in place, or the game starts with the wrong ones
+    let deps = crate::deps::install(v, pid, None)?;
+    if let Some(f) = deps.as_arr().and_then(|a| a.iter().find(|r| r.str_of("result").as_deref() == Some("failed"))) {
+        return Err(format!("Not launching: {} couldn't be put in place ({}).", f.str_of("name").unwrap_or_default(), f.str_of("error").unwrap_or_default()));
     }
     let cwd = match cfg.str_of("cwd").filter(|s| !s.is_empty()) {
         Some(c) => PathBuf::from(c),

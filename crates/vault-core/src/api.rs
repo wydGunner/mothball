@@ -5,7 +5,7 @@
 use crate::db::DbResult;
 use crate::json::Json;
 use crate::projects::NewProject;
-use crate::{backup, deploy, files, git, knowledge, printers, profiles, projects, search, snapshots, storage, symbols, tasks, timeline, versions, watch, time, Vault};
+use crate::{backup, deploy, deps, files, git, knowledge, printers, profiles, projects, search, snapshots, storage, symbols, tasks, timeline, versions, watch, time, Vault};
 use std::path::PathBuf;
 
 fn s(a: &Json, k: &str) -> DbResult<String> {
@@ -30,6 +30,12 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
             .with("noteCategories", Json::Arr(knowledge::NOTE_CATEGORIES.iter().map(|c| Json::from(*c)).collect()))),
 
         // projects
+        "deps.list" => deps::list(v, &s(a, "projectId")?),
+        "deps.add" => deps::add(v, &s(a, "projectId")?, a),
+        "deps.update" => deps::update(v, &s(a, "projectId")?, &s(a, "id")?, a.get("patch").unwrap_or(&Json::obj())),
+        "deps.remove" => deps::remove(v, &s(a, "projectId")?, &s(a, "id")?),
+        "deps.install" => deps::install(v, &s(a, "projectId")?, os(a, "id").as_deref()),
+        "deps.restoreOriginal" => deps::restore_original(v, &s(a, "projectId")?, &s(a, "id")?),
         "printers.list" => printers::list(v),
         "printers.save" => printers::save(v, a),
         "printers.remove" => printers::remove(v, &s(a, "id")?),
@@ -42,6 +48,7 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
             projects::touch_opened(v, &id)?;
             projects::get(v, &id)
         }
+        "projects.create" if a.str_of("copyFrom").filter(|x| !x.trim().is_empty()).is_some() => storage::create_copy(v, a, &PathBuf::from(s(a, "copyFrom")?)),
         "projects.create" => projects::create(
             v,
             NewProject {

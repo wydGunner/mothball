@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import {
   LuTriangleAlert, LuGitCompareArrows, LuPlus, LuTrash2, LuCircleCheck, LuCircleX, LuFileWarning, LuPencil,
   LuNotebookPen, LuListTodo, LuHistory, LuChevronRight, LuDiff, LuBug, LuImage, LuCode,
-  LuInfo, LuFileClock, LuSlidersHorizontal, LuClock, LuFolder,
+  LuInfo, LuFileClock, LuSlidersHorizontal, LuClock, LuFolder, LuPlug,
 } from 'react-icons/lu';
+import { DepsBody, depsSummary, type Dep } from './Deps';
 import { call, type Project } from '../ipc';
 import { KindIcon, Modal, StatusPill, TagInput, useAction, useLoad, useConfirm, useToast } from '../components/common';
 import { PictureDialog, useThumb } from './Dashboard';
@@ -14,7 +15,8 @@ import { TimeCard, fmtHM } from './TimeCard';
 import { PanelBoard } from '../components/Panels';
 import type { ProjectCtx } from './Project';
 
-type FieldDef = { key: string; label: string; multiline?: boolean; options?: string[]; placeholder?: string };
+/** `wow`: true = only for World of Warcraft addons, false = only for other game mods. */
+type FieldDef = { key: string; label: string; multiline?: boolean; options?: string[]; placeholder?: string; wow?: boolean };
 export const MODULES: Record<string, { title: string; fields: FieldDef[] }> = {
   software: { title: 'Software details', fields: [
     { key: 'repoUrl', label: 'Repository URL' }, { key: 'language', label: 'Languages / runtime' },
@@ -36,10 +38,16 @@ export const MODULES: Record<string, { title: string; fields: FieldDef[] }> = {
     { key: 'fitsContains', label: 'Fits / contains' },
     { key: 'assemblyNotes', label: 'Assembly notes', multiline: true }, { key: 'finishingNotes', label: 'Finishing instructions', multiline: true },
   ] },
-  addon: { title: 'Addon details', fields: [
-    { key: 'game', label: 'Game', placeholder: 'World of Warcraft (Retail)' }, { key: 'interface', label: 'Interface / game version', placeholder: '110205' },
-    { key: 'addonVersion', label: 'Addon version' }, { key: 'pageUrl', label: 'CurseForge / Wago / GitHub page' },
-    { key: 'dependencies', label: 'Dependencies & libraries', multiline: true }, { key: 'savedVariables', label: 'Saved variables', placeholder: 'MyAddonDB' },
+  // one type for WoW addons and other game mods (IW4X, etc.); WoW-only fields show when the game is WoW
+  addon: { title: 'Addon / mod details', fields: [
+    { key: 'game', label: 'Game', placeholder: 'World of Warcraft (Retail), or MW2 (IW4X)' },
+    { key: 'interface', label: 'Interface version', placeholder: '110205', wow: true },
+    { key: 'client', label: 'Client / game build', placeholder: 'IW4X r4432', wow: false },
+    { key: 'addonVersion', label: 'Version' }, { key: 'pageUrl', label: 'CurseForge / Wago / GitHub page', wow: true },
+    { key: 'pageUrl', label: 'Download / project page', wow: false },
+    { key: 'installPath', label: 'Where it goes in the game', placeholder: 'mods\\omen', wow: false },
+    { key: 'dependencies', label: 'Libraries it needs', multiline: true, wow: true }, { key: 'savedVariables', label: 'Saved variables', placeholder: 'MyAddonDB', wow: true },
+    { key: 'requirements', label: 'What it needs to run', multiline: true, placeholder: 'Files it needs are best attached under Dependencies', wow: false },
     { key: 'releaseNotes', label: 'Release notes', multiline: true },
   ] },
   video: { title: 'Video details', fields: [
@@ -76,6 +84,11 @@ export const MODULES: Record<string, { title: string; fields: FieldDef[] }> = {
   ] },
 };
 
+const isWow = (m: Record<string, any> | undefined) => !!m && (/warcraft|\bwow\b/i.test(m.game || '') || !!m.interface || !!m.savedVariables);
+/** The detail fields that apply to this project (addon fields depend on the game). */
+export const fieldsFor = (category: string, module: Record<string, any> | undefined): FieldDef[] =>
+  (MODULES[category]?.fields || []).filter((f) => f.wow === undefined || f.wow === isWow(module));
+
 const PRINT_STATUS_DOT: Record<string, string> = { REPRINT_READY: 'on', TEST_FIT_PASSED: 'on', SLICED_UNTESTED: 'half', NEEDS_WORK: 'half' };
 
 export function Overview({ ctx }: { ctx: ProjectCtx }) {
@@ -97,7 +110,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const [picking, setPicking] = useState(false);
 
   const mod = MODULES[p.category];
-  const filled = mod ? mod.fields.filter((f) => (p.module?.[f.key] || '').toString().trim()) : [];
+  const filled = mod ? fieldsFor(p.category, p.module).filter((f) => (p.module?.[f.key] || '').toString().trim()) : [];
   const custom = Object.entries((p.module?.custom || {}) as Record<string, string>).filter(([, v]) => v);
   const printLog: any[] = p.module?.printLog || [];
   const nextTasks = (tasks.data || []).filter((t) => t.status !== 'done').slice(0, 5);
@@ -106,11 +119,14 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const openCount = (tasks.data || []).filter((t) => t.status !== 'done').length;
   const timeSum = useLoad(() => call<{ totalMs: number }>('time.summary', { projectId: p.id, since: Date.now() }), [p.id, ctx.scanTick]);
   const timeTotal = timeSum.data?.totalMs || 0;
+  const [depsTick, setDepsTick] = useState(0);
+  const deps = useLoad(() => call<Dep[]>('deps.list', { projectId: p.id }), [p.id, ctx.scanTick, depsTick]);
+  const depsRelevant = ['addon', 'game', 'software'].includes(p.category) || !!deps.data?.length;
 
   const ext = (path: string) => (path.includes('.') ? path.split('.').pop()!.toLowerCase() : '');
   return (
     <div className="page ov2">
-      <PanelBoard storageKey="overview" defaults={{ main: ['about', 'attention', 'recent', 'details'], rail: ['time', 'next', 'notes', 'activity', 'info'] }}
+      <PanelBoard storageKey="overview" defaults={{ main: ['about', 'attention', 'recent', 'details', 'deps'], rail: ['time', 'next', 'notes', 'activity', 'info'] }}
         zoneClass={{ main: 'ov2-main', rail: 'ov2-rail' }} panels={[
         { id: 'about', icon: <LuInfo />, summary: p.description ? p.description.split('\n')[0] : undefined, title: 'About', className: 'ov2-hero-panel', body: <div className="ov2-hero">
           {thumb && <button className="ov2-pic" title="Change the picture" onClick={() => setPicking(true)}><img src={thumb.src} alt="" style={{ objectFit: thumb.fit || 'cover', objectPosition: `${thumb.x ?? 50}% ${thumb.y ?? 50}%` }} /></button>}
@@ -217,6 +233,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
               </div>
             )}
         </> },
+        { id: 'deps', icon: <LuPlug />, title: 'Dependencies', summary: depsSummary(deps.data), hidden: !depsRelevant, body: <DepsBody projectId={p.id} deps={deps.data} onChanged={() => setDepsTick((t) => t + 1)} /> },
         { id: 'time', icon: <LuClock />, summary: timeTotal ? `${fmtHM(timeTotal)} in total` : 'No time recorded yet', title: 'Time', body: <>
           <TimeCard projectId={p.id} onTimerChange={() => window.dispatchEvent(new CustomEvent('pv:timer'))} />
         </> },
@@ -322,7 +339,7 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
         {f.category === 'addon' && <FillFromToc projectId={p.id} module={module} onFill={setModule} />}
         {mod ? <>
           <div className="grid2">
-            {mod.fields.filter((x) => !x.multiline).map((x) => (
+            {fieldsFor(f.category, module).filter((x) => !x.multiline).map((x) => (
               <div className="field" key={x.key}><label>{x.label}</label>
                 {x.options
                   ? <select className="input" value={module[x.key] || ''} onChange={(e) => setModule({ ...module, [x.key]: e.target.value })}>{x.options.map((o) => <option key={o} value={o}>{o ? o.replace(/_/g, ' ').toLowerCase() : '—'}</option>)}</select>
@@ -330,7 +347,7 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
               </div>
             ))}
           </div>
-          {mod.fields.filter((x) => x.multiline).map((x) => (
+          {fieldsFor(f.category, module).filter((x) => x.multiline).map((x) => (
             <div className="field" key={x.key}><label>{x.label}</label><textarea className="input" rows={3} value={module[x.key] || ''} placeholder={x.placeholder} onChange={(e) => setModule({ ...module, [x.key]: e.target.value })} /></div>
           ))}
         </> : <p className="muted small">This project type has no special fields. Use custom fields below, or change the project type under General.</p>}

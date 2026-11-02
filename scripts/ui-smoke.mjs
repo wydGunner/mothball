@@ -112,7 +112,7 @@ await step('Create OMEN v2 linked project from the welcome screen', async () => 
   await page.getByText(/Suggested Game development because the folder has GSC scripts/).waitFor();
   await page.locator('.wl-type.on').filter({ hasText: 'Game development' }).waitFor();
   if (shots) await page.screenshot({ path: join(shots, 'x-welcome-type.png') });
-  await page.locator('.wl-form input').fill('OMEN v2');
+  await page.locator('.wl-form input.input').fill('OMEN v2');
   await page.locator('.wl-type').filter({ hasText: 'Software' }).click();
   await page.getByRole('button', { name: 'Add project' }).click();
   await page.locator('.filerow').filter({ hasText: 'weapon_tuner.gsc' }).waitFor();
@@ -750,6 +750,67 @@ await step('Settings: move managed project folders to another drive', async () =
   const p2 = (await api('projects.create', { name: 'Also There' })).data;
   if (!p2.rootPath.startsWith(target)) throw new Error('new project not created in the new location: ' + p2.rootPath);
   for (const id of [pr.id, p2.id]) if (!(await api('projects.remove', { id, deleteManagedFiles: true })).ok) throw new Error('remove failed');
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+});
+
+await step('New project as a copy; attach a dependency, put it in place, put the original back', async () => {
+  // an existing folder, added as a copy: the original must stay untouched
+  const orig = join(tmp, 'OMEN old');
+  mkdirSync(join(orig, 'scripts'), { recursive: true });
+  writeFileSync(join(orig, 'scripts', 'menu.gsc'), 'init() {}\n');
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  await page.getByRole('button', { name: 'New project' }).last().click();
+  const dlg = page.locator('.modal').filter({ hasText: 'New project' });
+  page.once('dialog', (d) => d.accept(orig));
+  await dlg.getByRole('button', { name: /Browse/ }).click();
+  await dlg.locator('label').filter({ hasText: 'Make a copy in Mothball' }).click();
+  await dlg.getByRole('button', { name: 'Create project' }).click();
+  await page.locator('.crumbs .cur').filter({ hasText: 'OMEN old' }).waitFor({ timeout: 30000 });
+  const pr = (await api('projects.list')).data.find((x) => x.name === 'OMEN old');
+  if (pr.mode !== 'managed' || pr.rootPath.startsWith(orig)) throw new Error('not copied: ' + JSON.stringify(pr));
+  if (readFileSync(join(pr.rootPath, 'scripts', 'menu.gsc'), 'utf8') !== 'init() {}\n') throw new Error('copy content');
+  writeFileSync(join(pr.rootPath, 'scripts', 'menu.gsc'), 'edited copy\n');
+  if (readFileSync(join(orig, 'scripts', 'menu.gsc'), 'utf8') !== 'init() {}\n') throw new Error('original changed');
+  await api('projects.update', { id: pr.id, patch: { category: 'addon' } });
+
+  // a game folder with the stock DLL, and the modded one this version needs
+  const game = join(tmp, 'MW2'); mkdirSync(game, { recursive: true });
+  writeFileSync(join(game, 'iw4x.dll'), 'stock');
+  const modded = join(tmp, 'downloads', 'iw4x-old.dll'); mkdirSync(join(tmp, 'downloads'), { recursive: true });
+  writeFileSync(modded, 'old modded build');
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  await page.locator('.pcard').filter({ hasText: 'OMEN old' }).click();
+  await page.getByRole('tab', { name: /Overview/ }).click();
+  const panel = page.locator('[data-panel=deps]');
+  await panel.getByText(/Attach files this project needs/).waitFor();
+  await panel.getByRole('button', { name: 'Attach dependency…' }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Attach a dependency' });
+  page.once('dialog', (d) => d.accept(modded));
+  await m.getByRole('button', { name: 'Browse…' }).click();
+  await m.getByPlaceholder(/leave empty to just keep it/).fill(join(game, 'iw4x.dll'));
+  await m.getByPlaceholder('iw4x.dll (modded)').fill('iw4x.dll (old build)');
+  await m.getByRole('button', { name: 'Attach' }).click();
+  const row = panel.locator('.dep-row').filter({ hasText: 'iw4x.dll (old build)' });
+  await row.getByText('A different file is in place').waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-deps.png') });
+  await row.getByRole('button', { name: 'Put in place' }).click();
+  await row.getByText('In place', { exact: true }).waitFor();
+  if (readFileSync(join(game, 'iw4x.dll'), 'utf8') !== 'old modded build') throw new Error('dll not installed');
+  await toastGone();
+  await row.getByRole('button', { name: /Put the original file back/ }).click();
+  await page.locator('.modal').getByRole('button', { name: 'Put it back' }).click();
+  await row.getByText('A different file is in place').waitFor();
+  if (readFileSync(join(game, 'iw4x.dll'), 'utf8') !== 'stock') throw new Error('original not restored');
+  await toastGone();
+  // addon details for a non-WoW mod don't ask WoW questions
+  await page.locator('[data-panel=details]').getByRole('button', { name: 'Edit' }).click();
+  const ed = page.locator('.modal');
+  await ed.getByText('Client / game build').waitFor();
+  if (await ed.getByText('Saved variables').count()) throw new Error('WoW field shown for a non-WoW mod');
+  await ed.getByPlaceholder(/World of Warcraft \(Retail\)/).fill('World of Warcraft (Retail)');
+  await ed.getByText('Saved variables').waitFor();
+  await ed.getByRole('button', { name: 'Cancel' }).click();
+  if (!(await api('projects.remove', { id: pr.id, deleteManagedFiles: true })).ok) throw new Error('remove failed');
   await page.getByRole('button', { name: 'Dashboard' }).click();
 });
 

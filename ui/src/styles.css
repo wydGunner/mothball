@@ -771,3 +771,6 @@ input[type=checkbox] { accent-color: var(--accent); }
 .printer-set-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line2); }
 .printer-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line2); }
 .printer-form .field { margin: 0; }
+.dep-row { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.dep-row:last-of-type { border-bottom: 0; }
+.import-choice { display: grid; gap: 8px; }

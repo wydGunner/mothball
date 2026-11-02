@@ -37,8 +37,14 @@ export function DeployButtons({ project }: { project: Project }) {
     if (r.blocked) { setBlocked(r); return; }
     setBlocked(null);
     const n = r.copied + r.removed;
+    const deps: any[] = r.dependencies || [];
+    const depFail = deps.filter((d) => d.result === 'failed');
+    const depIn = deps.filter((d) => d.result === 'installed').map((d) => d.name);
+    const depNote = depIn.length ? ` · put in place: ${depIn.join(', ')}` : '';
     if (r.errors.length) toast(`Deploy finished with ${r.errors.length} error(s):\n${r.errors.slice(0, 3).join('\n')}`, 'error');
-    else toast(n ? `Deployed: ${r.copied} copied${r.removed ? `, ${r.removed} removed` : ''}` : 'Already up to date — nothing to copy', 'success');
+    else if (depFail.length) toast(`Deployed, but ${depFail.map((d) => `${d.name} couldn't be put in place (${d.error})`).join('; ')}`, 'error');
+    else toast(n || depIn.length ? `Deployed: ${r.copied} copied${r.removed ? `, ${r.removed} removed` : ''}${depNote}` : 'Already up to date — nothing to copy', 'success');
+    window.dispatchEvent(new CustomEvent('pv:changed'));
     load();
     if (thenLaunch && !r.errors.length) await launch();
   };

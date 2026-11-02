@@ -116,6 +116,73 @@ pub fn set_root(v: &Vault, folder: &Path, move_existing: bool) -> DbResult<Json>
     Ok(info(v)?.with("moved", Json::Arr(moved)).with("failed", Json::Arr(failed)).with("freed", freed))
 }
 
+/// Copies a folder (minus ignored paths) into `dest`, checking every copy
+/// against its original and keeping modified times. On failure the partial
+/// copy is removed. Returns (files, bytes).
+pub fn copy_tree_verified(src: &Path, dest: &Path, ignore: &Ignore) -> Result<(i64, i64), String> {
+    let w = walk(src, ignore);
+    if let Some(e) = w.errors.first() {
+        return Err(format!("Couldn't read the whole folder ({e})"));
+    }
+    std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    let mut bytes = 0i64;
+    for (rel, seen) in &w.files {
+        let res = (|| -> Result<(), String> {
+            let from = safe_join(src, rel)?;
+            let to = safe_join(dest, rel)?;
+            if let Some(d) = to.parent() {
+                std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
+            }
+            std::fs::copy(&from, &to).map_err(|e| format!("{rel}: {e}"))?;
+            if sha256_file(&from).ok() != sha256_file(&to).ok() {
+                return Err(format!("{rel}: the copy didn't match the original"));
+            }
+            // keep the modified time so nothing looks changed afterwards
+            if let Ok(mt) = std::fs::metadata(&from).and_then(|m| m.modified()) {
+                if let Ok(f) = std::fs::File::options().write(true).open(&to) {
+                    let _ = f.set_modified(mt);
+                }
+            }
+            Ok(())
+        })();
+        if let Err(e) = res {
+            let _ = std::fs::remove_dir_all(dest);
+            return Err(e);
+        }
+        bytes += seen.size;
+    }
+    Ok((w.files.len() as i64, bytes))
+}
+
+/// New managed project filled with a copy of `src`; the original is never touched.
+pub fn create_copy(v: &Vault, args: &Json, src: &Path) -> DbResult<Json> {
+    if !src.is_dir() {
+        return Err(format!("{} is not an accessible folder", src.display()));
+    }
+    let mut a = args.clone();
+    a.remove("linkPath");
+    a.remove("copyFrom");
+    let pr = crate::api::dispatch(v, "projects.create", &a)?;
+    let id = pr.str_of("id").unwrap_or_default();
+    let root = PathBuf::from(pr.str_of("rootPath").unwrap_or_default());
+    if dunce(src) == dunce(&root) || root.starts_with(dunce(src)) {
+        let _ = crate::projects::remove(v, &id, true);
+        return Err("Choose a folder outside Mothball's storage to copy from".into());
+    }
+    let ignore = v.db.one("SELECT ignore_globs FROM projects WHERE id=?", p![id.as_str()])?.map(|r| r.s("ignore_globs")).unwrap_or_default();
+    match copy_tree_verified(src, &root, &Ignore::parse(&ignore)) {
+        Ok((files, bytes)) => {
+            timeline::add(v, &id, "project", &format!("Copied {files} {} in", if files == 1 { "file" } else { "files" }), &format!("from {} ({} bytes); the original folder was not changed", src.display(), bytes), None, false)?;
+            Ok(crate::projects::get(v, &id)?.with("copied", files))
+        }
+        Err(e) => {
+            let _ = crate::projects::remove(v, &id, false);
+            let _ = std::fs::remove_dir_all(&root);
+            Err(format!("Copying failed ({e}). No project was created; your folder was not changed."))
+        }
+    }
+}
+
 /// Copies one project folder into `new_root`, verifies it, switches the
 /// project over and deletes the old folder. Returns (bytes, old folder kept).
 fn move_project(v: &Vault, id: &str, old: &Path, new_root: &Path) -> Result<(i64, bool), String> {
@@ -126,44 +193,15 @@ fn move_project(v: &Vault, id: &str, old: &Path, new_root: &Path) -> Result<(i64
         dest = new_root.join(format!("{name}-{n}"));
         n += 1;
     }
+    let bytes = if old.is_dir() {
+        copy_tree_verified(old, &dest, &Ignore::parse("")).map_err(|e| format!("{e}. Nothing was moved; the project is still in {}.", old.display()))?.1
+    } else {
+        std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+        0
+    };
     let cleanup = |d: &Path| {
         let _ = std::fs::remove_dir_all(d);
     };
-    let mut bytes = 0i64;
-    if old.is_dir() {
-        let w = walk(old, &Ignore::parse(""));
-        if let Some(e) = w.errors.first() {
-            return Err(format!("Couldn't read the whole folder ({e}); it was not moved."));
-        }
-        std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-        for (rel, seen) in &w.files {
-            let from = safe_join(old, rel)?;
-            let to = safe_join(&dest, rel)?;
-            let res = (|| -> Result<(), String> {
-                if let Some(d) = to.parent() {
-                    std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
-                }
-                std::fs::copy(&from, &to).map_err(|e| format!("{rel}: {e}"))?;
-                if sha256_file(&from).ok() != sha256_file(&to).ok() {
-                    return Err(format!("{rel}: the copy didn't match the original"));
-                }
-                // keep the modified time so nothing looks changed afterwards
-                if let Ok(mt) = std::fs::metadata(&from).and_then(|m| m.modified()) {
-                    if let Ok(f) = std::fs::File::options().write(true).open(&to) {
-                        let _ = f.set_modified(mt);
-                    }
-                }
-                Ok(())
-            })();
-            if let Err(e) = res {
-                cleanup(&dest);
-                return Err(format!("{e}. Nothing was moved; the project is still in {}.", old.display()));
-            }
-            bytes += seen.size;
-        }
-    } else {
-        std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-    }
     v.db.exec("UPDATE projects SET root_path=?, updated_at=? WHERE id=?", p![dest.to_string_lossy().to_string(), now_ms(), id])
         .inspect_err(|_| cleanup(&dest))?;
     timeline::add(v, id, "project", "Project folder moved", &format!("{} → {}", old.display(), dest.display()), None, false)?;
@@ -222,6 +260,34 @@ mod tests {
         assert_eq!(r.get("moved").unwrap().as_arr().unwrap().len(), 2);
         assert_eq!(info(&v).unwrap().get("isDefault").unwrap().as_bool(), Some(true));
         assert_eq!(std::fs::read(PathBuf::from(crate::projects::get(&v, &pid).unwrap().str_of("rootPath").unwrap()).join("plates/cat.3mf")).unwrap().len(), 50_000);
+    }
+
+    #[test]
+    fn copying_a_folder_in_leaves_the_original_alone() {
+        let (t, v) = crate::testutil::vault();
+        let src = t.0.join("OMEN old");
+        std::fs::create_dir_all(src.join("scripts")).unwrap();
+        std::fs::create_dir_all(src.join("node_modules/x")).unwrap();
+        std::fs::write(src.join("scripts/a.gsc"), b"init() {}").unwrap();
+        std::fs::write(src.join("node_modules/x/big.js"), b"x").unwrap();
+        let p = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "Old Omen").with("category", "software").with("copyFrom", src.to_string_lossy().to_string())).unwrap();
+        assert_eq!(p.str_of("mode").as_deref(), Some("managed"));
+        let root = PathBuf::from(p.str_of("rootPath").unwrap());
+        assert!(root.starts_with(root_dir_of(&v)));
+        assert_eq!(std::fs::read(root.join("scripts/a.gsc")).unwrap(), b"init() {}");
+        assert!(!root.join("node_modules").exists(), "ignored folders are not copied");
+        assert!(src.join("node_modules/x/big.js").exists() && src.join("scripts/a.gsc").exists(), "original untouched");
+        // the copy is separate: editing it doesn't touch the original
+        std::fs::write(root.join("scripts/a.gsc"), b"changed").unwrap();
+        assert_eq!(std::fs::read(src.join("scripts/a.gsc")).unwrap(), b"init() {}");
+        // a missing source creates nothing
+        let n = v.db.scalar_i64("SELECT count(*) FROM projects", p![]).unwrap();
+        assert!(crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "Nope").with("copyFrom", t.0.join("missing").to_string_lossy().to_string())).is_err());
+        assert_eq!(v.db.scalar_i64("SELECT count(*) FROM projects", p![]).unwrap(), n);
+    }
+
+    fn root_dir_of(v: &Vault) -> PathBuf {
+        dunce(&root(v))
     }
 
     /// An unreadable subfolder makes the move fail; the project must stay put.

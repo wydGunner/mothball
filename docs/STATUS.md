@@ -57,6 +57,8 @@ or not yet verified on Windows · ⛔ not implemented yet
 | Area | State | Notes |
 |---|---|---|
 | Built-in code editor | 🟡 | Monaco (bundled offline, workers included), syntax colors from the app theme, Ctrl+S, conflict detection if the file changes on disk, previous content kept as a version, CRLF/BOM preserved, full-width mode. Tested here with the plain-text stand-in; Monaco itself is first exercised by CI / your build |
+| Dependencies (files a project needs elsewhere) | 🟡 | attach a file (copy kept in version storage, SHA-256), status in place / missing / another project's version, put in place (unknown files replaced are kept and can be put back), automatic on Deploy and Launch. Tested here; not yet on Windows with a real game folder |
+| Add an existing folder as a copy | ✅ | verified copy into project storage; original untouched |
 | Bambu printer status | 🟡 | read-only MQTT: live progress, prints logged to the matching project, assign/remember for unmatched jobs. Tested against a fake printer (core + UI) and TLS pinning against a local TLS server in CI; not yet against a real printer |
 | Themes | ✅ | black UI, 10 single-hue or analogous palettes + custom shade, syntax highlighting follows the palette |
 | Overview | ✅ | read-only summary (attention items, details, file groups, next tasks, notes, activity) + Edit dialog |

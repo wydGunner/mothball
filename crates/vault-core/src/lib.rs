@@ -9,6 +9,7 @@ pub mod api;
 pub mod backup;
 pub mod db;
 pub mod deploy;
+pub mod deps;
 pub mod diff;
 pub mod files;
 pub mod git;

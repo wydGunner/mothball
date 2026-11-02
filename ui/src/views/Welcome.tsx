@@ -13,6 +13,7 @@ export function Welcome({ nav }: { nav: Nav }) {
   const [category, setCategory] = useState('general');
   const [guess, setGuess] = useState<null | { category: string; reason: string }>(null);
   const [busy, setBusy] = useState(false);
+  const [copy, setCopy] = useState(false);
   const act = useAction();
 
   const pick = async () => {
@@ -36,7 +37,7 @@ export function Welcome({ nav }: { nav: Nav }) {
 
   const create = async () => {
     setBusy(true);
-    const p = await act(() => call<Project>('projects.create', { name: name.trim(), description: '', category, status: 'Active', linkPath: mode === 'linked' ? path : null }));
+    const p = await act(() => call<Project>('projects.create', { name: name.trim(), description: '', category, status: 'Active', linkPath: mode === 'linked' && !copy ? path : null, copyFrom: mode === 'linked' && copy ? path : null }));
     if (p) {
       await act(() => call('files.scan', { projectId: p.id }));
       nav.refreshProjects();
@@ -93,11 +94,26 @@ export function Welcome({ nav }: { nav: Nav }) {
             </div>
             <div className="small dim" style={{ marginTop: 6 }}>This decides how files are grouped and which files get earlier versions kept. You can change it later.</div>
           </div>
+          {mode === 'linked' && <ImportChoice copy={copy} onChange={setCopy} />}
           <div className="row" style={{ justifyContent: 'flex-end' }}>
-            <button className="btn primary" disabled={busy || !name.trim()} onClick={create}>{busy ? (mode === 'linked' ? 'Adding & indexing…' : 'Creating…') : mode === 'linked' ? 'Add project' : 'Create project'}</button>
+            <button className="btn primary" disabled={busy || !name.trim()} onClick={create}>{busy ? (mode === 'linked' ? (copy ? 'Copying & indexing…' : 'Adding & indexing…') : 'Creating…') : mode === 'linked' ? 'Add project' : 'Create project'}</button>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** "Edit it where it is" vs "copy it into Mothball" for an existing folder. */
+export function ImportChoice({ copy, onChange }: { copy: boolean; onChange: (copy: boolean) => void }) {
+  return (
+    <div className="field"><label>How should Mothball use this folder?</label>
+      <div className="import-choice" role="radiogroup">
+        <label className={cx('opcard', !copy && 'on')}><input type="radio" checked={!copy} onChange={() => onChange(false)} />
+          <div><b>Work on it where it is</b><div className="small dim">Edits you make in Mothball (and in other programs) change these files directly. Nothing is moved.</div></div></label>
+        <label className={cx('opcard', copy && 'on')}><input type="radio" checked={copy} onChange={() => onChange(true)} />
+          <div><b>Make a copy in Mothball</b><div className="small dim">The folder is copied into Mothball's project storage and you work on the copy. The original stays exactly as it is.</div></div></label>
+      </div>
     </div>
   );
 }

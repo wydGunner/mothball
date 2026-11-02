@@ -584,6 +584,7 @@ pub fn remove(v: &Vault, id: &str, delete_managed_files: bool) -> DbResult<Json>
         Ok(())
     })?;
     let _ = crate::deploy::forget(v, id);
+    let _ = crate::deps::forget(v, id); // after the row is gone, so its copies count as unused
     Ok(Json::obj().with("removed", true).with("filesDeleted", deleted))
 }
 

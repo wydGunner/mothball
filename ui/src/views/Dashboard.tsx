@@ -4,7 +4,7 @@ import { call, pickFiles, pickFolder, revealPath, isTauri, type Project } from '
 import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, useLoad, useConfirm, usePrompt } from '../components/common';
 import { ago, bytes, CATEGORY_LABELS, cx, hiddenTypes, typeChoices } from '../format';
 import type { Nav } from '../main';
-import { Welcome } from './Welcome';
+import { Welcome, ImportChoice } from './Welcome';
 import { PrinterButton, PrinterPanel, usePrinters, usePrintHistory } from './Printers';
 import { LuPrinter } from 'react-icons/lu';
 
@@ -509,6 +509,7 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
   const setCategory = (c: string) => setCategoryRaw(c);
   const [status, setStatus] = useState('Active');
   const [path, setPath] = useState('');
+  const [copy, setCopy] = useState(false);
   const [busy, setBusy] = useState(false);
   const act = useAction();
   const browse = async () => {
@@ -522,7 +523,7 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
   };
   const create = async () => {
     setBusy(true);
-    const p = await act(() => call<Project>('projects.create', { name, description: desc, category, status, linkPath: mode === 'linked' ? path : null }));
+    const p = await act(() => call<Project>('projects.create', { name, description: desc, category, status, linkPath: mode === 'linked' && !copy ? path : null, copyFrom: mode === 'linked' && copy ? path : null }));
     if (p) {
       await act(() => call('files.scan', { projectId: p.id }));
       onCreated(p);
@@ -532,15 +533,15 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
   return (
     <Modal title="New project" onClose={onClose} footer={<>
       <button className="btn" onClick={onClose}>Cancel</button>
-      <button className="btn primary" disabled={busy || !name.trim() || (mode === 'linked' && !path.trim())} onClick={create}>{busy ? 'Creating & indexing…' : 'Create project'}</button>
+      <button className="btn primary" disabled={busy || !name.trim() || (mode === 'linked' && !path.trim())} onClick={create}>{busy ? (mode === 'linked' && copy ? 'Copying & indexing…' : 'Creating & indexing…') : 'Create project'}</button>
     </>}>
       <div className="seg" style={{ marginBottom: 14 }}>
-        <button className={cx(mode === 'linked' && 'on')} onClick={() => setMode('linked')}><LuLink /> Link existing folder</button>
+        <button className={cx(mode === 'linked' && 'on')} onClick={() => setMode('linked')}><LuLink /> Existing folder</button>
         <button className={cx(mode === 'managed' && 'on')} onClick={() => setMode('managed')}><LuFolderPlus /> Managed project</button>
       </div>
       <p className="muted small" style={{ marginTop: 0 }}>
         {mode === 'linked'
-          ? 'Mothball indexes the folder in place. Your files are never moved, renamed or reorganized.'
+          ? 'Add a folder you already have. Choose below whether to work on it in place or on a copy.'
           : 'Mothball creates a storage folder for this project. Import or drop files into it.'}
       </p>
       {mode === 'linked' && (
@@ -548,6 +549,7 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
           <div className="row"><input className="input mono" value={path} onChange={(e) => setPath(e.target.value)} placeholder="D:\Dev\OMEN" /><button className="btn" onClick={browse}><LuFolderOpen /> Browse…</button></div>
         </div>
       )}
+      {mode === 'linked' && <ImportChoice copy={copy} onChange={setCopy} />}
       <div className="field"><label>Name</label><input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="OMEN v2" /></div>
       <div className="field"><label>Description</label><textarea className="input" value={desc} onChange={(e) => setDesc(e.target.value)} rows={2} /></div>
       <div className="grid2">
