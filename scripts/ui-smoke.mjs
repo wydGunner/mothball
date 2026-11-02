@@ -109,8 +109,8 @@ await step('Create OMEN v2 linked project from the welcome screen', async () => 
   page.once('dialog', (d) => d.accept(omen));
   await page.getByRole('button', { name: /Add a folder I already have/ }).click();
   // the folder has GSC scripts, so the type is suggested
-  await page.getByText(/Suggested Game development because the folder has GSC scripts/).waitFor();
-  await page.locator('.wl-type.on').filter({ hasText: 'Game development' }).waitFor();
+  await page.getByText(/Suggested IW4X \/ MW2 mod because the folder has GSC scripts/).waitFor();
+  await page.locator('.wl-type.on').filter({ hasText: 'IW4X / MW2 mod' }).waitFor();
   if (shots) await page.screenshot({ path: join(shots, 'x-welcome-type.png') });
   await page.locator('.wl-form input.input').fill('OMEN v2');
   await page.locator('.wl-type').filter({ hasText: 'Software' }).click();
@@ -771,7 +771,7 @@ await step('New project as a copy; attach a dependency, put it in place, put the
   if (readFileSync(join(pr.rootPath, 'scripts', 'menu.gsc'), 'utf8') !== 'init() {}\n') throw new Error('copy content');
   writeFileSync(join(pr.rootPath, 'scripts', 'menu.gsc'), 'edited copy\n');
   if (readFileSync(join(orig, 'scripts', 'menu.gsc'), 'utf8') !== 'init() {}\n') throw new Error('original changed');
-  await api('projects.update', { id: pr.id, patch: { category: 'addon' } });
+  await api('projects.update', { id: pr.id, patch: { category: 'addon', module: { subtype: 'iw4x' } } });
 
   // a game folder with the stock DLL, and the modded one this version needs
   const game = join(tmp, 'MW2'); mkdirSync(game, { recursive: true });
@@ -802,14 +802,48 @@ await step('New project as a copy; attach a dependency, put it in place, put the
   await row.getByText('A different file is in place').waitFor();
   if (readFileSync(join(game, 'iw4x.dll'), 'utf8') !== 'stock') throw new Error('original not restored');
   await toastGone();
-  // addon details for a non-WoW mod don't ask WoW questions
+  // an IW4X mod gets IW4X details, not WoW ones; switching the subtype switches the fields
+  await page.locator('[data-panel=details]').getByText('IW4X mod details').waitFor();
   await page.locator('[data-panel=details]').getByRole('button', { name: 'Edit' }).click();
   const ed = page.locator('.modal');
-  await ed.getByText('Client / game build').waitFor();
-  if (await ed.getByText('Saved variables').count()) throw new Error('WoW field shown for a non-WoW mod');
-  await ed.getByPlaceholder(/World of Warcraft \(Retail\)/).fill('World of Warcraft (Retail)');
+  await ed.getByText('IW4X client build').waitFor();
+  await ed.getByText('Who needs it').waitFor();
+  if (await ed.getByText('Saved variables').count()) throw new Error('WoW field shown for an IW4X mod');
+  await ed.getByRole('button', { name: 'General' }).click();
+  const sel = ed.getByRole('combobox', { name: 'Project type' });
+  const groups = await sel.locator('optgroup').evaluateAll((g) => g.map((x) => x.label + ': ' + [...x.querySelectorAll('option')].map((o) => o.textContent).join(', ')));
+  if (!groups.some((g) => g.startsWith('Game addon / mod: World of Warcraft addon, IW4X / MW2 mod, Other game mod'))) throw new Error('subtypes not grouped: ' + JSON.stringify(groups));
+  await sel.selectOption({ label: 'World of Warcraft addon' });
+  await ed.getByRole('button', { name: /WoW addon details/ }).click();
   await ed.getByText('Saved variables').waitFor();
+  if (await ed.getByText('IW4X client build').count()) throw new Error('IW4X field shown for a WoW addon');
   await ed.getByRole('button', { name: 'Cancel' }).click();
+
+  // your own type, with your own fields
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.locator('.set-link').filter({ hasText: 'Project types' }).click();
+  await page.locator('.typeopt.sub').filter({ hasText: 'IW4X / MW2 mod' }).waitFor();
+  await page.getByRole('button', { name: 'New type' }).click();
+  await page.getByPlaceholder('Plutonium T6 mod').fill('Plutonium T6 mod');
+  await page.locator('.printer-form select').selectOption('addon');
+  await page.getByPlaceholder('e.g. Server name').fill('Server name');
+  await page.getByRole('button', { name: 'Add field' }).click();
+  await page.getByRole('textbox', { name: 'Field 2' }).fill('Patch notes');
+  await page.locator('.printer-form label').filter({ hasText: 'Long text' }).nth(1).locator('input').check();
+  await page.getByRole('button', { name: 'Create type' }).click();
+  await page.locator('.printer-set-row').filter({ hasText: 'Plutonium T6 mod' }).getByText(/based on Game addon \/ mod · 2 fields/).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-custom-types.png') });
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  await page.locator('.pcard').filter({ hasText: 'OMEN old' }).click();
+  await page.locator('[data-panel=details]').getByRole('button', { name: 'Edit' }).click();
+  await ed.getByRole('button', { name: 'General' }).click();
+  await sel.selectOption({ label: 'Plutonium T6 mod' });
+  await ed.getByRole('button', { name: /Plutonium T6 mod details/ }).click();
+  await ed.getByText('Server name').waitFor();
+  await ed.locator('.field').filter({ hasText: 'Server name' }).locator('input').fill('Trickshot Lobby #1');
+  await ed.getByRole('button', { name: 'Save' }).click();
+  await page.locator('[data-panel=details]').getByText('Trickshot Lobby #1').waitFor();
+  await page.locator('[data-panel=about]').getByText('Plutonium T6 mod').waitFor();
   if (!(await api('projects.remove', { id: pr.id, deleteManagedFiles: true })).ok) throw new Error('remove failed');
   await page.getByRole('button', { name: 'Dashboard' }).click();
 });

@@ -132,7 +132,9 @@ pub fn key_version_exts(category: &str) -> &'static [&'static str] {
 
 /// Best guess at a folder's project type from what's in it (first ~5000
 /// files). Returns the category and a short reason, or None when unclear.
-pub fn guess(root: &std::path::Path) -> Option<(String, String)> {
+/// (category, reason, subtype) — the subtype is set where it's unmistakable
+/// ("wow" for a .toc addon, "iw4x" for Call of Duty GSC scripts).
+pub fn guess(root: &std::path::Path) -> Option<(String, String, Option<String>)> {
     let w = crate::files::walk(root, &crate::files::Ignore::parse("Library/\nnode_modules/\ntarget/\nTemp/"));
     let mut score: std::collections::HashMap<&'static str, f64> = std::collections::HashMap::new();
     let mut tops: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -145,13 +147,15 @@ pub fn guess(root: &std::path::Path) -> Option<(String, String)> {
     let has = |e: &str| exts.get(e).copied().unwrap_or(0);
     // unmistakable markers first
     if has("toc") > 0 && has("lua") > 0 {
-        return Some(("addon".into(), "has a .toc file and Lua code".into()));
+        return Some(("addon".into(), "has a .toc file and Lua code".into(), Some("wow".into())));
     }
     if tops.contains("assets") && tops.contains("projectsettings") {
-        return Some(("game".into(), "looks like a Unity project".into()));
+        return Some(("game".into(), "looks like a Unity project".into(), None));
     }
     if has("gsc") + has("csc") > 0 {
-        return Some(("game".into(), "has GSC scripts".into()));
+        // Call of Duty script mods (IW4X uses .gsc; .csc is client-side in later games)
+        let sub = if has("csc") == 0 { Some("iw4x".to_string()) } else { Some("other".to_string()) };
+        return Some(("addon".into(), "has GSC scripts".into(), sub));
     }
     for c in crate::projects::CATEGORIES {
         let keys = key_version_exts(c);
@@ -196,7 +200,7 @@ pub fn guess(root: &std::path::Path) -> Option<(String, String)> {
         "documents" => "is mostly documents",
         _ => "matches its file types",
     };
-    Some((best.to_string(), reason.to_string()))
+    Some((best.to_string(), reason.to_string(), None))
 }
 
 /// Everything the new-project dialog shows about a project type.
@@ -265,6 +269,8 @@ mod tests {
         };
         let g = |d: std::path::PathBuf| guess(&d).map(|x| x.0);
         assert_eq!(g(mk("wow", &["WhatsLeft.toc", "Core.lua", "Media/icon.tga"])), Some("addon".into()));
+        assert_eq!(guess(&mk("wow2", &["A.toc", "a.lua"])).unwrap().2.as_deref(), Some("wow"));
+        assert_eq!(guess(&mk("omen", &["scripts/mp/menu.gsc", "mod.ff"])).map(|x| (x.0, x.2)), Some(("addon".into(), Some("iw4x".into()))));
         assert_eq!(g(mk("vid", &["montage.veg", "clips/a.mp4", "clips/b.mp4", "thumb.png"])), Some("video".into()));
         assert_eq!(g(mk("ae", &["intro.aep", "render/intro.mp4"])), Some("motion".into()));
         assert_eq!(g(mk("print", &["frame.3mf", "frame.stl", "photo.jpg"])), Some("3d-printing".into()));

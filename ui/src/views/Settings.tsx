@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import { LuFolderOpen, LuShieldCheck, LuDatabaseBackup, LuRefreshCw, LuInfo, LuTriangleAlert, LuArchiveRestore, LuPalette, LuFileCode, LuHardDrive, LuRadar, LuShapes, LuPrinter } from 'react-icons/lu';
+import { LuFolderOpen, LuShieldCheck, LuDatabaseBackup, LuRefreshCw, LuInfo, LuTriangleAlert, LuArchiveRestore, LuPalette, LuFileCode, LuHardDrive, LuRadar, LuShapes, LuPrinter, LuPencil, LuTrash2, LuPlus } from 'react-icons/lu';
+import { SUBTYPES, saveCustomTypes, typeKeyOf, useTypes, type CustomType } from '../types';
 import { PrinterSettings } from './Printers';
 import { call, pickFolder, pickFiles, revealPath, isTauri } from '../ipc';
 import { Modal, ProjectIcon, useAction, useConfirm, useLoad, useToast } from '../components/common';
@@ -362,31 +363,104 @@ function UpdateCheck() {
 
 function ProjectTypes({ nav }: { nav: Nav }) {
   const [hidden, setHidden] = useState<string[]>(hiddenTypes);
+  useTypes();
   const used = new Map<string, number>();
-  for (const p of nav.projects) used.set(p.category, (used.get(p.category) || 0) + 1);
+  for (const p of nav.projects) {
+    for (const k of new Set([p.category, typeKeyOf(p.category, p.module)])) used.set(k, (used.get(k) || 0) + 1);
+  }
   const toggle = (k: string, on: boolean) => { const n = on ? hidden.filter((x) => x !== k) : [...hidden, k]; setHidden(n); setHiddenTypes(n); };
   const all = Object.entries(CATEGORY_LABELS);
-  const shown = all.length - hidden.length;
+  const shown = all.filter(([k]) => !hidden.includes(k)).length;
+  const row = (k: string, label: string, icon: string, sub = false) => {
+    const on = !hidden.includes(k);
+    return (
+      <label key={k} className={cx('typeopt', on && 'on', sub && 'sub')}>
+        <input type="checkbox" checked={on} disabled={!sub && on && shown <= 1} onChange={(e) => toggle(k, e.target.checked)} />
+        <ProjectIcon category={icon} size={sub ? 18 : 22} />
+        <span className="grow">{label}</span>
+        {used.get(k) ? <span className="small dim">{used.get(k)} project{used.get(k) === 1 ? '' : 's'}</span> : null}
+      </label>
+    );
+  };
   return (
-    <div className="card pad">
-      <p className="muted small" style={{ marginTop: 0 }}>Turn off the types you don’t use so they don’t clutter the list when you add or edit a project. Projects that already use a type keep it, and it still shows for them.</p>
-      <div className="typegrid">
-        {all.map(([k, v]) => {
-          const on = !hidden.includes(k);
-          return (
-            <label key={k} className={cx('typeopt', on && 'on')}>
-              <input type="checkbox" checked={on} disabled={on && shown <= 1} onChange={(e) => toggle(k, e.target.checked)} />
-              <ProjectIcon category={k} size={22} />
-              <span className="grow">{v}</span>
-              {used.get(k) ? <span className="small dim">{used.get(k)} project{used.get(k) === 1 ? '' : 's'}</span> : null}
-            </label>
-          );
-        })}
+    <>
+      <div className="card pad">
+        <p className="muted small" style={{ marginTop: 0 }}>Turn off the types you don’t use so they don’t clutter the list when you add or edit a project. Projects that already use a type keep it, and it still shows for them.</p>
+        <div className="typegrid">
+          {all.map(([k, v]) => (
+            <div key={k} className="typegroup">
+              {row(k, v, k)}
+              {!hidden.includes(k) && (SUBTYPES[k] || []).map((st) => row(`${k}:${st.id}`, st.label, k, true))}
+            </div>
+          ))}
+        </div>
+        <div className="row small" style={{ marginTop: 10 }}>
+          <button className="btn ghost sm" onClick={() => { const n = all.map(([k]) => k).filter((k) => !used.has(k)); setHidden(n); setHiddenTypes(n); }}>Only the types I use</button>
+          <button className="btn ghost sm" onClick={() => { setHidden([]); setHiddenTypes([]); }}>Show all</button>
+        </div>
       </div>
-      <div className="row small" style={{ marginTop: 10 }}>
-        <button className="btn ghost sm" onClick={() => { const n = all.map(([k]) => k).filter((k) => !used.has(k)); setHidden(n); setHiddenTypes(n); }}>Only the types I use</button>
-        <button className="btn ghost sm" onClick={() => { setHidden([]); setHiddenTypes([]); }}>Show all</button>
-      </div>
+      <CustomTypes nav={nav} />
+    </>
+  );
+}
+
+const blankType = (): CustomType => ({ id: '', name: '', base: 'general', fields: [{ key: '', label: '' }] });
+
+/** Types the user defines: a name, a built-in type to base file handling on, and their own detail fields. */
+function CustomTypes({ nav }: { nav: Nav }) {
+  const types = useTypes();
+  const [edit, setEdit] = useState<CustomType | null>(null);
+  const act = useAction();
+  const confirm = useConfirm();
+  const count = (t: CustomType) => nav.projects.filter((p) => p.module?.subtype === `custom:${t.id}`).length;
+  const save = async () => {
+    if (!edit) return;
+    const next = edit.id ? types.map((t) => (t.id === edit.id ? edit : t)) : [...types, edit];
+    if (await act(() => saveCustomTypes(next), 'Type saved')) setEdit(null);
+  };
+  return (
+    <div className="card pad" style={{ marginTop: 16 }}>
+      <h2>Your own types</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>Make a type for anything the built-in ones don’t fit — a Plutonium mod, a Minecraft datapack, a cosplay build — with the detail fields you want filled in. It appears in the project type list under “Your types”.</p>
+      {types.map((t) => (
+        <div key={t.id} className="printer-set-row">
+          <ProjectIcon category={t.base} size={20} />
+          <div className="grow" style={{ minWidth: 0 }}>
+            <b>{t.name}</b> <span className="small dim">based on {CATEGORY_LABELS[t.base]} · {t.fields.length} field{t.fields.length === 1 ? '' : 's'}{count(t) ? ` · ${count(t)} project${count(t) === 1 ? '' : 's'}` : ''}</span>
+          </div>
+          <button className="btn ghost sm icon" title="Edit" aria-label={`Edit ${t.name}`} onClick={() => setEdit(JSON.parse(JSON.stringify(t)))}><LuPencil /></button>
+          <button className="btn ghost sm icon" title="Delete" aria-label={`Delete ${t.name}`} onClick={async () => {
+            if (await confirm({ title: `Delete “${t.name}”?`, confirm: 'Delete type', danger: true, body: <>{count(t) ? `${count(t)} project${count(t) === 1 ? '' : 's'} use it; they become ${CATEGORY_LABELS[t.base]} and keep what was filled in, but the fields won't show. ` : ''}This can’t be undone.</> })) {
+              await act(() => saveCustomTypes(types.filter((x) => x.id !== t.id)));
+            }
+          }}><LuTrash2 /></button>
+        </div>
+      ))}
+      {edit ? (
+        <div className="printer-form" style={{ gridTemplateColumns: '1fr 1fr' }}>
+          <div className="field"><label>Name</label><input className="input" value={edit.name} placeholder="Plutonium T6 mod" onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></div>
+          <div className="field"><label>Based on</label>
+            <select className="input" value={edit.base} onChange={(e) => setEdit({ ...edit, base: e.target.value })}>{Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+          </div>
+          <div className="small dim" style={{ gridColumn: '1 / -1', marginTop: -4 }}>“Based on” decides how files are grouped and which files get earlier versions kept.</div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label className="small" style={{ fontWeight: 600 }}>Detail fields</label>
+            {edit.fields.map((f, i) => (
+              <div key={i} className="row" style={{ marginTop: 6 }}>
+                <input className="input grow" value={f.label} placeholder={i === 0 ? 'e.g. Server name' : 'Field name'} aria-label={`Field ${i + 1}`}
+                  onChange={(e) => setEdit({ ...edit, fields: edit.fields.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)) })} />
+                <label className="row small" style={{ gap: 4, whiteSpace: 'nowrap' }}><input type="checkbox" checked={!!f.multiline} onChange={(e) => setEdit({ ...edit, fields: edit.fields.map((x, j) => (j === i ? { ...x, multiline: e.target.checked } : x)) })} /> Long text</label>
+                <button className="btn ghost sm icon" title="Remove field" aria-label={`Remove field ${i + 1}`} onClick={() => setEdit({ ...edit, fields: edit.fields.filter((_, j) => j !== i) })}><LuTrash2 /></button>
+              </div>
+            ))}
+            <button className="btn ghost sm" style={{ marginTop: 6 }} onClick={() => setEdit({ ...edit, fields: [...edit.fields, { key: '', label: '' }] })}><LuPlus /> Add field</button>
+          </div>
+          <div className="row" style={{ gridColumn: '1 / -1', justifyContent: 'flex-end' }}>
+            <button className="btn" onClick={() => setEdit(null)}>Cancel</button>
+            <button className="btn primary" disabled={!edit.name.trim()} onClick={save}>{edit.id ? 'Save type' : 'Create type'}</button>
+          </div>
+        </div>
+      ) : <button className="btn" style={{ marginTop: 10 }} onClick={() => setEdit(blankType())}><LuPlus /> New type</button>}
     </div>
   );
 }

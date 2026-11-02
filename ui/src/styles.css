@@ -774,3 +774,6 @@ input[type=checkbox] { accent-color: var(--accent); }
 .dep-row { padding: 8px 0; border-bottom: 1px solid var(--line); }
 .dep-row:last-of-type { border-bottom: 0; }
 .import-choice { display: grid; gap: 8px; }
+.typegroup { display: flex; flex-direction: column; gap: 4px; break-inside: avoid; margin-bottom: 6px; }
+.typegrid:has(.typegroup) { display: block; columns: 2 260px; column-gap: 6px; }
+.typeopt.sub { margin-left: 22px; padding: 4px 10px; font-size: 13px; }

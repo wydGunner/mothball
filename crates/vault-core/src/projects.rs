@@ -760,3 +760,125 @@ mod tests {
         assert!(dir.is_dir(), "linked folder must never be deleted");
     }
 }
+
+/// Project types the user defined (Settings → Project types): a name, the
+/// built-in type it's based on (file groups, which files get versions), and
+/// its own detail fields. Projects pick one as `module.subtype = "custom:<id>"`.
+pub fn custom_types(v: &Vault) -> DbResult<Json> {
+    let s = v.db.one("SELECT value FROM meta WHERE key='custom-types'", p![])?.map(|r| r.s("value")).unwrap_or_default();
+    Ok(Json::parse(&s).ok().filter(|j| j.as_arr().is_some()).unwrap_or(Json::Arr(vec![])))
+}
+
+pub fn save_custom_types(v: &Vault, types: &Json) -> DbResult<Json> {
+    let mut out = Vec::new();
+    for t in types.as_arr().ok_or("expected a list of types")? {
+        let name = t.str_of("name").unwrap_or_default().trim().to_string();
+        if name.is_empty() {
+            return Err("Every type needs a name".into());
+        }
+        let base = t.str_of("base").unwrap_or_else(|| "general".into());
+        if !CATEGORIES.contains(&base.as_str()) {
+            return Err(format!("Unknown base type {base}"));
+        }
+        let id = t.str_of("id").filter(|s| !s.is_empty()).unwrap_or_else(|| new_id()[..8].to_string());
+        let mut fields = Vec::new();
+        let mut keys = std::collections::HashSet::new();
+        for f in t.get("fields").and_then(|f| f.as_arr()).cloned().unwrap_or_default() {
+            let label = f.str_of("label").unwrap_or_default().trim().to_string();
+            if label.is_empty() {
+                continue;
+            }
+            // keep a field's key once it exists, so renaming a label keeps its values
+            let mut key = f.str_of("key").filter(|k| !k.is_empty()).unwrap_or_else(|| format!("c_{}", slugify(&label).replace('-', "_")));
+            while !keys.insert(key.clone()) {
+                key.push('_');
+            }
+            fields.push(Json::obj().with("key", key).with("label", label).with("multiline", f.get("multiline").and_then(|m| m.as_bool()).unwrap_or(false)));
+        }
+        out.push(Json::obj().with("id", id).with("name", name).with("base", base).with("fields", Json::Arr(fields)));
+    }
+    let j = Json::Arr(out);
+    v.db.exec("INSERT OR REPLACE INTO meta(key,value) VALUES ('custom-types',?)", p![j.to_string()])?;
+    Ok(j)
+}
+
+/// One-time: give existing addon projects a subtype from their files
+/// (.toc → WoW addon, .gsc → IW4X mod). Projects that already have one, or
+/// whose files say nothing, are left alone.
+pub fn infer_subtypes(v: &Vault) -> DbResult<usize> {
+    if v.db.one("SELECT 1 FROM meta WHERE key='subtypes-inferred'", p![])?.is_some() {
+        return Ok(0);
+    }
+    let mut n = 0;
+    for r in v.db.query("SELECT id, module_json FROM projects WHERE category='addon'", p![])? {
+        let mut m = Json::parse(&r.s("module_json")).unwrap_or(Json::obj());
+        if m.get("subtype").is_some() {
+            continue;
+        }
+        let count = |ext: &str| v.db.scalar_i64("SELECT count(*) FROM files WHERE project_id=? AND ext=? AND state='present'", p![r.s("id"), ext]).unwrap_or(0);
+        let sub = if count("toc") > 0 { "wow" } else if count("gsc") > 0 && count("csc") == 0 { "iw4x" } else { continue };
+        m.set("subtype", sub);
+        v.db.exec("UPDATE projects SET module_json=? WHERE id=?", p![m.to_string(), r.s("id")])?;
+        n += 1;
+    }
+    v.db.exec("INSERT OR REPLACE INTO meta(key,value) VALUES ('subtypes-inferred', '1')", p![])?;
+    Ok(n)
+}
+
+#[cfg(test)]
+mod custom_type_tests {
+    use super::*;
+
+    #[test]
+    fn custom_types_keep_field_keys_across_renames() {
+        let (_t, v) = crate::testutil::vault();
+        let saved = save_custom_types(&v, &Json::Arr(vec![Json::obj().with("name", "Plutonium T6 mod").with("base", "addon").with("fields", Json::Arr(vec![
+            Json::obj().with("label", "Server name"),
+            Json::obj().with("label", "Server name"),
+            Json::obj().with("label", "Notes").with("multiline", true),
+            Json::obj().with("label", "  "),
+        ]))])).unwrap();
+        let t = saved.as_arr().unwrap()[0].clone();
+        let f = t.get("fields").unwrap().as_arr().unwrap().clone();
+        assert_eq!(f.len(), 3, "blank labels dropped");
+        assert_eq!(f[0].str_of("key").as_deref(), Some("c_server_name"));
+        assert_ne!(f[0].str_of("key"), f[1].str_of("key"), "duplicate labels get distinct keys");
+        // rename a field: its key (and so its stored values) stays
+        let mut renamed = f.clone();
+        renamed[0].set("label", "Server");
+        let again = save_custom_types(&v, &Json::Arr(vec![t.clone().with("fields", Json::Arr(renamed))])).unwrap();
+        let g = again.as_arr().unwrap()[0].get("fields").unwrap().as_arr().unwrap().clone();
+        assert_eq!(g[0].str_of("key").as_deref(), Some("c_server_name"));
+        assert_eq!(again.as_arr().unwrap()[0].str_of("id"), t.str_of("id"));
+        assert_eq!(custom_types(&v).unwrap(), again);
+        assert!(save_custom_types(&v, &Json::Arr(vec![Json::obj().with("name", "x").with("base", "nope")])).is_err());
+    }
+
+    #[test]
+    fn existing_addons_get_a_subtype_from_their_files_once() {
+        let (t, v) = crate::testutil::vault();
+        let mk = |name: &str, files: &[&str]| {
+            let d = t.0.join(name);
+            for f in files {
+                let p = d.join(f);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(p, "x").unwrap();
+            }
+            let id = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", name).with("category", "addon").with("linkPath", d.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+            crate::files::scan(&v, &id).unwrap();
+            id
+        };
+        let wow = mk("BarSwap", &["BarSwap.toc", "core.lua"]);
+        let omen = mk("Omen", &["scripts/mp/menu.gsc"]);
+        let other = mk("Thing", &["readme.txt"]);
+        // the vault opened before these existed already ran it once; reset for the test
+        v.db.exec("DELETE FROM meta WHERE key='subtypes-inferred'", p![]).unwrap();
+        assert_eq!(infer_subtypes(&v).unwrap(), 2);
+        let sub = |id: &str| get(&v, id).unwrap().get("module").unwrap().str_of("subtype");
+        assert_eq!((sub(&wow).as_deref(), sub(&omen).as_deref(), sub(&other)), (Some("wow"), Some("iw4x"), None));
+        // only once: a later change of mind isn't overridden
+        update(&v, &omen, &Json::obj().with("module", Json::obj().with("subtype", "other"))).unwrap();
+        assert_eq!(infer_subtypes(&v).unwrap(), 0);
+        assert_eq!(sub(&omen).as_deref(), Some("other"));
+    }
+}

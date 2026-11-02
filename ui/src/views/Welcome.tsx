@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { LuArrowLeft, LuArrowRight, LuFolderOpen, LuFolderPlus, LuArchiveRestore, LuX, LuFileText, LuSearch, LuHistory } from 'react-icons/lu';
 import { call, pickFolder, type Project } from '../ipc';
 import { ProjectIcon, useAction } from '../components/common';
-import { CATEGORY_LABELS, cx, hiddenTypes, typeChoices } from '../format';
+import { cx, hiddenTypes } from '../format';
+import { splitKey, typeGroups, typeLabel, withType, useTypes } from '../types';
 import type { Nav } from '../main';
 
 /** Shown instead of an empty dashboard: add the first project in two steps. */
@@ -11,7 +12,8 @@ export function Welcome({ nav }: { nav: Nav }) {
   const [path, setPath] = useState('');
   const [name, setName] = useState('');
   const [category, setCategory] = useState('general');
-  const [guess, setGuess] = useState<null | { category: string; reason: string }>(null);
+  const [guess, setGuess] = useState<null | { category: string; reason: string; subtype?: string }>(null);
+  useTypes();
   const [busy, setBusy] = useState(false);
   const [copy, setCopy] = useState(false);
   const act = useAction();
@@ -26,18 +28,19 @@ export function Welcome({ nav }: { nav: Nav }) {
   useEffect(() => {
     if (mode !== 'linked' || !path) { setGuess(null); return; }
     let live = true;
-    call<{ category: string; reason: string } | null>('profiles.guess', { path }).then((g) => {
+    call<{ category: string; reason: string; subtype?: string } | null>('profiles.guess', { path }).then((g) => {
       if (!live) return;
-      const ok = g && !hiddenTypes().includes(g.category) ? g : null;
+      const key = g ? (g.subtype ? `${g.category}:${g.subtype}` : g.category) : '';
+      const ok = g && !hiddenTypes().includes(g.category) && !hiddenTypes().includes(key) ? g : null;
       setGuess(ok);
-      if (ok) setCategory(ok.category);
+      if (ok) setCategory(key);
     }).catch(() => {});
     return () => { live = false; };
   }, [mode, path]);
 
   const create = async () => {
     setBusy(true);
-    const p = await act(() => call<Project>('projects.create', { name: name.trim(), description: '', category, status: 'Active', linkPath: mode === 'linked' && !copy ? path : null, copyFrom: mode === 'linked' && copy ? path : null }));
+    const p = await act(() => call<Project>('projects.create', { name: name.trim(), description: '', category: splitKey(category).category, module: withType({}, category), status: 'Active', linkPath: mode === 'linked' && !copy ? path : null, copyFrom: mode === 'linked' && copy ? path : null }));
     if (p) {
       await act(() => call('files.scan', { projectId: p.id }));
       nav.refreshProjects();
@@ -84,11 +87,11 @@ export function Welcome({ nav }: { nav: Nav }) {
             <input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="My project" onKeyDown={(e) => e.key === 'Enter' && name.trim() && !busy && create()} />
           </div>
           <div className="field"><label>What kind of project is it?</label>
-            {guess && <div className="small muted" style={{ marginBottom: 6 }}>Suggested <b>{CATEGORY_LABELS[guess.category]}</b> because the folder {guess.reason}.</div>}
+            {guess && <div className="small muted" style={{ marginBottom: 6 }}>Suggested <b>{typeLabel(guess.subtype ? `${guess.category}:${guess.subtype}` : guess.category)}</b> because the folder {guess.reason}.</div>}
             <div className="wl-types" role="radiogroup">
-              {typeChoices(category).map(([k, v]) => (
+              {typeGroups(category).flatMap((g) => g.options).map(([k, v]) => (
                 <button key={k} role="radio" aria-checked={category === k} className={cx('wl-type', category === k && 'on')} onClick={() => setCategory(k)}>
-                  <ProjectIcon category={k} size={26} /><span>{v}</span>
+                  <ProjectIcon category={splitKey(k).category} size={26} /><span>{v}</span>
                 </button>
               ))}
             </div>

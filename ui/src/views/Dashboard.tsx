@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine, LuImage, LuFileCode, LuUpload, LuCircleCheck, LuHistory } from 'react-icons/lu';
 import { call, pickFiles, pickFolder, revealPath, isTauri, type Project } from '../ipc';
 import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, useLoad, useConfirm, usePrompt } from '../components/common';
-import { ago, bytes, CATEGORY_LABELS, cx, hiddenTypes, typeChoices } from '../format';
+import { ago, bytes, cx, hiddenTypes } from '../format';
 import type { Nav } from '../main';
 import { Welcome, ImportChoice } from './Welcome';
+import { splitKey, typeKeyOf, typeLabel, withType, useTypes } from '../types';
+import { TypeSelect } from '../components/TypeSelect';
 import { PrinterButton, PrinterPanel, usePrinters, usePrintHistory } from './Printers';
 import { LuPrinter } from 'react-icons/lu';
 
@@ -12,6 +14,7 @@ type Sort = 'custom' | 'recent' | 'name' | 'updated' | 'created' | 'size' | 'pro
 const SORTS: [Sort, string][] = [['custom', 'My order (drag cards)'], ['recent', 'Recently opened'], ['updated', 'Latest activity'], ['name', 'Name'], ['created', 'Newest'], ['size', 'Storage used'], ['progress', 'Progress']];
 
 export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
+  useTypes(); // re-render when custom type names change
   const [mode, setMode] = useState<'grid' | 'list'>(() => (localStorage.getItem('pv.dash') as any) || 'grid');
   const [status, setStatus] = useState('');
   const [category, setCategory] = useState('');
@@ -49,7 +52,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   const list = useMemo(() => {
     const t = text.toLowerCase();
     const out = nav.projects.filter((p) =>
-      (groupF === null || p.group === groupF) && (!status || p.status === status) && (!category || p.category === category) && (!tag || p.tags.includes(tag)) && (!favOnly || p.favorite) &&
+      (groupF === null || p.group === groupF) && (!status || p.status === status) && (!category || typeKeyOf(p.category, p.module) === category) && (!tag || p.tags.includes(tag)) && (!favOnly || p.favorite) &&
       (!attention || (p.staleDocs || 0) + p.pendingReviews + p.missingFiles > 0 || !p.rootAvailable) &&
       (!t || p.name.toLowerCase().includes(t) || p.description.toLowerCase().includes(t)));
     const by: Record<Sort, (a: Project, b: Project) => number> = {
@@ -106,7 +109,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
     groupF !== null && { key: 'g', label: `Group: ${groupF || 'Ungrouped'}`, clear: () => setGroupF(null) },
     attention && { key: 'att', label: 'Needs attention', clear: () => setAttention(false) },
     status && { key: 's', label: `Status: ${status}`, clear: () => setStatus('') },
-    category && { key: 'c', label: CATEGORY_LABELS[category], clear: () => setCategory('') },
+    category && { key: 'c', label: typeLabel(category), clear: () => setCategory('') },
     tag && { key: 't', label: `#${tag}`, clear: () => setTag('') },
   ].filter(Boolean) as { key: string; label: string; clear: () => void }[];
 
@@ -165,7 +168,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
           ] },
           ...(allGroups.length ? [{ title: 'Group', items: [...allGroups, ''].map((g) => ({ key: 'g:' + g, label: g || 'Ungrouped', checked: groupF === g, onSelect: () => setGroupF(groupF === g ? null : g) })) }] : []),
           { title: 'Status', items: (statuses.data || []).map((x) => ({ key: x.name, label: x.name, checked: status === x.name, onSelect: () => setStatus(status === x.name ? '' : x.name) })) },
-          { title: 'Project type', items: Object.entries(CATEGORY_LABELS).filter(([k]) => nav.projects.some((p) => p.category === k)).map(([k, v]) => ({ key: k, label: v, checked: category === k, onSelect: () => setCategory(category === k ? '' : k) })) },
+          { title: 'Project type', items: [...new Set(nav.projects.map((p) => typeKeyOf(p.category, p.module)))].map((k) => [k, typeLabel(k)]).sort((a, b) => a[1].localeCompare(b[1])).map(([k, v]) => ({ key: k, label: v, checked: category === k, onSelect: () => setCategory(category === k ? '' : k) })) },
           { title: 'Tag', items: allTags.map((t) => ({ key: t, label: t, checked: tag === t, onSelect: () => setTag(tag === t ? '' : t) })) },
         ]} />
         <Dropdown label={<>Sort: {SORTS.find((x) => x[0] === sort)?.[1]}</>} sections={[{ items: SORTS.map(([k, l]) => ({ key: k, label: l, checked: sort === k, onSelect: () => setSort(k) })) }]} width={200} />
@@ -217,7 +220,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
               <tr key={p.id} className="click" draggable onDragStart={(e) => { e.dataTransfer.setData('text/pv-project', p.id); e.dataTransfer.effectAllowed = 'move'; }} onClick={() => nav.go({ view: 'project', id: p.id })} onContextMenu={(e) => ctx(e, p)}>
                 <td><button className={cx('star', p.favorite && 'on')} onClick={(e) => { e.stopPropagation(); toggleFav(p); }}><LuStar fill={p.favorite ? 'currentColor' : 'none'} /></button></td>
                 <td><div className="row"><ProjectIcon category={p.category} icon={p.icon} color={p.color} size={22} /><b>{p.name}</b>{p.tags.slice(0, 3).map((t) => <span className="tag" key={t}>{t}</span>)}</div></td>
-                <td><StatusPill status={p.status} colors={colors} /></td><td className="muted">{CATEGORY_LABELS[p.category]}</td>
+                <td><StatusPill status={p.status} colors={colors} /></td><td className="muted">{typeLabel(typeKeyOf(p.category, p.module))}</td>
                 <td style={{ width: 110 }}><div className="progress"><div style={{ width: `${p.progress}%` }} /></div></td>
                 <td>{p.fileCount}{!p.rootAvailable && <LuTriangleAlert color="var(--bad)" title="Folder not reachable" />}</td><td>{bytes(p.bytes)}</td>
                 <td className="muted">{p.latestActivity ? `${p.latestActivity} · ${ago(p.latestActivityAt)}` : '—'}</td><td className="muted">{ago(p.createdAt)}</td>
@@ -485,7 +488,7 @@ function ProjectCard({ p, colors, onOpen, onMenu, onFav, onPictureChanged, dropS
         </div>
         {p.description && <div className="pc-desc">{p.description}</div>}
         <div className="pc-meta">
-          <span>{CATEGORY_LABELS[p.category]}</span>
+          <span>{typeLabel(typeKeyOf(p.category, p.module), true)}</span>
           <span>{p.fileCount} {p.fileCount === 1 ? 'file' : 'files'}</span>
           <span>{bytes(p.bytes)}</span>
           {p.status !== 'Active' && <StatusPill status={p.status} colors={colors} />}
@@ -517,13 +520,14 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
     if (p) {
       setPath(p);
       if (!name) setName(p.split(/[\\/]/).filter(Boolean).pop() || '');
-      const g = await call<{ category: string } | null>('profiles.guess', { path: p }).catch(() => null);
-      if (g && !typeTouched && !hiddenTypes().includes(g.category)) setCategory(g.category);
+      const g = await call<{ category: string; subtype?: string } | null>('profiles.guess', { path: p }).catch(() => null);
+      const key = g ? (g.subtype ? `${g.category}:${g.subtype}` : g.category) : '';
+      if (g && !typeTouched && !hiddenTypes().includes(g.category) && !hiddenTypes().includes(key)) setCategory(key);
     }
   };
   const create = async () => {
     setBusy(true);
-    const p = await act(() => call<Project>('projects.create', { name, description: desc, category, status, linkPath: mode === 'linked' && !copy ? path : null, copyFrom: mode === 'linked' && copy ? path : null }));
+    const p = await act(() => call<Project>('projects.create', { name, description: desc, category: splitKey(category).category, module: withType({}, category), status, linkPath: mode === 'linked' && !copy ? path : null, copyFrom: mode === 'linked' && copy ? path : null }));
     if (p) {
       await act(() => call('files.scan', { projectId: p.id }));
       onCreated(p);
@@ -554,13 +558,13 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
       <div className="field"><label>Description</label><textarea className="input" value={desc} onChange={(e) => setDesc(e.target.value)} rows={2} /></div>
       <div className="grid2">
         <div className="field"><label>Project type</label>
-          <select className="input" value={category} onChange={(e) => { setTypeTouched(true); setCategory(e.target.value); }}>{typeChoices(category).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+          <TypeSelect value={category} onChange={(k) => { setTypeTouched(true); setCategory(k); }} />
         </div>
         <div className="field"><label>Status</label>
           <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>{['Planned', 'Active', 'Paused', 'Completed', 'Archived'].map((s) => <option key={s}>{s}</option>)}</select>
         </div>
       </div>
-      <TypeFocus category={category} />
+      <TypeFocus category={splitKey(category).category} />
     </Modal>
   );
 }

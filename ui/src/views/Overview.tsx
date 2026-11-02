@@ -8,15 +8,16 @@ import { DepsBody, depsSummary, type Dep } from './Deps';
 import { call, type Project } from '../ipc';
 import { KindIcon, Modal, StatusPill, TagInput, useAction, useLoad, useConfirm, useToast } from '../components/common';
 import { PictureDialog, useThumb } from './Dashboard';
-import { ago, bytes, CATEGORY_LABELS, cx, typeChoices, dateTime } from '../format';
+import { ago, bytes, cx, dateTime } from '../format';
 import { CompareDialog } from './Versions';
 import { Retention } from './History';
 import { TimeCard, fmtHM } from './TimeCard';
 import { PanelBoard } from '../components/Panels';
 import type { ProjectCtx } from './Project';
+import { customOf, splitKey, typeKeyOf, typeLabel, withType, useTypes } from '../types';
+import { TypeSelect } from '../components/TypeSelect';
 
-/** `wow`: true = only for World of Warcraft addons, false = only for other game mods. */
-type FieldDef = { key: string; label: string; multiline?: boolean; options?: string[]; placeholder?: string; wow?: boolean };
+type FieldDef = { key: string; label: string; multiline?: boolean; options?: string[]; placeholder?: string };
 export const MODULES: Record<string, { title: string; fields: FieldDef[] }> = {
   software: { title: 'Software details', fields: [
     { key: 'repoUrl', label: 'Repository URL' }, { key: 'language', label: 'Languages / runtime' },
@@ -38,16 +39,29 @@ export const MODULES: Record<string, { title: string; fields: FieldDef[] }> = {
     { key: 'fitsContains', label: 'Fits / contains' },
     { key: 'assemblyNotes', label: 'Assembly notes', multiline: true }, { key: 'finishingNotes', label: 'Finishing instructions', multiline: true },
   ] },
-  // one type for WoW addons and other game mods (IW4X, etc.); WoW-only fields show when the game is WoW
   addon: { title: 'Addon / mod details', fields: [
-    { key: 'game', label: 'Game', placeholder: 'World of Warcraft (Retail), or MW2 (IW4X)' },
-    { key: 'interface', label: 'Interface version', placeholder: '110205', wow: true },
-    { key: 'client', label: 'Client / game build', placeholder: 'IW4X r4432', wow: false },
-    { key: 'addonVersion', label: 'Version' }, { key: 'pageUrl', label: 'CurseForge / Wago / GitHub page', wow: true },
-    { key: 'pageUrl', label: 'Download / project page', wow: false },
-    { key: 'installPath', label: 'Where it goes in the game', placeholder: 'mods\\omen', wow: false },
-    { key: 'dependencies', label: 'Libraries it needs', multiline: true, wow: true }, { key: 'savedVariables', label: 'Saved variables', placeholder: 'MyAddonDB', wow: true },
-    { key: 'requirements', label: 'What it needs to run', multiline: true, placeholder: 'Files it needs are best attached under Dependencies', wow: false },
+    { key: 'game', label: 'Game', placeholder: 'Which game it is for' }, { key: 'client', label: 'Game version / client' },
+    { key: 'addonVersion', label: 'Version' }, { key: 'pageUrl', label: 'Download / project page' },
+    { key: 'installPath', label: 'Where it goes in the game' },
+    { key: 'requirements', label: 'What it needs to run', multiline: true }, { key: 'releaseNotes', label: 'Release notes', multiline: true },
+  ] },
+  'addon:wow': { title: 'WoW addon details', fields: [
+    { key: 'game', label: 'Game / flavor', placeholder: 'World of Warcraft (Retail)' }, { key: 'interface', label: 'Interface version', placeholder: '110205' },
+    { key: 'addonVersion', label: 'Version' }, { key: 'pageUrl', label: 'CurseForge / Wago / GitHub page' },
+    { key: 'savedVariables', label: 'Saved variables', placeholder: 'MyAddonDB' },
+    { key: 'dependencies', label: 'Libraries it needs', multiline: true, placeholder: 'LibStub, AceAddon-3.0, …' },
+    { key: 'releaseNotes', label: 'Release notes', multiline: true },
+  ] },
+  'addon:iw4x': { title: 'IW4X mod details', fields: [
+    { key: 'client', label: 'IW4X client build', placeholder: 'r4432' },
+    { key: 'modKind', label: 'Kind of mod', options: ['', 'Mod (mods folder)', 'Raw scripts', 'Menu / UI', 'Map', 'Other'] },
+    { key: 'installPath', label: 'Folder in the game', placeholder: 'mods\\omen' },
+    { key: 'entryPoint', label: 'Entry point script', placeholder: 'scripts/mp/_load.gsc' },
+    { key: 'gameModes', label: 'Game modes', placeholder: 'S&D, FFA' },
+    { key: 'whoNeedsIt', label: 'Who needs it', options: ['', 'Host only', 'Everyone in the lobby', 'Dedicated server'] },
+    { key: 'addonVersion', label: 'Version' }, { key: 'pageUrl', label: 'Download / project page' },
+    { key: 'dvars', label: 'Dvars / server config', multiline: true, placeholder: 'set omen_instashoot 1' },
+    { key: 'requirements', label: 'What it needs to run', multiline: true, placeholder: 'Attach DLLs and other files under Dependencies so Deploy and Launch put them in place' },
     { key: 'releaseNotes', label: 'Release notes', multiline: true },
   ] },
   video: { title: 'Video details', fields: [
@@ -84,10 +98,15 @@ export const MODULES: Record<string, { title: string; fields: FieldDef[] }> = {
   ] },
 };
 
-const isWow = (m: Record<string, any> | undefined) => !!m && (/warcraft|\bwow\b/i.test(m.game || '') || !!m.interface || !!m.savedVariables);
-/** The detail fields that apply to this project (addon fields depend on the game). */
-export const fieldsFor = (category: string, module: Record<string, any> | undefined): FieldDef[] =>
-  (MODULES[category]?.fields || []).filter((f) => f.wow === undefined || f.wow === isWow(module));
+/** Detail fields for a type key ("addon:iw4x", a custom type, or a plain category). */
+export function moduleFor(key: string): { title: string; fields: FieldDef[] } | undefined {
+  const c = customOf(key);
+  if (c) return { title: `${c.name} details`, fields: c.fields.map((f) => ({ key: f.key, label: f.label, multiline: f.multiline })) };
+  if (MODULES[key]) return MODULES[key];
+  // subtypes without their own fields ("Other game mod") use their type's
+  return MODULES[splitKey(key).category];
+}
+export const fieldsFor = (key: string): FieldDef[] => moduleFor(key)?.fields || [];
 
 const PRINT_STATUS_DOT: Record<string, string> = { REPRINT_READY: 'on', TEST_FIT_PASSED: 'on', SLICED_UNTESTED: 'half', NEEDS_WORK: 'half' };
 
@@ -109,8 +128,10 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const thumb = useThumb(p);
   const [picking, setPicking] = useState(false);
 
-  const mod = MODULES[p.category];
-  const filled = mod ? fieldsFor(p.category, p.module).filter((f) => (p.module?.[f.key] || '').toString().trim()) : [];
+  useTypes();
+  const tkey = typeKeyOf(p.category, p.module);
+  const mod = moduleFor(tkey);
+  const filled = mod ? mod.fields.filter((f) => (p.module?.[f.key] || '').toString().trim()) : [];
   const custom = Object.entries((p.module?.custom || {}) as Record<string, string>).filter(([, v]) => v);
   const printLog: any[] = p.module?.printLog || [];
   const nextTasks = (tasks.data || []).filter((t) => t.status !== 'done').slice(0, 5);
@@ -135,7 +156,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
               ? <p className="ov-desc">{p.description}</p>
               : <p className="muted" style={{ margin: 0 }}><a href="#" onClick={(e) => { e.preventDefault(); setEditing('general'); }}>Add a description</a> of what this project is.</p>}
             <div className="ov2-facts">
-              <span>{CATEGORY_LABELS[p.category]}</span>
+              <span>{typeLabel(tkey)}</span>
               {p.status !== 'Active' && <StatusPill status={p.status} />}
               {p.group && <span>in {p.group}</span>}
               {p.tags.map((t) => <span className="tag" key={t}>{t}</span>)}
@@ -288,7 +309,9 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
   const stats = useLoad(() => call<any>('versions.stats', { projectId: p.id }), [p.id]);
   const [pol, setPol] = useState<any>(null);
   useEffect(() => { if (policy.data && !pol) setPol(policy.data); }, [policy.data, pol]);
-  const mod = MODULES[f.category];
+  useTypes();
+  const ekey = typeKeyOf(f.category, module);
+  const mod = moduleFor(ekey);
 
   const save = async () => {
     const r = await act(() => call<Project>('projects.update', { id: p.id, patch: { ...f, status: customStatus.trim() || f.status, module } }));
@@ -321,7 +344,7 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
           </div>
           <div className="field"><label>…or a custom status</label><input className="input" value={customStatus} onChange={(e) => setCustomStatus(e.target.value)} placeholder="e.g. Waiting on parts" /></div>
           <div className="field"><label>Project type</label>
-            <select className="input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{typeChoices(p.category).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+            <TypeSelect value={ekey} keep={typeKeyOf(p.category, p.module)} onChange={(k) => { setF({ ...f, category: splitKey(k).category }); setModule(withType(module, k)); }} />
           </div>
         </div>
         <div className="field"><label>Progress — {f.progress}%</label><input type="range" min={0} max={100} step={5} value={f.progress} onChange={(e) => setF({ ...f, progress: Number(e.target.value) })} /></div>
@@ -336,10 +359,10 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
 
       {tab === 'details' && <>
         {f.category === '3d-printing' && <FillFrom3mf projectId={p.id} module={module} onFill={setModule} />}
-        {f.category === 'addon' && <FillFromToc projectId={p.id} module={module} onFill={setModule} />}
+        {f.category === 'addon' && (ekey === 'addon:wow' || ekey === 'addon') && <FillFromToc projectId={p.id} module={module} onFill={(m) => setModule({ ...m, subtype: 'wow' })} />}
         {mod ? <>
           <div className="grid2">
-            {fieldsFor(f.category, module).filter((x) => !x.multiline).map((x) => (
+            {(mod?.fields || []).filter((x) => !x.multiline).map((x) => (
               <div className="field" key={x.key}><label>{x.label}</label>
                 {x.options
                   ? <select className="input" value={module[x.key] || ''} onChange={(e) => setModule({ ...module, [x.key]: e.target.value })}>{x.options.map((o) => <option key={o} value={o}>{o ? o.replace(/_/g, ' ').toLowerCase() : '—'}</option>)}</select>
@@ -347,7 +370,7 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
               </div>
             ))}
           </div>
-          {fieldsFor(f.category, module).filter((x) => x.multiline).map((x) => (
+          {(mod?.fields || []).filter((x) => x.multiline).map((x) => (
             <div className="field" key={x.key}><label>{x.label}</label><textarea className="input" rows={3} value={module[x.key] || ''} placeholder={x.placeholder} onChange={(e) => setModule({ ...module, [x.key]: e.target.value })} /></div>
           ))}
         </> : <p className="muted small">This project type has no special fields. Use custom fields below, or change the project type under General.</p>}

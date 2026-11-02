@@ -138,9 +138,11 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "watch.setSettings" => watch::set_settings(v, a.get("patch").unwrap_or(&Json::obj())),
         "watch.stamp" => watch::stamp(v),
         "profiles.guess" => Ok(match profiles::guess(std::path::Path::new(&s(a, "path")?)) {
-            Some((c, why)) => Json::obj().with("category", c).with("reason", why),
+            Some((c, why, sub)) => Json::obj().with("category", c).with("reason", why).with("subtype", sub),
             None => Json::Null,
         }),
+        "types.custom" => projects::custom_types(v),
+        "types.saveCustom" => projects::save_custom_types(v, a.get("types").unwrap_or(&Json::Arr(vec![]))),
         "profiles.info" => Ok(profiles::info_json(&s(a, "category")?)),
 
         // versions
