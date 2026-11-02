@@ -53,9 +53,28 @@ const opts = {
   logLevel: 'info',
 };
 
+// ---- code editor bundle (Monaco), loaded on demand by the app
+const findPkg = (name) => nodePaths.map((p) => join(p, name)).find((p) => existsSync(join(p, 'package.json')));
+const monacoDir = findPkg('monaco-editor');
+const editorOpts = {
+  entryPoints: { monaco: join(here, monacoDir ? 'editor/monaco.ts' : 'editor/fallback.ts') },
+  outdir: out, bundle: true, format: 'esm', target: 'es2022', minify: !watch, nodePaths, logLevel: 'warning',
+  loader: { '.ttf': 'file' },
+};
+const workerOpts = monacoDir && {
+  entryPoints: {
+    'editor.worker': join(monacoDir, 'esm/vs/editor/editor.worker.js'),
+    'json.worker': join(monacoDir, 'esm/vs/language/json/json.worker.js'),
+    'css.worker': join(monacoDir, 'esm/vs/language/css/css.worker.js'),
+    'html.worker': join(monacoDir, 'esm/vs/language/html/html.worker.js'),
+    'ts.worker': join(monacoDir, 'esm/vs/language/typescript/ts.worker.js'),
+  },
+  outdir: out, bundle: true, format: 'iife', target: 'es2022', minify: !watch, logLevel: 'warning',
+};
+if (!monacoDir) console.warn('[build] monaco-editor not installed: using the plain-text editor stand-in (run npm install for the real editor)');
+
 if (watch) {
-  const ctx = await esbuild.context(opts);
-  await ctx.watch();
+  for (const o of [opts, editorOpts, workerOpts].filter(Boolean)) { const ctx = await esbuild.context(o); await ctx.watch(); }
 } else {
-  await esbuild.build(opts);
+  await Promise.all([opts, editorOpts, workerOpts].filter(Boolean).map((o) => esbuild.build(o)));
 }

@@ -915,6 +915,75 @@ pub fn import(v: &Vault, project_id: &str, sources: &[PathBuf], dest_rel_dir: &s
         .with("scan", scan_rep.json()))
 }
 
+// ------------------------------------------------------------------ editing
+
+pub const MAX_EDIT_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Loads a file for the built-in editor. Only UTF-8 text is editable, so a
+/// save can never mangle a binary or differently-encoded file.
+pub fn read_text(v: &Vault, file_id: &str) -> DbResult<Json> {
+    let f = v.db.one("SELECT * FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
+    if f.s("state") != "present" {
+        return Err("The file is missing on disk".into());
+    }
+    let root = projects::root_of(v, &f.s("project_id"))?;
+    let path = safe_join(&root, &f.s("rel_path"))?;
+    let md = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if md.len() > MAX_EDIT_BYTES {
+        return Err(format!("This file is {} MB — too large for the built-in editor. Open it in its own program.", md.len() / 1048576));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("Cannot read the file: {e}"))?;
+    if bytes.iter().take(8000).any(|b| *b == 0) {
+        return Err("This is a binary file; it can't be edited as text.".into());
+    }
+    let bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
+    let body = if bom { &bytes[3..] } else { &bytes[..] };
+    let text = String::from_utf8(body.to_vec()).map_err(|_| "This file isn't UTF-8 text, so editing it here could damage it. Open it in its own program.".to_string())?;
+    let crlf = text.contains("\r\n");
+    let readonly = md.permissions().readonly();
+    Ok(Json::obj()
+        .with("text", text)
+        .with("sha256", crate::util::sha256_bytes(&bytes))
+        .with("eol", if crlf { "crlf" } else { "lf" })
+        .with("bom", bom)
+        .with("readonly", readonly)
+        .with("path", f.s("rel_path")))
+}
+
+/// Saves editor content. Refuses if the file changed on disk since it was
+/// opened (`expected_sha`), unless the caller passes the new on-disk hash.
+/// The previous content is stored as a version first; the write is atomic.
+pub fn write_text(v: &Vault, file_id: &str, text: &str, expected_sha: &str, eol: &str, bom: bool) -> DbResult<Json> {
+    let f = v.db.one("SELECT * FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
+    let pid = f.s("project_id");
+    let root = projects::root_of(v, &pid)?;
+    let path = safe_join(&root, &f.s("rel_path"))?;
+    let current = sha256_file(&path).map_err(|e| format!("Cannot read the file before saving: {e}"))?;
+    if current != expected_sha {
+        return Err(format!("CONFLICT:{current}:The file was changed on disk after you opened it."));
+    }
+    crate::versions::ensure_stored(v, &f, &path, &current, "before-edit")?;
+    let normalized = text.replace("\r\n", "\n");
+    let body = if eol == "crlf" { normalized.replace('\n', "\r\n") } else { normalized };
+    let mut bytes = Vec::with_capacity(body.len() + 3);
+    if bom {
+        bytes.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+    }
+    bytes.extend_from_slice(body.as_bytes());
+    let dir = path.parent().ok_or("bad path")?;
+    let tmp = dir.join(format!(".pv-tmp-{}", &new_id()[..8]));
+    std::fs::write(&tmp, &bytes).map_err(|e| format!("Cannot write: {e}"))?;
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("Could not save (is the file open and locked in another program?): {e}"));
+    }
+    let new_sha = crate::util::sha256_bytes(&bytes);
+    timeline::add_coalesced(v, &pid, "edit", &format!("Edited {} in Project Vault", f.s("rel_path")), "file", file_id)?;
+    scan(v, &pid)?;
+    v.db.exec("UPDATE files SET changed_since_review=0 WHERE id=?", p![file_id])?;
+    Ok(Json::obj().with("sha256", new_sha))
+}
+
 // ------------------------------------------------------------------ docs
 
 pub fn docs_get(v: &Vault, file_id: &str) -> DbResult<Json> {
@@ -1135,6 +1204,35 @@ mod tests {
         let dims = get(&v, &fid).unwrap();
         assert_eq!(dims.get("meshDimensionsMm").unwrap().to_string(), "[10,5,2]");
         assert!(import(&v, &pid, &[src.join("other.stl")], "../escape", false).is_err());
+    }
+
+    #[test]
+    fn edit_text_with_conflict_detection() {
+        let (t, v) = vault();
+        let d = t.path().join("p");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("cfg.ini"), "\u{feff}a=1\r\nb=2\r\n").unwrap();
+        fs::write(d.join("blob.bin"), [0u8, 1, 2]).unwrap();
+        let pid = linked(&v, &d);
+        scan(&v, &pid).unwrap();
+        let fid = id_at(&v, &pid, "cfg.ini");
+        let r = read_text(&v, &fid).unwrap();
+        assert_eq!(r.str_of("eol").unwrap(), "crlf");
+        assert_eq!(r.get("bom").unwrap().as_bool(), Some(true));
+        assert_eq!(r.str_of("text").unwrap(), "a=1\r\nb=2\r\n");
+        assert!(read_text(&v, &id_at(&v, &pid, "blob.bin")).is_err());
+        let sha = r.str_of("sha256").unwrap();
+        // editor (textarea) sends LF; CRLF + BOM are preserved on disk
+        let w = write_text(&v, &fid, "a=1\nb=3\n", &sha, "crlf", true).unwrap();
+        assert_eq!(fs::read(d.join("cfg.ini")).unwrap(), b"\xEF\xBB\xBFa=1\r\nb=3\r\n");
+        // previous content kept as a version (baseline from the scan), new content captured too
+        let vs = crate::versions::list(&v, &fid).unwrap();
+        assert_eq!(vs.as_arr().unwrap().len(), 2);
+        // external change -> conflict, nothing written
+        fs::write(d.join("cfg.ini"), "external").unwrap();
+        let e = write_text(&v, &fid, "mine", &w.str_of("sha256").unwrap(), "lf", false).unwrap_err();
+        assert!(e.starts_with("CONFLICT:"));
+        assert_eq!(fs::read_to_string(d.join("cfg.ini")).unwrap(), "external");
     }
 
     #[test]

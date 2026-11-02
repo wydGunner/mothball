@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { LuPlus, LuList, LuKanban, LuCalendar, LuBug, LuTrash2, LuChevronLeft, LuChevronRight, LuFlag, LuLink2, LuCircleCheck } from 'react-icons/lu';
+import { LuFilter, LuPlus, LuList, LuKanban, LuCalendar, LuBug, LuTrash2, LuChevronLeft, LuChevronRight, LuFlag, LuLink2, LuCircleCheck } from 'react-icons/lu';
 import { call, type Task } from '../ipc';
-import { Empty, Modal, TagInput, useAction, useConfirm, useLoad } from '../components/common';
+import { Dropdown, Empty, Modal, TagInput, useAction, useConfirm, useLoad } from '../components/common';
 import { ago, cx, dateTime } from '../format';
 import { LinkList, LinkPicker } from './Links';
 import type { ProjectCtx } from './Project';
@@ -35,9 +35,15 @@ export function TasksTab({ ctx }: { ctx: ProjectCtx }) {
       <div className="row wrap">
         <button className="btn primary" onClick={() => setCreating('task')}><LuPlus /> Task</button>
         <button className="btn" onClick={() => setCreating('bug')}><LuBug /> Bug report</button>
-        <div className="seg"><button className={cx(kind === '' && 'on')} onClick={() => setKind('')}>All</button><button className={cx(kind === 'task' && 'on')} onClick={() => setKind('task')}>Tasks</button><button className={cx(kind === 'bug' && 'on')} onClick={() => setKind('bug')}>Bugs</button></div>
-        <select className="input" style={{ width: 180 }} value={msFilter} onChange={(e) => setMsFilter(e.target.value)} aria-label="Milestone filter"><option value="">All milestones</option>{(ms.data || []).map((m) => <option key={m.id} value={m.id}>{m.title}</option>)}</select>
-        <label className="row small"><input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} /> Show completed</label>
+        <Dropdown label="Filter by" icon={<LuFilter />} badge={(kind ? 1 : 0) + (msFilter ? 1 : 0) + (showDone ? 0 : 1) || undefined} sections={[
+          { title: 'Show', items: [
+            { key: 'all', label: 'Tasks and bugs', checked: kind === '', onSelect: () => setKind('') },
+            { key: 'task', label: 'Only tasks', checked: kind === 'task', onSelect: () => setKind('task') },
+            { key: 'bug', label: 'Only bugs', checked: kind === 'bug', onSelect: () => setKind('bug') },
+            { key: 'done', label: 'Include completed', checked: showDone, onSelect: () => setShowDone(!showDone) },
+          ] },
+          { title: 'Milestone', items: (ms.data || []).map((m) => ({ key: m.id, label: m.title, checked: msFilter === m.id, onSelect: () => setMsFilter(msFilter === m.id ? '' : m.id) })) },
+        ]} />
         <button className="btn" onClick={() => setMilestoneDlg(true)}><LuFlag /> Milestones</button>
         <div className="seg right">
           <button className={cx(view === 'list' && 'on')} onClick={() => setV('list')}><LuList /> List</button>
@@ -49,8 +55,8 @@ export function TasksTab({ ctx }: { ctx: ProjectCtx }) {
         <div className="row wrap" style={{ margin: '12px 0' }}>
           {ms.data!.filter((m) => !m.done).map((m) => (
             <div key={m.id} className="card" style={{ padding: '6px 10px', minWidth: 200 }}>
-              <div className="row small"><LuFlag color="#c58bff" /><b className="grow">{m.title}</b><span className="dim">{m.dueAt ? new Date(m.dueAt).toLocaleDateString() : ''}</span></div>
-              <div className="progress" style={{ marginTop: 6 }}><div style={{ width: `${m.total ? (100 * m.completed) / m.total : 0}%`, background: '#c58bff' }} /></div>
+              <div className="row small"><LuFlag color="var(--accent)" /><b className="grow">{m.title}</b><span className="dim">{m.dueAt ? new Date(m.dueAt).toLocaleDateString() : ''}</span></div>
+              <div className="progress" style={{ marginTop: 6 }}><div style={{ width: `${m.total ? (100 * m.completed) / m.total : 0}%`, background: 'var(--accent)' }} /></div>
               <div className="small dim">{m.completed}/{m.total} done</div>
             </div>
           ))}
@@ -73,7 +79,7 @@ function TaskCard({ t, onOpen }: { t: Task; onOpen: (id: string) => void }) {
   const done = t.checklist.filter((c) => c.done).length;
   return (
     <div className="tcard" draggable onDragStart={(e) => e.dataTransfer.setData('text/task', t.id)} onClick={() => onOpen(t.id)}>
-      <div className="t">{t.kind === 'bug' && <LuBug color="var(--bad)" style={{ marginRight: 4, verticalAlign: -2 }} />}{t.title}</div>
+      <div className="t">{t.kind === 'bug' && <LuBug color="var(--accent)" style={{ marginRight: 4, verticalAlign: -2 }} />}{t.title}</div>
       <div className="row small" style={{ gap: 6, flexWrap: 'wrap' }}>
         <span className={`prio p${t.priority}`}>{PRIO[t.priority]}</span>
         {t.dueAt && <span className={cx('dim', t.status !== 'done' && t.dueAt < Date.now() && 'bad')} style={t.status !== 'done' && t.dueAt < Date.now() ? { color: 'var(--bad)' } : undefined}>due {new Date(t.dueAt).toLocaleDateString()}</span>}
@@ -110,7 +116,7 @@ function ListView({ list, onOpen, onToggle, milestones }: { list: Task[]; onOpen
       <tbody>{list.map((t) => (
         <tr key={t.id} className="click" onClick={() => onOpen(t.id)}>
           <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={t.status === 'done'} onChange={() => onToggle(t)} aria-label="Done" /></td>
-          <td style={t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--fg3)' } : undefined}>{t.kind === 'bug' && <LuBug color="var(--bad)" />} {t.title} {t.tags.map((g) => <span key={g} className="tag">{g}</span>)}</td>
+          <td style={t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--fg3)' } : undefined}>{t.kind === 'bug' && <LuBug color="var(--accent)" />} {t.title} {t.tags.map((g) => <span key={g} className="tag">{g}</span>)}</td>
           <td className="muted">{COLS.find((c) => c.id === t.status)?.label}</td><td><span className={`prio p${t.priority}`}>{PRIO[t.priority]}</span></td>
           <td className="muted">{t.dueAt ? new Date(t.dueAt).toLocaleDateString() : ''}</td><td className="muted">{msName(t.milestoneId)}</td><td className="muted">{ago(t.updatedAt)}</td>
         </tr>))}
@@ -142,7 +148,7 @@ function CalendarView({ list, onOpen }: { list: Task[]; onOpen: (id: string) => 
         {days.map((d) => (
           <div key={key(d)} className={cx(d.getMonth() !== month.getMonth() && 'other', key(d) === today && 'today')}>
             <span className="n">{d.getDate()}</span>
-            {(byDay.get(key(d)) || []).map((t) => <span key={t.id} className={cx('ev', t.status === 'done' && 'done')} onClick={() => onOpen(t.id)}>{t.kind === 'bug' ? '🐞 ' : ''}{t.title}</span>)}
+            {(byDay.get(key(d)) || []).map((t) => <span key={t.id} className={cx('ev', t.status === 'done' && 'done')} onClick={() => onOpen(t.id)}>{t.kind === 'bug' ? <LuBug color="var(--accent)" style={{ marginRight: 4, verticalAlign: -2 }} /> : null}{t.title}</span>)}
           </div>
         ))}
       </div>
@@ -189,7 +195,7 @@ function TaskDialog({ id, ctx, milestones, onClose, onChanged }: { id: string; c
     if (r) { onChanged(); if (close) onClose(); }
   };
   return (
-    <Modal wide title={<span className="row">{draft.kind === 'bug' ? <LuBug color="var(--bad)" /> : <LuCircleCheck />} {draft.kind === 'bug' ? 'Bug report' : 'Task'}</span>} onClose={onClose}
+    <Modal wide title={<span className="row">{draft.kind === 'bug' ? <LuBug color="var(--accent)" /> : <LuCircleCheck />} {draft.kind === 'bug' ? 'Bug report' : 'Task'}</span>} onClose={onClose}
       footer={<>
         {draft.status !== 'done' && t.data?.status !== 'done' && <button className="btn danger" style={{ marginRight: 'auto' }} onClick={async () => { if (await confirm({ title: 'Delete this task?', danger: true, confirm: 'Delete', body: 'Open tasks can be deleted. Completed tasks are kept in the project history.' })) { await act(() => call('tasks.delete', { id })); onChanged(); onClose(); } }}><LuTrash2 /> Delete</button>}
         <span className="small dim" style={{ marginRight: 'auto' }}>Created {dateTime(draft.createdAt)}{draft.completedAt ? ` · completed ${dateTime(draft.completedAt)}` : ''}</span>

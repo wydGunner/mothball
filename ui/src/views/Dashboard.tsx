@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
-import { LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuDownload, LuLink, LuDatabase } from 'react-icons/lu';
+import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuDownload, LuLink, LuDatabase } from 'react-icons/lu';
 import { call, pickFolder, revealPath, isTauri, type Project } from '../ipc';
-import { Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, useLoad, useConfirm } from '../components/common';
+import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, useLoad, useConfirm } from '../components/common';
 import { ago, bytes, CATEGORY_LABELS, cx } from '../format';
 import type { Nav } from '../main';
 
 type Sort = 'recent' | 'name' | 'updated' | 'created' | 'size' | 'progress';
+const SORTS: [Sort, string][] = [['recent', 'Recently opened'], ['updated', 'Latest activity'], ['name', 'Name'], ['created', 'Newest'], ['size', 'Storage used'], ['progress', 'Progress']];
 
 export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   const [mode, setMode] = useState<'grid' | 'list'>(() => (localStorage.getItem('pv.dash') as any) || 'grid');
@@ -15,6 +16,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   const [text, setText] = useState('');
   const [sort, setSort] = useState<Sort>('recent');
   const [favOnly, setFavOnly] = useState(false);
+  const [attention, setAttention] = useState(false);
   const [importPV, setImportPV] = useState(false);
   const act = useAction();
   const menu = useContextMenu();
@@ -27,6 +29,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
     const t = text.toLowerCase();
     const out = nav.projects.filter((p) =>
       (!status || p.status === status) && (!category || p.category === category) && (!tag || p.tags.includes(tag)) && (!favOnly || p.favorite) &&
+      (!attention || p.changedFiles + p.pendingReviews + p.missingFiles > 0 || !p.rootAvailable) &&
       (!t || p.name.toLowerCase().includes(t) || p.description.toLowerCase().includes(t)));
     const by: Record<Sort, (a: Project, b: Project) => number> = {
       recent: (a, b) => (b.lastOpenedAt || b.updatedAt) - (a.lastOpenedAt || a.updatedAt),
@@ -37,7 +40,14 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
       progress: (a, b) => b.progress - a.progress,
     };
     return out.sort((a, b) => Number(b.favorite) - Number(a.favorite) || by[sort](a, b));
-  }, [nav.projects, status, category, tag, text, sort, favOnly]);
+  }, [nav.projects, status, category, tag, text, sort, favOnly, attention]);
+  const activeFilters = [
+    favOnly && { key: 'fav', label: 'Favorites', clear: () => setFavOnly(false) },
+    attention && { key: 'att', label: 'Needs attention', clear: () => setAttention(false) },
+    status && { key: 's', label: `Status: ${status}`, clear: () => setStatus('') },
+    category && { key: 'c', label: CATEGORY_LABELS[category], clear: () => setCategory('') },
+    tag && { key: 't', label: `#${tag}`, clear: () => setTag('') },
+  ].filter(Boolean) as { key: string; label: string; clear: () => void }[];
 
   const setMode2 = (m: 'grid' | 'list') => { setMode(m); localStorage.setItem('pv.dash', m); };
   const toggleFav = async (p: Project) => { await act(() => call('projects.update', { id: p.id, patch: { favorite: !p.favorite } })); nav.refreshProjects(); };
@@ -77,21 +87,20 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
         </div>
       </div>
       <div className="toolbar">
-        <input className="input" style={{ width: 220 }} placeholder="Filter projects…" value={text} onChange={(e) => setText(e.target.value)} />
-        <select className="input" style={{ width: 140 }} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status filter">
-          <option value="">All statuses</option>{(statuses.data || []).map((s) => <option key={s.name}>{s.name}</option>)}
-        </select>
-        <select className="input" style={{ width: 150 }} value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Category filter">
-          <option value="">All categories</option>{Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </select>
-        {allTags.length > 0 && <select className="input" style={{ width: 130 }} value={tag} onChange={(e) => setTag(e.target.value)} aria-label="Tag filter">
-          <option value="">All tags</option>{allTags.map((t) => <option key={t}>{t}</option>)}
-        </select>}
-        <button className={cx('btn', favOnly && 'primary')} onClick={() => setFavOnly(!favOnly)}><LuStar /> Favorites</button>
-        <select className="input" style={{ width: 160 }} value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort">
-          <option value="recent">Recently opened</option><option value="updated">Latest activity</option><option value="name">Name</option>
-          <option value="created">Newest</option><option value="size">Storage used</option><option value="progress">Progress</option>
-        </select>
+        <div className="searchinput"><LuSearch /><input className="input" placeholder="Search projects…" value={text} onChange={(e) => setText(e.target.value)} aria-label="Search projects" /></div>
+        <Dropdown label="Filter by" icon={<LuFilter />} badge={activeFilters.length || undefined} sections={[
+          { title: 'Show', items: [
+            { key: 'all', label: 'All projects', checked: !favOnly && !attention, onSelect: () => { setFavOnly(false); setAttention(false); } },
+            { key: 'fav', label: 'Favorites only', checked: favOnly, onSelect: () => setFavOnly(!favOnly) },
+            { key: 'att', label: 'Needs attention', hint: 'Changed, missing or unconfirmed files, or folder offline', checked: attention, onSelect: () => setAttention(!attention) },
+          ] },
+          { title: 'Status', items: (statuses.data || []).map((x) => ({ key: x.name, label: x.name, checked: status === x.name, onSelect: () => setStatus(status === x.name ? '' : x.name) })) },
+          { title: 'Project type', items: Object.entries(CATEGORY_LABELS).filter(([k]) => nav.projects.some((p) => p.category === k)).map(([k, v]) => ({ key: k, label: v, checked: category === k, onSelect: () => setCategory(category === k ? '' : k) })) },
+          { title: 'Tag', items: allTags.map((t) => ({ key: t, label: t, checked: tag === t, onSelect: () => setTag(tag === t ? '' : t) })) },
+        ]} />
+        <Dropdown label={<>Sort: {SORTS.find((x) => x[0] === sort)?.[1]}</>} sections={[{ items: SORTS.map(([k, l]) => ({ key: k, label: l, checked: sort === k, onSelect: () => setSort(k) })) }]} width={200} />
+        {activeFilters.map((f) => <span key={f.key} className="fchip">{f.label}<button aria-label={`Remove filter ${f.label}`} onClick={f.clear}><LuX size={12} /></button></span>)}
+        {activeFilters.length > 1 && <button className="btn ghost sm" onClick={() => activeFilters.forEach((f) => f.clear())}>Clear all</button>}
         <div className="seg right"><button className={cx(mode === 'grid' && 'on')} onClick={() => setMode2('grid')} title="Grid"><LuLayoutGrid /></button><button className={cx(mode === 'list' && 'on')} onClick={() => setMode2('list')} title="List"><LuList /></button></div>
       </div>
 

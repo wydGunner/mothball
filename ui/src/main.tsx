@@ -10,6 +10,9 @@ import { SettingsView } from './views/Settings';
 import { CommandPalette } from './views/Palette';
 import { cx } from './format';
 import { checkForUpdate, type AvailableUpdate } from './updater';
+import { applyTheme, getTheme } from './theme';
+
+applyTheme(getTheme());
 import { LuDownload } from 'react-icons/lu';
 
 export type Route =

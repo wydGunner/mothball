@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { CodeEditor } from '../components/CodeEditor';
 import {
   LuFolder, LuFolderOpen, LuChevronRight, LuChevronDown, LuSearch, LuExternalLink, LuFolderSearch, LuCopy, LuTriangleAlert,
-  LuUpload, LuEye, LuPencil, LuLink2, LuX, LuHistory, LuGitCommitHorizontal, LuFileQuestion, LuCopyCheck, LuCircleCheck,
+  LuUpload, LuEye, LuFilter, LuCode, LuSave, LuArrowLeft, LuMaximize2, LuMinimize2, LuPencil, LuLink2, LuX, LuHistory, LuGitCommitHorizontal, LuFileQuestion, LuCopyCheck, LuCircleCheck,
 } from 'react-icons/lu';
 import { call, isTauri, openPath, pickFiles, revealPath, type FileDetail, type FileDocs, type VFile } from '../ipc';
-import { Empty, KindIcon, Markdown, SaveState, TagInput, useAction, useAutosave, useContextMenu, useLoad, useResizable, useToast } from '../components/common';
+import { Dropdown, Empty, KindIcon, useConfirm, Markdown, SaveState, TagInput, useAction, useAutosave, useContextMenu, useLoad, useResizable, useToast } from '../components/common';
 import { ago, bytes, cx, dateTime } from '../format';
 import { LinkPicker, LinkList } from './Links';
 import { CustomFields } from './Overview';
@@ -27,6 +28,7 @@ function buildTree(dirs: { path: string; files: number }[]): DirNode {
   return root;
 }
 
+const FILE_SORTS: [string, string][] = [['path', 'Path'], ['name', 'Name'], ['changed', 'Last changed'], ['size', 'Size']];
 const KINDS = ['code', 'document', 'config', 'image', 'mesh', 'model', 'gcode', 'archive', 'engine', 'audio', 'video', 'electronics', 'binary', 'other'];
 
 export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
@@ -48,7 +50,20 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
     const g = gs.find((x) => x.id === group);
     return g ? g.exts : null;
   }, [group, groups.data]);
-  const [selected, setSelected] = useState<string | null>(ctx.focus?.type === 'file' ? ctx.focus.id : null);
+  const [selected, setSelectedRaw] = useState<string | null>(ctx.focus?.type === 'file' ? ctx.focus.id : null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [wide, setWide] = useState(() => localStorage.getItem('pv.editorWide') === '1');
+  const toggleWide = () => setWide((w) => { localStorage.setItem('pv.editorWide', w ? '0' : '1'); return !w; });
+  const full = wide && !!editing;
+  const dirtyRef = useRef(false);
+  const confirmLeave = () => !dirtyRef.current || window.confirm('You have unsaved changes in the editor. Discard them?');
+  const setSelected = (id: string | null) => {
+    if (id === selected) return;
+    if (editing && !confirmLeave()) return;
+    dirtyRef.current = false;
+    setEditing(null);
+    setSelectedRaw(id);
+  };
   const [multi, setMulti] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['']));
   const tree = useResizable('filetree', 240, 160, 500);
@@ -127,7 +142,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
       <div key={n.path}>
         <div className={cx('tnode', dir === n.path && 'on')} style={{ paddingLeft: 6 + depth * 12 }} onClick={() => setDir(n.path)} onDoubleClick={() => setExpanded((e) => { const x = new Set(e); open ? x.delete(n.path) : x.add(n.path); return x; })}>
           {n.children.length ? <span onClick={(e) => { e.stopPropagation(); setExpanded((ex) => { const x = new Set(ex); open ? x.delete(n.path) : x.add(n.path); return x; }); }}>{open ? <LuChevronDown /> : <LuChevronRight />}</span> : <span style={{ width: 14 }} />}
-          {open && n.children.length ? <LuFolderOpen color="#e3b341" /> : <LuFolder color="#e3b341" />}
+          {open && n.children.length ? <LuFolderOpen className="folder" /> : <LuFolder className="folder" />}
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.name}</span><span className="count">{n.files}</span>
         </div>
         {open && n.children.map((c) => renderDir(c, depth + 1))}
@@ -137,14 +152,14 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
 
   return (
     <div className="split">
-      <div className="pane side" style={{ width: tree.width, flex: 'none' }}>
+      <div className="pane side" style={{ width: tree.width, flex: 'none', display: full ? 'none' : undefined }}>
         <div className="panehead"><h3 className="grow">Folders</h3>
           <button className="btn sm" onClick={importFiles} title="Copy files into this folder (or drag files onto the window)"><LuUpload /> Import</button>
         </div>
         <div className="tree">{renderDir(root, 0)}</div>
       </div>
-      {tree.handle}
-      <div className="pane" style={{ width: listW.width, flex: 'none', borderRight: '1px solid var(--line)', display: 'flex', flexDirection: 'column' }}>
+      {!full && tree.handle}
+      <div className="pane" style={{ width: listW.width, flex: 'none', borderRight: '1px solid var(--line)', display: full ? 'none' : 'flex', flexDirection: 'column' }}>
         <div className="panehead" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6, background: 'var(--bg0)' }}>
           {(groups.data || []).length > 0 && (
             <div className="chips">
@@ -153,13 +168,13 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
               <button className={cx('chip', group === 'all' && 'on')} onClick={() => setGroup('all')}>All files <span>{ctx.project.fileCount}</span></button>
             </div>
           )}
-          <div className="row"><LuSearch className="dim" /><input className="input" placeholder="Filter by name or path…" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
-          <div className="row wrap">
-            <div className="seg">
-              {([['all', 'All'], ['changed', 'Changed'], ['undocumented', 'No notes'], ['missing', 'Missing']] as const).map(([s, l]) => <button key={s} className={cx(show === s && 'on')} onClick={() => setShow(s)} title={s === 'undocumented' ? 'Files without a purpose or notes' : undefined}>{l}</button>)}
-            </div>
-            {!(groups.data || []).length && <select className="input" style={{ width: 110 }} value={kind} onChange={(e) => setKind(e.target.value)} aria-label="File type"><option value="">All types</option>{KINDS.map((k) => <option key={k}>{k}</option>)}</select>}
-            <select className="input" style={{ width: 100 }} value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort"><option value="path">Path</option><option value="name">Name</option><option value="changed">Changed</option><option value="size">Size</option></select>
+          <div className="row">
+            <div className="searchinput grow" style={{ width: 'auto' }}><LuSearch /><input className="input" placeholder="Search files…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search files" /></div>
+            <Dropdown label="Filter" icon={<LuFilter />} badge={(show !== 'all' ? 1 : 0) + (kind ? 1 : 0) || undefined} align="right" sections={[
+              { title: 'Show', items: ([['all', 'All files'], ['changed', 'Changed since reviewed'], ['undocumented', 'Without notes'], ['missing', 'Missing from disk']] as const).map(([k, l]) => ({ key: k, label: l, checked: show === k, onSelect: () => setShow(k) })) },
+              ...(!(groups.data || []).length ? [{ title: 'Type', items: KINDS.map((k) => ({ key: k, label: k, checked: kind === k, onSelect: () => setKind(kind === k ? '' : k) })) }] : []),
+            ]} />
+            <Dropdown label={<>Sort: {FILE_SORTS.find((x) => x[0] === sort)?.[1]}</>} align="right" width={170} sections={[{ items: FILE_SORTS.map(([k, l]) => ({ key: k, label: l, checked: sort === k, onSelect: () => setSort(k) })) }]} />
           </div>
           <div className="small dim">{files.data ? `${files.data.length}${files.data.length >= 5000 ? '+' : ''} files${dir ? ` in ${dir}/` : ''}${exts ? ' (filtered by type)' : ''}` : 'Loading…'}{multi.size > 1 && ` · ${multi.size} selected`}</div>
         </div>
@@ -183,16 +198,23 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
           </Empty>}
         </div>
       </div>
-      {listW.handle}
+      {!full && listW.handle}
       <div className="pane grow">
-        {selected ? <FileDetailPanel key={selected} fileId={selected} ctx={ctx} onChanged={() => { files.reload(); ctx.reload(); }} />
+        {selected && editing === selected ? <EditorPane key={'ed' + selected} fileId={selected} ctx={ctx}
+            onDirty={(d) => { dirtyRef.current = d; }} wide={full} onToggleWide={toggleWide}
+            onClose={() => { if (confirmLeave()) { dirtyRef.current = false; setEditing(null); } }}
+            onSaved={() => { files.reload(); ctx.reload(); }} />
+          : selected ? <FileDetailPanel key={selected} fileId={selected} ctx={ctx} onEdit={() => setEditing(selected)} onChanged={() => { files.reload(); ctx.reload(); }} />
           : <Empty icon={<LuPencil />} title="Select a file">Pick a file to see what it does, add notes and warnings, link related scripts, notes and bugs, and browse its history.</Empty>}
       </div>
     </div>
   );
 }
 
-function FileDetailPanel({ fileId, ctx, onChanged }: { fileId: string; ctx: ProjectCtx; onChanged: () => void }) {
+const EDITABLE_EXTS = new Set(['md', 'markdown', 'txt', 'csv', 'log', 'gcode', 'scad', 'meta', 'asmdef', 'gitignore', 'env', 'tscn', 'tres', 'kicad_sch', 'kicad_pro', 'svg', 'shader', 'hlsl', 'glsl']);
+const canEdit = (f: VFile) => f.state === 'present' && f.size <= 8 * 1024 * 1024 && (f.kind === 'code' || f.kind === 'config' || EDITABLE_EXTS.has(f.ext) || (f.ext === '' && f.size < 1024 * 1024));
+
+function FileDetailPanel({ fileId, ctx, onChanged, onEdit }: { fileId: string; ctx: ProjectCtx; onChanged: () => void; onEdit: () => void }) {
   const d = useLoad(() => call<FileDetail>('files.get', { id: fileId }), [fileId, ctx.scanTick]);
   const [docs, setDocs] = useState<FileDocs | null>(null);
   const [tags, setTags] = useState<string[]>([]);
@@ -233,6 +255,7 @@ function FileDetailPanel({ fileId, ctx, onChanged }: { fileId: string; ctx: Proj
           <div className="small dim mono" style={{ wordBreak: 'break-all' }}>{f.path}</div>
         </div>
         <SaveState state={save.state} />
+        {canEdit(f) && <button className="btn primary sm" onClick={onEdit} title="Edit this file in Project Vault"><LuCode /> Edit file</button>}
         {isTauri && f.state === 'present' && <>
           <button className="btn sm" onClick={() => act(() => openPath(f.absPath))}><LuExternalLink /> Open</button>
           <button className="btn sm icon" title="Show in Explorer" onClick={() => act(() => revealPath(f.absPath))}><LuFolderSearch /></button>
@@ -374,6 +397,69 @@ function FileHistory({ f, ctx }: { f: FileDetail; ctx: ProjectCtx }) {
       {tab === 'revisions' && (!revs.data?.length ? <div className="small muted">No earlier revisions. (A revision is kept when documentation changes after 10+ minutes.)</div> :
         revs.data.map((r) => <details key={r.id} style={{ padding: '4px 0' }}><summary className="small">{dateTime(r.at)} — {r.purpose || <i>no purpose</i>}</summary><Markdown text={r.notes} /></details>))}
       {diff && <div style={{ marginTop: 8 }}><div className="row"><b className="small grow">{diff.title}</b><button className="btn ghost sm icon" onClick={() => setDiff(null)}><LuX /></button></div><DiffView text={diff.text} /></div>}
+    </div>
+  );
+}
+
+function EditorPane({ fileId, ctx, onClose, onSaved, onDirty, wide, onToggleWide }: { fileId: string; ctx: ProjectCtx; onClose: () => void; onSaved: () => void; onDirty: (d: boolean) => void; wide: boolean; onToggleWide: () => void }) {
+  const doc = useLoad(() => call<any>('files.readText', { id: fileId }), [fileId]);
+  const info = useLoad(() => call<FileDetail>('files.get', { id: fileId }), [fileId]);
+  const [text, setText] = useState<string | null>(null);
+  const [sha, setSha] = useState<string>('');
+  const [saved, setSaved] = useState<string>('');
+  const [saving, setSaving] = useState(false);
+  const toast = useToast();
+  const confirm = useConfirm();
+  const latest = useRef({ text, sha, saved });
+  latest.current = { text, sha, saved };
+  useEffect(() => { if (doc.data && text === null) { setText(doc.data.text); setSaved(doc.data.text); setSha(doc.data.sha256); } }, [doc.data, text]);
+  const dirty = text !== null && text !== saved;
+  useEffect(() => { onDirty(dirty); }, [dirty, onDirty]);
+  useEffect(() => {
+    const warn = (e: BeforeUnloadEvent) => { if (latest.current.text !== latest.current.saved) { e.preventDefault(); e.returnValue = ''; } };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, []);
+
+  const save = async (overwriteSha?: string) => {
+    const { text: t, sha: expected } = latest.current;
+    if (t === null || saving) return;
+    setSaving(true);
+    try {
+      const r: any = await call('files.writeText', { id: fileId, text: t, expectedSha: overwriteSha || expected, eol: doc.data.eol, bom: doc.data.bom });
+      setSha(r.sha256);
+      setSaved(t);
+      toast('Saved — previous version kept in History', 'success');
+      onSaved();
+    } catch (e: any) {
+      const m = /^CONFLICT:([0-9a-f]{64}):(.*)$/s.exec(e.message);
+      if (m) {
+        const overwrite = await confirm({ title: 'File changed on disk', confirm: 'Overwrite with my version', danger: true,
+          body: <>Another program changed <span className="mono">{doc.data.path}</span> after you opened it. Overwrite it with your version? The other program's version will be kept in History, so nothing is lost. Choose Cancel to keep editing (you can copy your changes, then close and reopen to see the new version).</> });
+        if (overwrite) { setSaving(false); return save(m[1]); }
+      } else toast(e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (doc.error) return (
+    <Empty icon={<LuTriangleAlert />} title="Can't edit this file">{doc.error}<button className="btn" onClick={onClose}><LuArrowLeft /> Back</button></Empty>
+  );
+  if (text === null) return <div className="doc muted">Opening…</div>;
+  return (
+    <div className="editor-pane">
+      <div className="panehead">
+        <button className="btn ghost sm" onClick={onClose} title="Back to file notes"><LuArrowLeft /></button>
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div className="row" style={{ gap: 6 }}><b>{info.data?.name || doc.data.path.split('/').pop()}</b>{dirty && <span className="dirty-dot" title="Unsaved changes" />}{doc.data.readonly && <span className="badge">read-only</span>}</div>
+          <div className="small dim mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.data.path} · {doc.data.eol.toUpperCase()}{doc.data.bom ? ' · BOM' : ''}</div>
+        </div>
+        <span className="small dim">{saving ? 'Saving…' : dirty ? 'Unsaved — Ctrl+S to save' : 'Saved'}</span>
+        <button className="btn ghost sm icon" title={wide ? 'Show file list' : 'Full width'} onClick={onToggleWide}>{wide ? <LuMinimize2 /> : <LuMaximize2 />}</button>
+        <button className="btn primary sm" disabled={!dirty || saving || doc.data.readonly} onClick={() => save()}><LuSave /> Save</button>
+      </div>
+      <CodeEditor value={text} ext={info.data?.ext || doc.data.path.split('.').pop() || ''} readOnly={doc.data.readonly} onChange={setText} onSave={() => save()} />
     </div>
   );
 }

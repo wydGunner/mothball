@@ -15,7 +15,7 @@ export function LinkList({ links, ctx, onRemoved }: { links: LinkRef[]; ctx: Pro
     <div className="col" style={{ gap: 2 }}>
       {links.map((l) => (
         <div key={l.linkId} className="row small" style={{ padding: '3px 0' }}>
-          {l.type === 'task' && l.state.startsWith('bug') ? <LuBug color="var(--bad)" /> : ICON[l.type]}
+          {l.type === 'task' && l.state.startsWith('bug') ? <LuBug color="var(--accent)" /> : ICON[l.type]}
           <a href="#" className={cx('grow', l.type === 'file' && 'mono')} onClick={(e) => { e.preventDefault(); open(l); }} style={l.state === 'missing' || l.state.endsWith(':done') ? { textDecoration: 'line-through', color: 'var(--fg3)' } : undefined}>{l.title}</a>
           {l.label && <span className="dim">{l.label}</span>}
           {l.type === 'task' && <span className="dim">{l.state.split(':')[1]?.replace('_', ' ')}</span>}
@@ -44,7 +44,7 @@ export function LinkPicker({ ctx, from, onClose, onLinked }: { ctx: ProjectCtx; 
           setItems(r.filter((n) => n.id !== from.id && n.title.toLowerCase().includes(q.toLowerCase())).map((n) => ({ id: n.id, title: n.title, sub: n.category })));
         } else {
           const r = await call<any[]>('tasks.list', { projectId: pid });
-          setItems(r.filter((x) => x.id !== from.id && x.title.toLowerCase().includes(q.toLowerCase())).map((x) => ({ id: x.id, title: (x.kind === 'bug' ? '🐞 ' : '') + x.title, sub: x.status })));
+          setItems(r.filter((x) => x.id !== from.id && x.title.toLowerCase().includes(q.toLowerCase())).map((x) => ({ id: x.id, title: (x.kind === 'bug' ? 'Bug · ' : '') + x.title, sub: x.status })));
         }
       } catch { setItems([]); }
     }, 120);

@@ -7,7 +7,7 @@
 //
 // Needs git on PATH. Exits non-zero on the first failed step.
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, renameSync, existsSync, cpSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, renameSync, existsSync, cpSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -53,6 +53,11 @@ const base = `http://127.0.0.1:${port}`;
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const themeArg = arg('--theme'); // e.g. sunset, twilight — for screenshots
+if (themeArg) {
+  const T = { sunset: ['#ff7a1a', '#ffb224', '#f0384b'], twilight: ['#8b5cf6', '#3b82f6', '#ec4899'], ocean: ['#38bdf8', '#6366f1', '#22d3ee'] }[themeArg];
+  if (T) await page.addInitScript((t) => localStorage.setItem('pv.theme', JSON.stringify({ id: t[3], name: t[3], a1: t[0], a2: t[1], a3: t[2] })), [...T, themeArg]);
+}
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
@@ -182,6 +187,34 @@ await step('Timeline with journal entry', async () => {
   await page.getByRole('button', { name: 'Add to timeline' }).click();
   await page.locator('.tlitem.manual').filter({ hasText: 'Decided to move' }).waitFor();
   await page.locator('.tlitem').filter({ hasText: 'File changes detected' }).first().waitFor();
+});
+
+await step('Edit a file in the built-in editor', async () => {
+  await page.getByRole('tab', { name: /Files/ }).click();
+  await page.locator('.chip').filter({ hasText: 'All files' }).click();
+  await page.locator('.filerow').filter({ hasText: '_util.gsc' }).click();
+  await page.getByRole('button', { name: 'Edit file' }).click();
+  const ed = page.locator('.pv-editor textarea').first(); // Monaco and the stand-in both take keyboard input via a textarea
+  await ed.waitFor();
+  await ed.focus();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type('// edited in Project Vault');
+  await page.getByText('Unsaved — Ctrl+S to save').waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-editor.png') });
+  await page.keyboard.press('Control+S');
+  await page.getByText('Saved — previous version kept in History').waitFor();
+  const disk = readFileSync(join(omen, 'scripts/mp/_util.gsc'), 'utf8');
+  if (!disk.includes('// edited in Project Vault')) throw new Error('editor save did not reach disk: ' + disk);
+  // external change while open -> conflict prompt, nothing overwritten silently
+  writeFileSync(join(omen, 'scripts/mp/_util.gsc'), disk + '\n// external\n');
+  await page.keyboard.type(' again');
+  await page.keyboard.press('Control+S');
+  await page.getByText('File changed on disk').waitFor();
+  await page.locator('.modal').getByRole('button', { name: 'Cancel' }).click();
+  if (!readFileSync(join(omen, 'scripts/mp/_util.gsc'), 'utf8').includes('// external')) throw new Error('external change was overwritten');
+  page.once('dialog', (d) => d.accept());
+  await page.getByTitle('Back to file notes').click();
+  await page.getByRole('button', { name: /^Versions/ }).waitFor();
 });
 
 await step('Git tab: commit and push', async () => {

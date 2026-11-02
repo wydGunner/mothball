@@ -3,6 +3,40 @@ import { LuFolderOpen, LuShieldCheck, LuDatabaseBackup, LuRefreshCw, LuInfo, LuT
 import { call, pickFolder, revealPath, isTauri } from '../ipc';
 import { useAction, useLoad } from '../components/common';
 import type { Nav } from '../main';
+import { THEMES, applyTheme, getTheme, themeFromColor } from '../theme';
+
+function Appearance() {
+  const [cur, setCur] = useState(getTheme());
+  const pick = (t: typeof cur) => { applyTheme(t); setCur(t); };
+  return (
+    <div className="card pad" style={{ marginBottom: 16 }}>
+      <h2 style={{ marginBottom: 4 }}>Appearance</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>Black background with one color family: either shades of a single color, or neighbouring colors that go together.</p>
+      <div className="row wrap" style={{ gap: 10 }}>
+        {THEMES.map((t) => (
+          <button key={t.id} className={'theme-card' + (cur.id === t.id ? ' on' : '')} onClick={() => pick(t)} aria-label={t.name}>
+            <div className="bars"><span style={{ background: t.a1 }} /><span style={{ background: t.a2 }} /><span style={{ background: t.a3 }} /></div>
+            <small>{t.name}</small>
+          </button>
+        ))}
+        <label className={'theme-card' + (cur.id === 'custom' ? ' on' : '')} title="Pick any color; shades are generated from it">
+          <div className="bars" style={{ position: 'relative' }}>
+            {cur.id === 'custom' ? <><span style={{ background: cur.a1 }} /><span style={{ background: cur.a2 }} /><span style={{ background: cur.a3 }} /></> : <span style={{ background: 'conic-gradient(#f43f5e, #ffb224, #a3e635, #22d3ee, #8b5cf6, #f43f5e)' }} />}
+            <input type="color" value={cur.a1} onChange={(e) => pick(themeFromColor(e.target.value))} style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} />
+          </div>
+          <small>Custom shade</small>
+        </label>
+      </div>
+      <div className="row" style={{ marginTop: 14, gap: 10 }}>
+        <button className="btn primary sm">Primary</button>
+        <span className="pill"><span className="dot on" />Active</span>
+        <span className="badge warn">changed</span>
+        <span className="prio p3">urgent</span>
+        <div className="progress" style={{ width: 120 }}><div style={{ width: '60%' }} /></div>
+      </div>
+    </div>
+  );
+}
 
 function UpdateCheck() {
   const [state, setState] = useState<string>('');
@@ -39,6 +73,7 @@ export function SettingsView({ nav }: { nav: Nav }) {
   return (
     <div className="page" style={{ maxWidth: 900 }}>
       <h1 style={{ marginBottom: 16 }}>Settings & backup</h1>
+      <Appearance />
       <div className="card pad" style={{ marginBottom: 16 }}>
         <h2 className="row" style={{ marginBottom: 8 }}><LuDatabaseBackup /> Back up</h2>
         <p className="muted small" style={{ marginTop: 0 }}>

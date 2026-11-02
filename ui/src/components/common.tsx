@@ -4,6 +4,7 @@ import {
   LuCpu, LuBinary, LuFile, LuX, LuCircleAlert, LuCircleCheck, LuInfo, LuFolderGit2, LuCode, LuWrench, LuPalette, LuFolder,
 } from 'react-icons/lu';
 import { renderMarkdown, parseInternalHref } from '../markdown';
+import { LuChevronDown, LuCheck } from 'react-icons/lu';
 import { cx } from '../format';
 
 // ---------------------------------------------------------------- toasts
@@ -163,10 +164,15 @@ export function TagInput({ value, onChange, placeholder }: { value: string[]; on
   );
 }
 
-const STATUS_COLORS: Record<string, string> = { Planned: '#7c8cff', Active: '#3ecf8e', Paused: '#f5b94a', Completed: '#4fb3ff', Archived: '#8b93a7' };
-export function StatusPill({ status, colors }: { status: string; colors?: Record<string, string> }) {
-  const c = colors?.[status] || STATUS_COLORS[status] || '#8b93a7';
-  return <span className="pill"><span className="dot" style={{ background: c }} />{status}</span>;
+// Single-accent status dots: active work is lit, finished work is half-lit, the rest is gray.
+export function statusDot(status: string): 'on' | 'half' | 'off' {
+  const s = status.toLowerCase();
+  if (s === 'active' || s === 'in progress') return 'on';
+  if (s === 'completed' || s === 'done') return 'half';
+  return 'off';
+}
+export function StatusPill({ status }: { status: string; colors?: Record<string, string> }) {
+  return <span className="pill"><span className={`dot ${statusDot(status)}`} />{status}</span>;
 }
 
 const KIND_ICONS: Record<string, ReactNode> = {
@@ -177,19 +183,19 @@ export function KindIcon({ kind }: { kind: string }) {
   return <span className="kind" title={kind}>{KIND_ICONS[kind] || <LuFile />}</span>;
 }
 
-const CAT: Record<string, { icon: ReactNode; bg: string }> = {
-  software: { icon: <LuCode />, bg: 'linear-gradient(135deg,#4f7cff,#6a5cff)' },
-  game: { icon: <LuGamepad2 />, bg: 'linear-gradient(135deg,#ff6f91,#c04cff)' },
-  '3d-printing': { icon: <LuPrinter />, bg: 'linear-gradient(135deg,#ff9f43,#ff5e57)' },
-  electronics: { icon: <LuCpu />, bg: 'linear-gradient(135deg,#1dd1a1,#10ac84)' },
-  creative: { icon: <LuPalette />, bg: 'linear-gradient(135deg,#feca57,#ff9ff3)' },
-  documents: { icon: <LuFileText />, bg: 'linear-gradient(135deg,#54a0ff,#2e86de)' },
-  general: { icon: <LuFolder />, bg: 'linear-gradient(135deg,#8395a7,#576574)' },
+const CAT: Record<string, { icon: ReactNode }> = {
+  software: { icon: <LuCode /> },
+  game: { icon: <LuGamepad2 /> },
+  '3d-printing': { icon: <LuPrinter /> },
+  electronics: { icon: <LuCpu /> },
+  creative: { icon: <LuPalette /> },
+  documents: { icon: <LuFileText /> },
+  general: { icon: <LuFolder /> },
 };
 export function ProjectIcon({ category, icon, color, size = 38 }: { category: string; icon?: string; color?: string; size?: number }) {
   const c = CAT[category] || CAT.general;
   return (
-    <div className="picon" style={{ background: color || c.bg, width: size, height: size, fontSize: size * 0.47 }}>
+    <div className={'picon ' + ({ software: 'c1', game: 'c3', '3d-printing': 'c1', electronics: 'c2', creative: 'c3', documents: 'c2' }[category] || 'c2')} style={{ width: size, height: size, fontSize: size * 0.47, borderRadius: Math.max(5, size * 0.24) }}>
       {icon ? <span style={{ fontSize: size * 0.5 }}>{icon}</span> : c.icon}
     </div>
   );
@@ -260,4 +266,42 @@ export function useAutosave(save: () => Promise<void>, delay = 800) {
 export function SaveState({ state }: { state: string }) {
   const label = { idle: '', pending: 'Unsaved changes…', saving: 'Saving…', saved: 'Saved', error: 'Save failed — retrying on next edit' }[state] || '';
   return <span className="savestate" style={state === 'error' ? { color: 'var(--bad)' } : undefined}>{label}</span>;
+}
+
+// ---------------------------------------------------------------- dropdown menu
+export interface DropdownSection { title?: string; items: { key: string; label: ReactNode; checked?: boolean; onSelect: () => void; hint?: string }[] }
+
+/** Button that opens a menu of checkable items grouped in sections. */
+export function Dropdown({ label, icon, sections, badge, align = 'left', width = 240 }: { label: ReactNode; icon?: ReactNode; sections: DropdownSection[]; badge?: number; align?: 'left' | 'right'; width?: number }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', esc);
+    return () => { window.removeEventListener('mousedown', close); window.removeEventListener('keydown', esc); };
+  }, [open]);
+  return (
+    <div className="dropdown" ref={ref}>
+      <button className={cx('btn', open && 'open')} onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open}>
+        {icon}{label}{badge ? <span className="badge ok">{badge}</span> : null}<LuChevronDown size={14} className="dim" />
+      </button>
+      {open && (
+        <div className="dd-menu" role="menu" style={{ width, [align]: 0 }}>
+          {sections.filter((s) => s.items.length).map((s, i) => (
+            <div key={i} className="dd-section">
+              {s.title && <div className="dd-title">{s.title}</div>}
+              {s.items.map((it) => (
+                <button key={it.key} role="menuitemcheckbox" aria-checked={!!it.checked} className={cx('dd-item', it.checked && 'on')} onClick={() => { it.onSelect(); }} title={it.hint}>
+                  <span className="dd-check">{it.checked && <LuCheck size={13} />}</span><span className="grow">{it.label}</span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

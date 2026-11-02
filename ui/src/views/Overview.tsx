@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   LuTriangleAlert, LuGitCompareArrows, LuPlus, LuTrash2, LuCircleCheck, LuCircleX, LuFileWarning, LuPencil,
-  LuNotebookPen, LuListTodo, LuHistory, LuChevronRight, LuDiff,
+  LuNotebookPen, LuListTodo, LuHistory, LuChevronRight, LuDiff, LuBug,
 } from 'react-icons/lu';
 import { call, type Project } from '../ipc';
 import { Modal, StatusPill, TagInput, useAction, useLoad, useConfirm, useToast } from '../components/common';
@@ -37,7 +37,7 @@ export const MODULES: Record<string, { title: string; fields: FieldDef[] }> = {
   ] },
 };
 
-const PRINT_STATUS_COLOR: Record<string, string> = { REPRINT_READY: '#3ecf8e', TEST_FIT_PASSED: '#3ecf8e', NEEDS_WORK: '#f5b94a', FAILED_PRINT: '#ff6b6b', SLICED_UNTESTED: '#4fb3ff' };
+const PRINT_STATUS_DOT: Record<string, string> = { REPRINT_READY: 'on', TEST_FIT_PASSED: 'on', SLICED_UNTESTED: 'half', NEEDS_WORK: 'half' };
 
 export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const p = ctx.project;
@@ -138,7 +138,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
                   {filled.filter((f) => !f.multiline).map((f) => (
                     <div key={f.key} className="fact"><span>{f.label}</span>
                       {f.key === 'printStatus'
-                        ? <b><span className="pill"><span className="dot" style={{ background: PRINT_STATUS_COLOR[p.module[f.key]] || '#8b93a7' }} />{p.module[f.key].replace(/_/g, ' ').toLowerCase()}</span></b>
+                        ? <b><span className="pill"><span className={`dot ${PRINT_STATUS_DOT[p.module[f.key]] || 'off'}`} style={p.module[f.key] === 'FAILED_PRINT' ? { background: 'var(--bad)' } : undefined} />{p.module[f.key].replace(/_/g, ' ').toLowerCase()}</span></b>
                         : <b>{p.module[f.key]}</b>}
                     </div>
                   ))}
@@ -181,7 +181,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
           {nextTasks.length ? nextTasks.map((t) => (
             <div key={t.id} className="linkrow" onClick={() => ctx.openTask(t.id)}>
               <span className={`prio p${t.priority}`}>{['low', 'normal', 'high', 'urgent'][t.priority]}</span>
-              <span className="grow">{t.kind === 'bug' ? '🐞 ' : ''}{t.title}</span><span className="dim small">{t.status.replace('_', ' ')}</span>
+              <span className="grow">{t.kind === 'bug' ? <LuBug color="var(--accent)" style={{ marginRight: 4, verticalAlign: -2 }} /> : null}{t.title}</span><span className="dim small">{t.status.replace('_', ' ')}</span>
             </div>
           )) : <div className="muted small">Nothing planned. Add tasks so you know where to pick up next time.</div>}
         </section>

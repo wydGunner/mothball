@@ -76,7 +76,7 @@ fn object_path(v: &Vault, sha: &str) -> DbResult<PathBuf> {
 }
 
 /// Copies `src` into the object store; verifies the content hash.
-fn store(v: &Vault, src: &Path, expected_sha: &str) -> DbResult<()> {
+pub(crate) fn store(v: &Vault, src: &Path, expected_sha: &str) -> DbResult<()> {
     let dest = object_path(v, expected_sha)?;
     if dest.exists() {
         return Ok(());
@@ -139,6 +139,22 @@ pub fn capture(v: &Vault, project_id: &str) -> DbResult<(usize, Vec<String>)> {
         }
     }
     Ok((n, errs))
+}
+
+/// Makes sure the file's current on-disk content is stored as a version
+/// (used before the built-in editor overwrites a file).
+pub(crate) fn ensure_stored(v: &Vault, file: &Row, path: &Path, sha: &str, reason: &str) -> DbResult<()> {
+    let exists = v.db.scalar_i64("SELECT count(*) FROM file_versions WHERE file_id=? AND sha256=?", p![file.s("id"), sha])?;
+    if exists > 0 {
+        return Ok(());
+    }
+    store(v, path, sha)?;
+    let size = std::fs::metadata(path).map(|m| m.len() as i64).unwrap_or(0);
+    v.db.exec(
+        "INSERT INTO file_versions(id,project_id,file_id,sha256,size,rel_path,reason,note,created_at) VALUES (?,?,?,?,?,?,?,'',?)",
+        p![new_id(), file.s("project_id"), file.s("id"), sha, size, file.s("rel_path"), reason, now_ms()],
+    )?;
+    Ok(())
 }
 
 pub fn save_manual(v: &Vault, file_id: &str, note: &str) -> DbResult<Json> {

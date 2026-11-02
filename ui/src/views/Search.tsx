@@ -7,7 +7,7 @@ import type { Nav } from '../main';
 
 export interface Hit { type: string; id: string; projectId: string; projectName?: string; title: string; snippet: string; path?: string; state?: string }
 
-export const HIT_ICON: Record<string, ReactElement> = { project: <LuFolder />, file: <LuFile />, note: <LuNotebookPen />, task: <LuListTodo />, bug: <LuBug color="var(--bad)" />, journal: <LuBookOpen /> };
+export const HIT_ICON: Record<string, ReactElement> = { project: <LuFolder />, file: <LuFile />, note: <LuNotebookPen />, task: <LuListTodo />, bug: <LuBug color="var(--accent)" />, journal: <LuBookOpen /> };
 const TYPES = [['', 'Everything'], ['project', 'Projects'], ['file', 'Files'], ['note', 'Notes'], ['task', 'Tasks'], ['bug', 'Bugs'], ['journal', 'Journal']] as const;
 
 export function openHit(nav: Nav, h: Hit) {

@@ -38,6 +38,8 @@ or not yet verified on Windows · ⛔ not implemented yet
 
 | Area | State | Notes |
 |---|---|---|
+| Built-in code editor | 🟡 | Monaco (bundled offline, workers included), syntax colors from the app theme, Ctrl+S, conflict detection if the file changes on disk, previous content kept as a version, CRLF/BOM preserved, full-width mode. Tested here with the plain-text stand-in; Monaco itself is first exercised by CI / your build |
+| Themes | ✅ | black UI, 10 single-hue or analogous palettes + custom shade, syntax highlighting follows the palette |
 | Overview | ✅ | read-only summary (attention items, details, file groups, next tasks, notes, activity) + Edit dialog |
 | Dashboard | ✅ | grid/list, filters (status, category, tag, favorites), sorting, favorites, recent, context menu |
 | Statuses | ✅ | built-ins + custom |
