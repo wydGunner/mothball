@@ -3,7 +3,7 @@ import { LuLayoutDashboard, LuFiles, LuNotebookPen, LuListTodo, LuHistory, LuGit
 import { call, isTauri, pickFolder, revealPath, onFileDrop, type Project, type ScanReport } from '../ipc';
 import { Empty, ProjectIcon, StatusPill, useAction, useToast, useConfirm } from '../components/common';
 import { ago, cx } from '../format';
-import type { Nav } from '../main';
+import type { Focus, Nav } from '../main';
 import { Overview } from './Overview';
 import { FilesTab } from './Files';
 import { NotesTab } from './Notes';
@@ -35,10 +35,10 @@ export interface ProjectCtx {
   openFiles: (group?: string) => void;
   openTimeline: () => void;
   fileGroup?: string;
-  focus?: { type: 'file' | 'note' | 'task'; id: string };
+  focus?: Focus;
 }
 
-export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: { nav: Nav; id: string; tab?: Tab; focus?: { type: 'file' | 'note' | 'task'; id: string } }) {
+export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: { nav: Nav; id: string; tab?: Tab; focus?: Focus }) {
   const [project, setProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>(initialTab || 'overview');

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CodeEditor } from '../components/CodeEditor';
+import { useFileActions, TEXT_EDITABLE, type FileRef } from '../fileActions';
 import {
   LuFolder, LuFolderOpen, LuChevronRight, LuChevronDown, LuSearch, LuExternalLink, LuFolderSearch, LuCopy, LuTriangleAlert,
-  LuUpload, LuEye, LuFilter, LuCode, LuSave, LuArrowLeft, LuMaximize2, LuMinimize2, LuPencil, LuLink2, LuX, LuHistory, LuGitCommitHorizontal, LuFileQuestion, LuCopyCheck, LuCircleCheck,
+  LuUpload, LuEye, LuFilter, LuCode, LuSave, LuArrowLeft, LuMaximize2, LuMinimize2, LuTrash2, LuArchiveRestore, LuEllipsis, LuPencil, LuLink2, LuX, LuHistory, LuGitCommitHorizontal, LuFileQuestion, LuCopyCheck, LuCircleCheck,
 } from 'react-icons/lu';
 import { call, isTauri, openPath, pickFiles, revealPath, type FileDetail, type FileDocs, type VFile } from '../ipc';
 import { Dropdown, Empty, KindIcon, useConfirm, Markdown, SaveState, TagInput, useAction, useAutosave, useContextMenu, useLoad, useResizable, useToast } from '../components/common';
@@ -36,7 +37,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   const [dir, setDir] = useState<string>('');
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState('');
-  const [show, setShow] = useState<'all' | 'changed' | 'undocumented' | 'missing'>('all');
+  const [show, setShow] = useState<'all' | 'changed' | 'undocumented' | 'missing' | 'deleted'>('all');
   const [sort, setSort] = useState('path');
   const [group, setGroup] = useState<string>(ctx.fileGroup || (ctx.focus?.type === 'file' ? 'all' : 'auto'));
   const groups = useLoad(() => call<{ id: string; label: string; hint: string; count: number; exts: string[] }[]>('files.groups', { projectId: pid }), [pid, ctx.scanTick]);
@@ -71,15 +72,45 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   const act = useAction();
   const toast = useToast();
   const menu = useContextMenu();
+  const fileActions = useFileActions();
 
-  useEffect(() => { if (ctx.focus?.type === 'file') setSelected(ctx.focus.id); }, [ctx.focus]);
+  // Reveal/open requests (from search, links, Overview). Clears filters that could
+  // hide the file, opens its folder, selects it, and scrolls it into view.
+  const pendingReveal = useRef<string | null>(null);
+  useEffect(() => {
+    const fc = ctx.focus;
+    if (fc?.type !== 'file' || !fc.id) return;
+    if (editing && editing !== fc.id && !confirmLeave()) return;
+    dirtyRef.current = false;
+    call<FileDetail>('files.get', { id: fc.id }).then((f) => {
+      const parent = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
+      setQuery(''); setKind(''); setGroup('all');
+      setShow(f.state === 'deleted' ? 'deleted' : f.state === 'missing' ? 'missing' : 'all');
+      setDir(fc.action === 'reveal' ? parent : '');
+      setSelectedRaw(f.id);
+      setEditing(fc.action === 'edit' && f.state === 'present' ? f.id : null);
+      pendingReveal.current = f.id;
+    }).catch(() => setSelectedRaw(fc.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.focus]);
 
   const dirs = useLoad(() => call<{ path: string; files: number }[]>('files.dirs', { projectId: pid }), [pid, ctx.scanTick]);
   const files = useLoad(() => group === 'auto' ? Promise.resolve([] as VFile[]) : call<VFile[]>('files.list', {
     projectId: pid, query, kind: kind || null, dir: dir || null, sort, exts,
-    state: show === 'missing' ? 'missing' : null, changedOnly: show === 'changed', undocumented: show === 'undocumented', limit: 5000,
+    state: show === 'missing' ? 'missing' : show === 'deleted' ? 'deleted' : null, changedOnly: show === 'changed', undocumented: show === 'undocumented', limit: 5000,
   }), [pid, query, kind, dir, show, sort, ctx.scanTick, group, exts?.join(',')]);
   const root = useMemo(() => buildTree(dirs.data || []), [dirs.data]);
+  useEffect(() => {
+    const id = pendingReveal.current;
+    if (!id || !files.data?.some((f) => f.id === id)) return;
+    pendingReveal.current = null;
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`[data-fid="${id}"]`) as HTMLElement | null;
+      if (!el) return;
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+    });
+  }, [files.data]);
 
   // reveal the selected file's folder in the tree
   useEffect(() => {
@@ -115,19 +146,21 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
     }
   };
 
+  const toRef = (f: VFile, abs?: string): FileRef => ({ id: f.id, name: f.name, path: f.path, absPath: abs, projectId: pid, projectName: ctx.project.name, state: f.state, editable: TEXT_EDITABLE(f.kind, f.ext, f.size) });
   const fileMenu = async (e: React.MouseEvent, f: VFile) => {
     e.preventDefault();
-    const ids = multi.size > 1 && multi.has(f.id) ? [...multi] : [f.id];
+    const pos = { clientX: e.clientX, clientY: e.clientY, preventDefault() {} };
+    const sel = multi.size > 1 && multi.has(f.id) ? (files.data || []).filter((x) => multi.has(x.id)) : [f];
     let abs: string | undefined;
-    try { abs = (await call<FileDetail>('files.get', { id: f.id })).absPath; } catch { /* missing project root */ }
-    menu(e, [
-      { label: 'Open with default app', icon: <LuExternalLink />, disabled: !isTauri || f.state === 'missing' || !abs, onClick: () => act(() => openPath(abs!)) },
-      { label: 'Show in Explorer', icon: <LuFolderSearch />, disabled: !isTauri || f.state === 'missing' || !abs, onClick: () => act(() => revealPath(abs!)) },
-      { label: 'Copy path', icon: <LuCopy />, onClick: () => { navigator.clipboard.writeText(abs || f.path); toast('Path copied'); } },
-      { sep: true, label: '' },
-      { label: ids.length > 1 ? `Mark ${ids.length} files reviewed` : 'Mark reviewed', icon: <LuCircleCheck />, onClick: async () => { await act(() => call('files.markReviewed', { ids })); files.reload(); ctx.reload(); } },
-    ]);
+    try { abs = (await call<FileDetail>('files.get', { id: f.id })).absPath; } catch { /* project root unreachable */ }
+    menu(pos, fileActions.menuItems(toRef(f, abs), {
+      selection: sel.map((x) => toRef(x)),
+      onEdit: () => { setSelected(f.id); setEditing(f.id); },
+      onChanged: () => { files.reload(); dirs.reload(); ctx.reload(); },
+      extra: [{ label: sel.length > 1 ? `Mark ${sel.length} files reviewed` : 'Mark reviewed', icon: <LuCircleCheck />, onClick: async () => { await act(() => call('files.markReviewed', { ids: sel.map((x) => x.id) })); files.reload(); ctx.reload(); } }],
+    }));
   };
+
 
   const keyNav = (e: React.KeyboardEvent) => {
     if (!files.data?.length) return;
@@ -171,7 +204,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
           <div className="row">
             <div className="searchinput grow" style={{ width: 'auto' }}><LuSearch /><input className="input" placeholder="Search files…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search files" /></div>
             <Dropdown label="Filter" icon={<LuFilter />} badge={(show !== 'all' ? 1 : 0) + (kind ? 1 : 0) || undefined} align="right" sections={[
-              { title: 'Show', items: ([['all', 'All files'], ['changed', 'Changed since reviewed'], ['undocumented', 'Without notes'], ['missing', 'Missing from disk']] as const).map(([k, l]) => ({ key: k, label: l, checked: show === k, onSelect: () => setShow(k) })) },
+              { title: 'Show', items: ([['all', 'All files'], ['changed', 'Changed since reviewed'], ['undocumented', 'Without notes'], ['missing', 'Missing from disk'], ['deleted', 'Deleted (restorable)']] as const).map(([k, l]) => ({ key: k, label: l, checked: show === k, onSelect: () => setShow(k) })) },
               ...(!(groups.data || []).length ? [{ title: 'Type', items: KINDS.map((k) => ({ key: k, label: k, checked: kind === k, onSelect: () => setKind(kind === k ? '' : k) })) }] : []),
             ]} />
             <Dropdown label={<>Sort: {FILE_SORTS.find((x) => x[0] === sort)?.[1]}</>} align="right" width={170} sections={[{ items: FILE_SORTS.map(([k, l]) => ({ key: k, label: l, checked: sort === k, onSelect: () => setSort(k) })) }]} />
@@ -180,7 +213,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
         </div>
         <div style={{ overflow: 'auto', flex: 1 }} tabIndex={0} onKeyDown={keyNav}>
           {files.data?.map((f, i) => (
-            <div key={f.id} className={cx('filerow', (selected === f.id || multi.has(f.id)) && 'sel', f.state === 'missing' && 'missing')}
+            <div key={f.id} data-fid={f.id} className={cx('filerow', (selected === f.id || multi.has(f.id)) && 'sel', f.state !== 'present' && 'missing')}
               onClick={(e) => onRowClick(e, f, i)} onDoubleClick={() => f.state === 'present' && isTauri && call<FileDetail>('files.get', { id: f.id }).then((d) => openPath(d.absPath)).catch((e) => toast(e.message, 'error'))}
               onContextMenu={(e) => fileMenu(e, f)}>
               <KindIcon kind={f.kind} />
@@ -215,6 +248,8 @@ const EDITABLE_EXTS = new Set(['md', 'markdown', 'txt', 'csv', 'log', 'gcode', '
 const canEdit = (f: VFile) => f.state === 'present' && f.size <= 8 * 1024 * 1024 && (f.kind === 'code' || f.kind === 'config' || EDITABLE_EXTS.has(f.ext) || (f.ext === '' && f.size < 1024 * 1024));
 
 function FileDetailPanel({ fileId, ctx, onChanged, onEdit }: { fileId: string; ctx: ProjectCtx; onChanged: () => void; onEdit: () => void }) {
+  const menu = useContextMenu();
+  const fileActions = useFileActions();
   const d = useLoad(() => call<FileDetail>('files.get', { id: fileId }), [fileId, ctx.scanTick]);
   const [docs, setDocs] = useState<FileDocs | null>(null);
   const [tags, setTags] = useState<string[]>([]);
@@ -260,9 +295,16 @@ function FileDetailPanel({ fileId, ctx, onChanged, onEdit }: { fileId: string; c
           <button className="btn sm" onClick={() => act(() => openPath(f.absPath))}><LuExternalLink /> Open</button>
           <button className="btn sm icon" title="Show in Explorer" onClick={() => act(() => revealPath(f.absPath))}><LuFolderSearch /></button>
         </>}
-        <button className="btn sm icon" title="Copy full path" onClick={() => { navigator.clipboard.writeText(f.absPath); toast('Path copied'); }}><LuCopy /></button>
+        <button className="btn sm icon" title="More actions (rename, delete, copy path…)" onClick={(e) => {
+          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          menu({ clientX: r.right - 200, clientY: r.bottom + 4, preventDefault() {} }, fileActions.menuItems(
+            { id: f.id, name: f.name, path: f.path, absPath: f.absPath, projectId: f.projectId, state: f.state, editable: canEdit(f) },
+            { onEdit, onChanged: () => { d.reload(); onChanged(); } }));
+        }}><LuEllipsis /></button>
       </div>
 
+      {f.state === 'deleted' && <div className="alert bad"><LuTrash2 /><div className="grow">You deleted this file in Project Vault (it went to the Recycle Bin). Its notes and history are kept.</div>
+        <button className="btn sm" onClick={async () => { if (await fileActions.restore({ id: f.id, name: f.name, path: f.path, projectId: f.projectId, state: f.state })) { d.reload(); onChanged(); } }}><LuArchiveRestore /> Restore</button></div>}
       {f.state === 'missing' && <div className="alert bad"><LuTriangleAlert /><div>This file is no longer on disk. Its documentation is kept; if the file returns (same path, or identical content elsewhere), it is re-attached.</div></div>}
       {f.docs.fileChangedSinceDoc && f.state === 'present' && (
         <div className="alert warn"><LuTriangleAlert /><div className="grow">The file's content changed after this documentation was last written. Check that the notes still apply.</div>

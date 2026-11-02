@@ -121,6 +121,12 @@ pub fn dunce(p: &Path) -> PathBuf {
     }
 }
 
+/// Path as the OS shows it (backslashes on Windows).
+pub fn display_path(p: &Path) -> String {
+    let s = p.to_string_lossy().to_string();
+    if cfg!(windows) { s.replace('/', "\\") } else { s }
+}
+
 fn ensure_status(v: &Vault, s: &str) -> DbResult<()> {
     let n = v.db.scalar_i64("SELECT count(*) FROM statuses WHERE name=?", p![s])?;
     if n == 0 {
@@ -175,7 +181,7 @@ fn row_json(v: &Vault, r: &Row) -> DbResult<Json> {
     let stats = v.db.one(
         "SELECT count(*) AS n, COALESCE(SUM(size),0) AS bytes,
                 SUM(state='missing') AS missing, SUM(changed_since_review) AS changed
-         FROM files WHERE project_id=?",
+         FROM files WHERE project_id=? AND state!='deleted'",
         p![id.clone()],
     )?;
     let st = stats.unwrap();

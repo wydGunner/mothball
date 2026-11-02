@@ -2,7 +2,7 @@ import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LuLayoutDashboard, LuSearch, LuSettings, LuPanelLeftClose, LuPanelLeftOpen, LuStar, LuClock, LuPlus, LuChevronRight } from 'react-icons/lu';
 import { call, type Project } from './ipc';
-import { ToastProvider, ConfirmProvider, ContextMenuProvider, ProjectIcon } from './components/common';
+import { ToastProvider, ConfirmProvider, ContextMenuProvider, PromptProvider, ProjectIcon } from './components/common';
 import { Dashboard, NewProjectDialog } from './views/Dashboard';
 import { ProjectView, type Tab } from './views/Project';
 import { SearchView } from './views/Search';
@@ -19,7 +19,10 @@ export type Route =
   | { view: 'dashboard' }
   | { view: 'search'; query?: string }
   | { view: 'settings' }
-  | { view: 'project'; id: string; tab?: Tab; focus?: { type: 'file' | 'note' | 'task'; id: string } };
+  | { view: 'project'; id: string; tab?: Tab; focus?: Focus };
+
+/** What to show in a project. `action` + `nonce` let the same file be revealed/opened again. */
+export interface Focus { type: 'file' | 'note' | 'task'; id: string; action?: 'reveal' | 'edit'; nonce?: number }
 
 export interface Nav { go: (r: Route) => void; refreshProjects: () => void; projects: Project[] }
 
@@ -121,6 +124,6 @@ function App() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ToastProvider><ConfirmProvider><ContextMenuProvider><App /></ContextMenuProvider></ConfirmProvider></ToastProvider>
+    <ToastProvider><ConfirmProvider><PromptProvider><ContextMenuProvider><App /></ContextMenuProvider></PromptProvider></ConfirmProvider></ToastProvider>
   </StrictMode>,
 );

@@ -34,6 +34,9 @@ mkdirSync(join(omen, 'configs'), { recursive: true });
 writeFileSync(join(omen, 'scripts/mp/weapon_tuner.gsc'), 'init()\n{\n    level.instashoot = getDvarInt("omen_instashoot");\n}\n');
 writeFileSync(join(omen, 'scripts/mp/_util.gsc'), 'util() {}\n');
 writeFileSync(join(omen, 'configs/weapons.json'), '{"instashoot": true}\n');
+mkdirSync(join(omen, 'menus'), { recursive: true });
+writeFileSync(join(omen, 'scripts/mp/createserver.menu'), 'menu "createserver" { itemDef server }\n');
+writeFileSync(join(omen, 'menus/createserver.menu'), 'menu "createserver" { itemDef lobby }\n');
 const git = (...a) => execFileSync('git', ['-C', omen, '-c', 'user.name=Dev', '-c', 'user.email=dev@example.com', ...a], { stdio: 'pipe' });
 git('init', '-q'); git('add', '-A'); git('commit', '-qm', 'Initial OMEN import');
 appendFileSync(join(omen, 'scripts/mp/weapon_tuner.gsc'), '\nonPlayerConnect() {}\n'); git('commit', '-qam', 'Add player connect hook');
@@ -52,7 +55,9 @@ await new Promise((r) => setTimeout(r, 700));
 const base = `http://127.0.0.1:${port}`;
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+const page = await context.newPage();
 const themeArg = arg('--theme'); // e.g. sunset, twilight — for screenshots
 if (themeArg) {
   const T = { sunset: ['#ff7a1a', '#ffb224', '#f0384b'], twilight: ['#8b5cf6', '#3b82f6', '#ec4899'], ocean: ['#38bdf8', '#6366f1', '#22d3ee'] }[themeArg];
@@ -256,7 +261,43 @@ await step('Command palette', async () => {
 });
 
 if (pvDir) {
-  await step('Import Print Vault', async () => {
+  await step('Global search: real paths, duplicates, highlights', async () => {
+  await page.keyboard.press('Control+K');
+  await page.locator('.palette input').fill('createserver');
+  const items = page.locator('.palette .item.fileitem').filter({ hasText: 'createserver.menu' });
+  await items.nth(1).waitFor();
+  if ((await items.count()) !== 2) throw new Error('expected both identically named files');
+  const subs = (await items.locator('.ppath').allTextContents()).map((t) => t.replace(/\s+/g, ' ').trim());
+  if (!subs.some((t) => t.includes('OMEN v2 / scripts / mp / createserver.menu')) || !subs.some((t) => t.includes('OMEN v2 / menus / createserver.menu'))) throw new Error('paths: ' + JSON.stringify(subs));
+  const titles = await items.evaluateAll((els) => els.map((e) => e.getAttribute('title')));
+  for (const t of titles) if (!existsSync(t)) throw new Error('absolute path does not exist: ' + t);
+  await items.first().locator('mark').first().waitFor();
+});
+
+await step('Global search: right-click menu and copy paths', async () => {
+  const item = page.locator('.palette .item.fileitem').filter({ hasText: 'menus / createserver.menu' });
+  await item.click({ button: 'right' });
+  await page.locator('.ctx').waitFor();
+  if (!(await page.locator('.palette').isVisible())) throw new Error('right-click must not open/close anything');
+  for (const l of ['Reveal in project', 'Show in Windows Explorer', 'Copy full path', 'Copy relative path', 'Rename…', 'Delete…']) await page.locator('.ctx button').filter({ hasText: l }).waitFor();
+  await item.hover();
+  if (shots) await page.screenshot({ path: join(shots, 'x-search-menu.png') });
+  await page.locator('.ctx button').filter({ hasText: 'Copy relative path' }).click();
+  if ((await page.evaluate(() => navigator.clipboard.readText())) !== 'menus/createserver.menu') throw new Error('relative path');
+  await item.click({ button: 'right' });
+  await page.locator('.ctx button').filter({ hasText: 'Copy full path' }).click();
+  const full = await page.evaluate(() => navigator.clipboard.readText());
+  if (full !== join(omen, 'menus/createserver.menu')) throw new Error('full path: ' + full);
+  await item.click({ button: 'right' });
+  await page.locator('.ctx').waitFor();
+  await page.keyboard.press('Escape'); // closes the menu only
+  await page.locator('.ctx').waitFor({ state: 'detached' });
+  if (!(await page.locator('.palette').isVisible())) throw new Error('Escape on the menu closed the palette');
+  await page.keyboard.press('Escape');
+  await page.locator('.palette').waitFor({ state: 'detached' });
+});
+
+await step('Import Print Vault', async () => {
     await page.getByRole('button', { name: 'Dashboard' }).click();
     await page.getByRole('button', { name: /Import Print Vault/ }).click();
     await page.getByPlaceholder('D:\\PrintVault\\3D Prints Vault').fill(pvDir);
@@ -284,6 +325,77 @@ if (pvDir) {
     if (shots) await page.screenshot({ path: join(shots, 'x-3d-files.png') });
   });
 }
+
+await step('Reveal in project from another project', async () => {
+  await page.locator('.crumbs .cur').filter({ hasText: 'Cat - Green And Yellow' }).waitFor();
+  await page.keyboard.press('Control+K');
+  await page.locator('.palette input').fill('createserver');
+  const item = page.locator('.palette .item.fileitem').filter({ hasText: 'menus / createserver.menu' });
+  await item.click({ button: 'right' });
+  await page.locator('.ctx button').filter({ hasText: 'Reveal in project' }).click();
+  await page.locator('.crumbs .cur').filter({ hasText: 'OMEN v2' }).waitFor();
+  await page.locator('.tabs button.on').filter({ hasText: 'Files' }).waitFor();
+  await page.locator('.tnode.on').filter({ hasText: 'menus' }).waitFor();
+  await page.locator('.filerow.sel').filter({ hasText: 'createserver.menu' }).waitFor();
+  await page.locator('.doc .mono').filter({ hasText: 'menus/createserver.menu' }).first().waitFor();
+});
+
+await step('Global search: keyboard open', async () => {
+  await page.keyboard.press('Control+K');
+  await page.locator('.palette input').fill('createserver');
+  await page.locator('.palette .item.fileitem').nth(1).waitFor();
+  const idx = await page.locator('.palette .item').evaluateAll((els) => els.findIndex((e) => e.textContent.includes('scripts / mp')));
+  for (let i = 0; i < idx; i++) await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await page.locator('.filerow.sel').filter({ hasText: 'createserver.menu' }).waitFor();
+  await page.locator('.doc .mono').filter({ hasText: 'scripts/mp/createserver.menu' }).first().waitFor();
+});
+
+await step('Global search: rename', async () => {
+  await page.keyboard.press('Control+K');
+  await page.locator('.palette input').fill('createserver');
+  await page.locator('.palette .item.fileitem').filter({ hasText: 'scripts / mp / createserver.menu' }).click({ button: 'right' });
+  await page.locator('.ctx button').filter({ hasText: 'Rename…' }).click();
+  const inp = page.locator('.modal .mbody input');
+  await inp.fill('create_server.menu');
+  await inp.press('Enter');
+  await page.locator('.palette input').fill('create_server');
+  await page.locator('.palette .item.fileitem').filter({ hasText: 'scripts / mp / create_server.menu' }).waitFor();
+  // substring search: "server" finds both create_server.menu and createserver.menu
+  await page.locator('.palette input').fill('server');
+  await page.locator('.palette .item.fileitem').filter({ hasText: 'menus / createserver.menu' }).waitFor();
+  if (!existsSync(join(omen, 'scripts/mp/create_server.menu')) || existsSync(join(omen, 'scripts/mp/createserver.menu'))) throw new Error('rename not on disk');
+});
+
+await step('Global search: safe delete', async () => {
+  await page.locator('.palette input').fill('createserver');
+  await page.locator('.palette .item.fileitem').filter({ hasText: 'menus / createserver.menu' }).click({ button: 'right' });
+  await page.locator('.ctx button').filter({ hasText: 'Delete…' }).click();
+  await page.locator('.modal').getByText('Recycle Bin', { exact: false }).or(page.locator('.modal').getByText('trash', { exact: false })).first().waitFor();
+  await page.locator('.modal').getByRole('button', { name: 'Delete' }).click();
+  await page.locator('.palette .item.fileitem').filter({ hasText: 'menus / createserver.menu' }).waitFor({ state: 'detached' });
+  if (existsSync(join(omen, 'menus/createserver.menu'))) throw new Error('file still on disk');
+  await page.keyboard.press('Escape');
+  // gone from the Files list; restorable from Filter → Deleted
+  await page.locator('.tnode').filter({ hasText: '(all files)' }).click();
+  if (await page.locator('.filerow').filter({ hasText: 'menus/createserver.menu' }).count()) throw new Error('deleted file still listed');
+  await page.getByRole('button', { name: /^Filter/ }).click();
+  await page.locator('.dd-item').filter({ hasText: 'Deleted (restorable)' }).click();
+  await page.keyboard.press('Escape');
+  await page.locator('.filerow').filter({ hasText: 'createserver.menu' }).click();
+  await page.locator('.alert').getByRole('button', { name: 'Restore' }).click();
+  await page.locator('.doc').getByText('You deleted this file').waitFor({ state: 'detached' });
+  if (!existsSync(join(omen, 'menus/createserver.menu'))) throw new Error('restore failed');
+});
+
+await step('Files tab context menu still works', async () => {
+  await page.getByRole('button', { name: /^Filter/ }).click();
+  await page.locator('.dd-item').filter({ hasText: 'All files' }).click();
+  await page.keyboard.press('Escape');
+  await page.locator('.filerow').filter({ hasText: 'weapons.json' }).click({ button: 'right' });
+  for (const l of ['Edit in Project Vault', 'Copy relative path', 'Rename…', 'Delete…', 'Mark reviewed']) await page.locator('.ctx button').filter({ hasText: l }).waitFor();
+  await page.keyboard.press('Escape');
+});
 
 await step('Backup and verify', async () => {
   await page.getByRole('button', { name: /Settings/ }).click();

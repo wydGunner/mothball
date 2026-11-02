@@ -67,6 +67,9 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
             &os(a, "destDir").unwrap_or_default(),
             a.get("allowDuplicates").and_then(|x| x.as_bool()).unwrap_or(false),
         ),
+        "files.rename" => files::rename(v, &s(a, "id")?, &s(a, "name")?),
+        "files.delete" => files::delete(v, &strs(a, "ids")),
+        "files.restoreDeleted" => files::restore_deleted(v, &s(a, "id")?),
         "files.readText" => files::read_text(v, &s(a, "id")?),
         "files.writeText" => files::write_text(
             v,

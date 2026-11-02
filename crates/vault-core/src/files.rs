@@ -275,7 +275,7 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
         for (rel, seen) in &w.files {
             let Some(r) = by_path.get(rel) else { continue };
             let fid = r.s("id");
-            let was_missing = r.s("state") == "missing";
+            let was_missing = r.s("state") != "present"; // missing, or deleted earlier and now back
             if !was_missing && r.i("size") == seen.size && r.i("mtime") == seen.mtime && r.os("sha256").is_some() {
                 continue; // unchanged: no write, keeps rescans of big trees cheap
             }
@@ -300,7 +300,8 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
 
         // 2. vanished (present in index, absent on disk) + previously missing
         let disk: HashSet<&String> = w.files.keys().collect();
-        let gone: Vec<&Row> = existing.iter().filter(|r| !disk.contains(&r.s("rel_path"))).collect();
+        // files deleted through Project Vault stay deleted; they don't take part in matching
+        let gone: Vec<&Row> = existing.iter().filter(|r| !disk.contains(&r.s("rel_path")) && r.s("state") != "deleted").collect();
         // 3. brand-new paths
         let mut new_files: Vec<(String, i64, i64, Option<String>)> = Vec::new();
         for (rel, seen) in &w.files {
@@ -575,7 +576,7 @@ pub fn list(v: &Vault, project_id: &str, filter: &Json) -> DbResult<Json> {
     let rows = v.db.query(
         &format!(
             "{FILE_SELECT} WHERE f.project_id=? AND (?='' OR lower(f.rel_path) LIKE ? ESCAPE '\\')
-             AND (? IS NULL OR f.kind=?) AND (? IS NULL OR f.state=?) AND (? IS NULL OR f.rel_path LIKE ? ESCAPE '\\')
+             AND (? IS NULL OR f.kind=?) AND (CASE WHEN ? IS NULL THEN f.state!='deleted' ELSE f.state=? END) AND (? IS NULL OR f.rel_path LIKE ? ESCAPE '\\')
              AND (?=0 OR f.changed_since_review=1) AND (?=0 OR d.file_id IS NULL OR (d.purpose='' AND d.notes_md=''))
              AND (?='' OR instr(',' || ? || ',', ',' || f.ext || ',')>0)
              ORDER BY {sort} LIMIT ?"
@@ -616,7 +617,7 @@ pub fn get(v: &Vault, file_id: &str) -> DbResult<Json> {
 
 /// Folder tree of present+missing files: [{path, files, bytes}] per directory.
 pub fn dirs(v: &Vault, project_id: &str) -> DbResult<Json> {
-    let rows = v.db.query("SELECT rel_path, size FROM files WHERE project_id=?", p![project_id])?;
+    let rows = v.db.query("SELECT rel_path, size FROM files WHERE project_id=? AND state!='deleted'", p![project_id])?;
     let mut agg: BTreeMap<String, (i64, i64)> = BTreeMap::new();
     for r in &rows {
         let rp = r.s("rel_path");
@@ -913,6 +914,155 @@ pub fn import(v: &Vault, project_id: &str, sources: &[PathBuf], dest_rel_dir: &s
         .with("skipped", Json::Arr(skipped))
         .with("errors", Json::Arr(errors.into_iter().map(Json::from).collect()))
         .with("scan", scan_rep.json()))
+}
+
+// ------------------------------------------------------------------ rename / delete
+
+/// Validates a new file name for Windows and other platforms.
+pub fn validate_file_name(name: &str) -> Result<String, String> {
+    let n = name.trim().trim_end_matches(['.', ' ']).to_string();
+    if n.is_empty() || n == "." || n == ".." {
+        return Err("Enter a file name".into());
+    }
+    if let Some(c) = n.chars().find(|c| matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || (*c as u32) < 32) {
+        return Err(format!("File names can't contain {}", if c.is_control() { "control characters".to_string() } else { format!("“{c}”") }));
+    }
+    let stem = n.split('.').next().unwrap_or("").to_ascii_uppercase();
+    const RESERVED: &[&str] = &["CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"];
+    if RESERVED.contains(&stem.as_str()) {
+        return Err(format!("“{n}” is a reserved name on Windows"));
+    }
+    if n.len() > 240 {
+        return Err("That name is too long".into());
+    }
+    Ok(n)
+}
+
+/// Renames a file on disk, keeping its identity (notes, links, history).
+pub fn rename(v: &Vault, file_id: &str, new_name: &str) -> DbResult<Json> {
+    let f = v.db.one("SELECT * FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
+    if f.s("state") != "present" {
+        return Err("Only files that exist on disk can be renamed".into());
+    }
+    let name = validate_file_name(new_name)?;
+    if name == f.s("name") {
+        return get(v, file_id);
+    }
+    let pid = f.s("project_id");
+    let root = projects::root_of(v, &pid)?;
+    let old_rel = f.s("rel_path");
+    let new_rel = match old_rel.rsplit_once('/') {
+        Some((dir, _)) => format!("{dir}/{name}"),
+        None => name.clone(),
+    };
+    let from = safe_join(&root, &old_rel)?;
+    let to = safe_join(&root, &new_rel)?;
+    let case_only = old_rel.to_lowercase() == new_rel.to_lowercase();
+    if !case_only && to.exists() {
+        return Err(format!("“{name}” already exists in that folder"));
+    }
+    // a remembered missing/deleted record may still hold that path
+    if let Some(o) = v.db.one("SELECT id, state FROM files WHERE project_id=? AND rel_path=? AND id!=?", p![pid.clone(), new_rel.clone(), file_id])? {
+        let has_docs = v.db.scalar_i64("SELECT count(*) FROM file_docs WHERE file_id=? AND (purpose!='' OR notes_md!='')", p![o.s("id")])? > 0;
+        if o.s("state") == "present" || has_docs {
+            return Err(format!("Project Vault still has notes for an earlier “{name}” in this folder. Forget that record first (it's listed under Filter → Missing/Deleted)."));
+        }
+        v.db.exec("DELETE FROM files WHERE id=?", p![o.s("id")])?;
+        search::unindex(v, "file", &o.s("id"))?;
+    }
+    std::fs::rename(&from, &to).map_err(|e| format!("Could not rename (is the file open in another program?): {e}"))?;
+    let ext = extension_of(&name);
+    v.db.exec(
+        "UPDATE files SET rel_path=?, name=?, ext=?, kind=? WHERE id=?",
+        p![new_rel.clone(), name.clone(), ext.clone(), classify(&ext), file_id],
+    )?;
+    event(v, &pid, file_id, "renamed", &format!("{old_rel} → {new_rel} (in Project Vault)"), f.os("sha256").as_deref())?;
+    timeline::add(v, &pid, "files", &format!("Renamed {old_rel} → {name}"), "", Some(("file", file_id)), false)?;
+    search::index_file(v, file_id)?;
+    get(v, file_id)
+}
+
+#[cfg(windows)]
+fn to_recycle_bin(path: &Path) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    // Path goes through an environment variable, never into the script text.
+    let out = std::process::Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($env:PV_TARGET, 'OnlyErrorDialogs', 'SendToRecycleBin')",
+        ])
+        .env("PV_TARGET", path)
+        .creation_flags(0x0800_0000)
+        .output()
+        .map_err(|e| format!("could not start PowerShell: {e}"))?;
+    if !out.status.success() || path.exists() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn to_recycle_bin(path: &Path) -> Result<(), String> {
+    // No system trash here; a verified copy is already in the version store.
+    std::fs::remove_file(path).map_err(|e| e.to_string())
+}
+
+/// Deletes files: keeps a verified copy in the version store, then moves the
+/// file to the Recycle Bin. The record stays (state `deleted`) so notes and
+/// history survive and the file can be restored from Project Vault.
+pub fn delete(v: &Vault, file_ids: &[String]) -> DbResult<Json> {
+    let mut deleted = Vec::new();
+    let mut errors = Vec::new();
+    let mut projects_touched = HashSet::new();
+    for fid in file_ids {
+        let res = (|| -> DbResult<String> {
+            let f = v.db.one("SELECT * FROM files WHERE id=?", p![fid.clone()])?.ok_or("File not found")?;
+            if f.s("state") != "present" {
+                return Err(format!("{} is not on disk", f.s("rel_path")));
+            }
+            let pid = f.s("project_id");
+            let root = projects::root_of(v, &pid)?;
+            let path = safe_join(&root, &f.s("rel_path"))?;
+            let sha = sha256_file(&path).map_err(|e| format!("{}: {e}", f.s("rel_path")))?;
+            crate::versions::ensure_stored(v, &f, &path, &sha, "before-delete")?;
+            to_recycle_bin(&path).map_err(|e| format!("{}: could not move to the Recycle Bin ({e}). Nothing was deleted.", f.s("rel_path")))?;
+            v.db.exec("UPDATE files SET state='deleted', changed_since_review=0, sha256=? WHERE id=?", p![sha.clone(), fid.clone()])?;
+            v.db.exec("DELETE FROM reconcile_reviews WHERE missing_file_id=? OR candidate_file_id=?", p![fid.clone(), fid.clone()])?;
+            event(v, &pid, fid, "deleted", "Deleted in Project Vault (moved to the Recycle Bin; a copy is kept in History)", Some(&sha))?;
+            search::unindex(v, "file", fid)?;
+            projects_touched.insert(pid);
+            Ok(f.s("rel_path"))
+        })();
+        match res {
+            Ok(p) => deleted.push(Json::from(p)),
+            Err(e) => errors.push(Json::from(e)),
+        }
+    }
+    for pid in &projects_touched {
+        let n = deleted.len();
+        timeline::add(v, pid, "files", &format!("Deleted {n} file{}", if n == 1 { "" } else { "s" }), "", None, false)?;
+    }
+    Ok(Json::obj().with("deleted", Json::Arr(deleted)).with("errors", Json::Arr(errors)))
+}
+
+/// Brings back a file deleted through Project Vault from its stored copy.
+pub fn restore_deleted(v: &Vault, file_id: &str) -> DbResult<Json> {
+    let f = v.db.one("SELECT * FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
+    if f.s("state") == "present" {
+        return Err("The file is already on disk".into());
+    }
+    let root = projects::root_of(v, &f.s("project_id"))?;
+    if safe_join(&root, &f.s("rel_path"))?.exists() {
+        return Err("A file already exists at that location; rescan the project".into());
+    }
+    let ver = v
+        .db
+        .one("SELECT id FROM file_versions WHERE file_id=? ORDER BY created_at DESC LIMIT 1", p![file_id])?
+        .ok_or("No stored copy of this file exists, so it can't be restored here. Check the Recycle Bin.")?;
+    crate::versions::restore(v, &ver.s("id"))?;
+    get(v, file_id)
 }
 
 // ------------------------------------------------------------------ editing
@@ -1233,6 +1383,59 @@ mod tests {
         let e = write_text(&v, &fid, "mine", &w.str_of("sha256").unwrap(), "lf", false).unwrap_err();
         assert!(e.starts_with("CONFLICT:"));
         assert_eq!(fs::read_to_string(d.join("cfg.ini")).unwrap(), "external");
+    }
+
+    #[test]
+    fn rename_and_safe_delete() {
+        let (t, v) = vault();
+        let d = t.path().join("p");
+        fs::create_dir_all(d.join("scripts")).unwrap();
+        fs::create_dir_all(d.join("menus")).unwrap();
+        fs::write(d.join("scripts/createserver.menu"), "menu a").unwrap();
+        fs::write(d.join("menus/createserver.menu"), "menu b").unwrap();
+        fs::write(d.join("scripts/other.gsc"), "x").unwrap();
+        let pid = linked(&v, &d);
+        scan(&v, &pid).unwrap();
+        // identically named files are distinguishable in search by path + absolute path
+        let hits = search::search(&v, "createserver", None, &["file".into()], 10).unwrap();
+        let paths: Vec<String> = hits.as_arr().unwrap().iter().map(|h| h.str_of("path").unwrap()).collect();
+        assert!(paths.contains(&"scripts/createserver.menu".to_string()) && paths.contains(&"menus/createserver.menu".to_string()));
+        let abs = hits.as_arr().unwrap()[0].str_of("absPath").unwrap();
+        // substring match inside a word: "server" finds "createserver.menu"
+        let sub = search::search(&v, "server", None, &[], 10).unwrap();
+        assert_eq!(sub.as_arr().unwrap().iter().filter(|h| h.str_of("name").as_deref() == Some("createserver.menu")).count(), 2);
+        assert!(std::path::Path::new(&abs).is_file(), "absPath must be the real file: {abs}");
+
+        let fid = id_at(&v, &pid, "scripts/createserver.menu");
+        docs_save(&v, &fid, &Json::parse(r#"{"purpose":"Server creation menu"}"#).unwrap()).unwrap();
+        // validation
+        for bad in ["", "a/b", "x:y", "CON.txt", "..", "a?b"] {
+            assert!(rename(&v, &fid, bad).is_err(), "{bad}");
+        }
+        assert!(rename(&v, &fid, "other.gsc").is_err(), "existing target refused");
+        let r = rename(&v, &fid, "create_server.menu").unwrap();
+        assert_eq!(r.str_of("path").unwrap(), "scripts/create_server.menu");
+        assert!(d.join("scripts/create_server.menu").is_file() && !d.join("scripts/createserver.menu").exists());
+        assert_eq!(r.get("docs").unwrap().str_of("purpose").unwrap(), "Server creation menu", "identity kept");
+        let rs = scan(&v, &pid).unwrap();
+        assert_eq!((rs.added, rs.missing, rs.moved), (0, 0, 0), "index already consistent");
+
+        // delete: copy kept, file gone, record hidden from lists/search/counts, rescan doesn't resurrect
+        let res = delete(&v, &[fid.clone()]).unwrap();
+        assert_eq!(res.get("deleted").unwrap().as_arr().unwrap().len(), 1);
+        assert!(!d.join("scripts/create_server.menu").exists());
+        assert!(!list(&v, &pid, &Json::obj()).unwrap().to_string().contains(&fid));
+        assert!(search::search(&v, "create_server", None, &[], 10).unwrap().as_arr().unwrap().is_empty());
+        assert_eq!(crate::projects::get(&v, &pid).unwrap().get("fileCount").unwrap().as_i64(), Some(2));
+        let rs = scan(&v, &pid).unwrap();
+        assert_eq!((rs.missing, rs.added), (0, 0));
+        assert!(list(&v, &pid, &Json::obj().with("state", "deleted")).unwrap().to_string().contains(&fid));
+        // restore from the stored copy
+        restore_deleted(&v, &fid).unwrap();
+        assert_eq!(fs::read_to_string(d.join("scripts/create_server.menu")).unwrap(), "menu a");
+        let g = get(&v, &fid).unwrap();
+        assert_eq!(g.str_of("state").unwrap(), "present");
+        assert_eq!(g.get("docs").unwrap().str_of("purpose").unwrap(), "Server creation menu");
     }
 
     #[test]

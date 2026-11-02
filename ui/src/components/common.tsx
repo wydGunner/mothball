@@ -108,12 +108,55 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Promise-based text prompt (e.g. rename). `validate` returns an error message or null. */
+type PromptOpts = { title: string; label?: string; value?: string; confirm?: string; selectUntilDot?: boolean; validate?: (v: string) => string | null };
+const PromptCtx = createContext<(o: PromptOpts) => Promise<string | null>>(async () => null);
+export const usePrompt = () => useContext(PromptCtx);
+export function PromptProvider({ children }: { children: ReactNode }) {
+  const [req, setReq] = useState<null | (PromptOpts & { resolve: (v: string | null) => void })>(null);
+  const [val, setVal] = useState('');
+  const input = useRef<HTMLInputElement>(null);
+  const ask = useCallback((o: PromptOpts) => new Promise<string | null>((resolve) => { setVal(o.value || ''); setReq({ ...o, resolve }); }), []);
+  useEffect(() => {
+    if (!req || !input.current) return;
+    const el = input.current;
+    el.focus();
+    const dot = req.selectUntilDot ? el.value.lastIndexOf('.') : -1;
+    el.setSelectionRange(0, dot > 0 ? dot : el.value.length);
+  }, [req]);
+  const done = (v: string | null) => { req?.resolve(v); setReq(null); };
+  const err = req?.validate?.(val) ?? null;
+  return (
+    <PromptCtx.Provider value={ask}>
+      {children}
+      {req && (
+        <Modal title={req.title} onClose={() => done(null)} footer={<>
+          <button className="btn" onClick={() => done(null)}>Cancel</button>
+          <button className="btn primary" disabled={!!err} onClick={() => done(val)}>{req.confirm || 'OK'}</button>
+        </>}>
+          <div className="field" style={{ margin: 0 }}>
+            {req.label && <label>{req.label}</label>}
+            <input ref={input} className="input" value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !err) done(val); }} />
+            {err && val !== (req.value || '') && <span className="small" style={{ color: 'var(--bad)' }}>{err}</span>}
+          </div>
+        </Modal>
+      )}
+    </PromptCtx.Provider>
+  );
+}
+
 // ---------------------------------------------------------------- context menu
 export interface MenuItem { label: string; icon?: ReactNode; onClick?: () => void; danger?: boolean; sep?: boolean; disabled?: boolean }
 const MenuCtx = createContext<(e: { clientX: number; clientY: number; preventDefault(): void }, items: MenuItem[]) => void>(() => {});
 export const useContextMenu = () => useContext(MenuCtx);
+const MenuOpenCtx = createContext<() => boolean>(() => false);
+/** Returns a function telling whether a context menu is currently open. */
+export const useContextMenuOpen = () => useContext(MenuOpenCtx);
 export function ContextMenuProvider({ children }: { children: ReactNode }) {
   const [menu, setMenu] = useState<null | { x: number; y: number; items: MenuItem[] }>(null);
+  const openRef = useRef(false);
+  openRef.current = !!menu;
+  const isOpen = useCallback(() => openRef.current, []);
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
@@ -124,10 +167,15 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
   }, [menu]);
   const open = useCallback((e: any, items: MenuItem[]) => {
     e.preventDefault();
-    setMenu({ x: Math.min(e.clientX, window.innerWidth - 220), y: Math.min(e.clientY, window.innerHeight - items.length * 32 - 10), items });
+    // keep the whole menu on screen near edges
+    const h = items.reduce((n, it) => n + (it.sep ? 9 : 31), 8);
+    const x = Math.max(4, Math.min(e.clientX, window.innerWidth - 236));
+    const y = e.clientY + h > window.innerHeight - 4 ? Math.max(4, e.clientY - h) : e.clientY;
+    openRef.current = true;
+    setMenu({ x, y, items });
   }, []);
   return (
-    <MenuCtx.Provider value={open}>
+    <MenuCtx.Provider value={open}><MenuOpenCtx.Provider value={isOpen}>
       {children}
       {menu && (
         <div className="ctx" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
@@ -138,7 +186,7 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
           ))}
         </div>
       )}
-    </MenuCtx.Provider>
+    </MenuOpenCtx.Provider></MenuCtx.Provider>
   );
 }
 

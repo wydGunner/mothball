@@ -331,3 +331,18 @@ input[type=checkbox] { accent-color: var(--accent); }
 .editor-pane .panehead { background: var(--bg0); }
 .pv-editor { flex: 1; min-height: 0; position: relative; }
 .dirty-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: inline-block; }
+
+@keyframes pvflash { 0%, 40% { background: color-mix(in srgb, var(--accent) 35%, transparent); } 100% { background: var(--accent-bg); } }
+.filerow.flash { animation: pvflash 1.6s ease-out; }
+
+/* ---------- palette file results */
+.palette .item.fileitem { align-items: flex-start; }
+.palette .item.fileitem > .kind { margin-top: 2px; }
+.palette mark, .ppath mark { background: color-mix(in srgb, var(--accent) 28%, transparent); color: var(--fg0); border-radius: 2px; padding: 0 1px; }
+.fname-hl { font-weight: 600; }
+.ppath { display: flex; min-width: 0; font-family: var(--mono); font-size: 11.5px; }
+.ppath-dir { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ppath-dir b { font-family: inherit; font-weight: 600; color: var(--fg1); }
+.ppath-name { white-space: nowrap; flex: none; color: var(--fg1); }
+.palette-foot { border-top: 1px solid var(--line); padding: 6px 12px; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.palette .items { scroll-behavior: smooth; }

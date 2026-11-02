@@ -51,7 +51,9 @@ or not yet verified on Windows · ⛔ not implemented yet
 | Duplicates | ✅ | per-file and per-project (by SHA-256) |
 | Open with default app / reveal in Explorer | 🟡 | via Tauri opener plugin; untested on Windows |
 | Knowledge base | ✅ | tree, drag to nest, categories, Markdown, split view, autosave, revisions, trash |
-| Search | ✅ | FTS5 across projects, files, docs, notes, tasks, bugs, journal |
+| Search | ✅ | FTS5 across projects, files, docs, notes, tasks, bugs, journal + substring matching on file names/paths |
+| Global search (Ctrl+K) | ✅ | file name + `Project / folder / file` path, real absolute path on hover, highlights, right-click menu (edit, details, reveal in project, open, Explorer, copy full/relative path, rename, delete), keyboard (↑↓ Enter Esc Shift+F10) |
+| File rename / delete | ✅ | shared by Files tab and global search; Windows name validation; delete keeps a verified copy, sends to the Recycle Bin (🟡 untested on Windows), and is restorable from Filter → Deleted |
 | Tasks & bugs | ✅ | list / Kanban (drag) / calendar, checklists, milestones, bug fields |
 | Timeline | ✅ | grouped scan entries, coalesced edits, manual journal |
 | Command palette, shortcuts | ✅ | Ctrl K, Ctrl Shift F, Ctrl N, Ctrl B, Alt 1–6, F5, Ctrl S, Alt ← |
