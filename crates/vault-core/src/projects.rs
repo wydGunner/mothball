@@ -194,6 +194,13 @@ fn row_json(v: &Vault, r: &Row) -> DbResult<Json> {
         "SELECT summary, at FROM timeline WHERE project_id=? ORDER BY at DESC LIMIT 1",
         p![id.clone()],
     )?;
+    let recent_files: Vec<Json> = v
+        .db
+        .query("SELECT rel_path, last_changed FROM files WHERE project_id=? AND state='present' ORDER BY last_changed DESC, rel_path LIMIT 3", p![id.clone()])?
+        .iter()
+        .map(|f| Json::obj().with("path", f.s("rel_path")).with("at", f.i("last_changed")))
+        .collect();
+    let last_file = recent_files.first().cloned();
     let module = Json::parse(&r.s("module_json")).unwrap_or(Json::obj());
     let root = r.s("root_path");
     let available = Path::new(&root).is_dir();
@@ -225,7 +232,69 @@ fn row_json(v: &Vault, r: &Row) -> DbResult<Json> {
         .with("pendingReviews", reviews)
         .with("openTasks", open_tasks)
         .with("latestActivity", latest.as_ref().map(|l| l.s("summary")))
-        .with("latestActivityAt", latest.as_ref().map(|l| l.i("at"))))
+        .with("latestActivityAt", latest.as_ref().map(|l| l.i("at")))
+        .with("lastFile", last_file.as_ref().and_then(|f| f.str_of("path")))
+        .with("lastFileAt", last_file.as_ref().and_then(|f| f.get("at").and_then(|x| x.as_i64())))
+        .with("recentFiles", Json::Arr(recent_files)))
+}
+
+/// The picture shown on a project's card: the one the user picked, else the
+/// newest .3mf's plate image, else an image whose name suggests a cover,
+/// else the newest image. Images over 4 MB are skipped.
+pub fn thumbnail(v: &Vault, id: &str) -> DbResult<Json> {
+    let pr = v.db.one("SELECT module_json FROM projects WHERE id=?", p![id])?.ok_or("Project not found")?;
+    let module = Json::parse(&pr.s("module_json")).unwrap_or(Json::obj());
+    let picked = module.str_of("thumbFileId");
+    let try_file = |fid: &str| -> DbResult<Option<Json>> {
+        let Some(f) = v.db.one("SELECT ext, size, state FROM files WHERE id=?", p![fid])? else { return Ok(None) };
+        if f.s("state") != "present" {
+            return Ok(None);
+        }
+        if f.s("ext") == "3mf" {
+            let Some(row) = v.db.one("SELECT project_id, rel_path FROM files WHERE id=?", p![fid])? else { return Ok(None) };
+            let path = crate::util::safe_join(&root_of(v, &row.s("project_id"))?, &row.s("rel_path"))?;
+            return Ok(crate::models::threemf_thumbnail(&path).map(|t| Json::obj().with("src", t).with("fileId", fid)));
+        }
+        if f.i("size") > 4 * 1024 * 1024 {
+            return Ok(None);
+        }
+        let img = crate::files::read_base64(v, fid, 4 * 1024 * 1024)?;
+        Ok(Some(Json::obj().with("src", format!("data:{};base64,{}", img.str_of("mime").unwrap_or_default(), img.str_of("base64").unwrap_or_default())).with("fileId", fid)))
+    };
+    if let Some(fid) = picked {
+        if let Some(t) = try_file(&fid)? {
+            return Ok(t.with("picked", true));
+        }
+    }
+    for r in v.db.query("SELECT id FROM files WHERE project_id=? AND state='present' AND ext='3mf' ORDER BY last_changed DESC LIMIT 3", p![id])? {
+        if let Some(t) = try_file(&r.s("id"))? {
+            return Ok(t);
+        }
+    }
+    let imgs = v.db.query(
+        "SELECT id, lower(name) AS n FROM files WHERE project_id=? AND state='present' AND ext IN ('png','jpg','jpeg','webp','gif') AND size<=4194304
+         ORDER BY (instr(lower(name),'cover')>0 OR instr(lower(name),'preview')>0 OR instr(lower(name),'thumb')>0 OR instr(lower(name),'screenshot')>0 OR instr(lower(name),'photo')>0) DESC,
+                  (instr(lower(rel_path),'icon')>0 OR instr(lower(rel_path),'texture')>0 OR instr(lower(rel_path),'node_modules')>0) ASC, last_changed DESC LIMIT 1",
+        p![id],
+    )?;
+    if let Some(r) = imgs.first() {
+        if let Some(t) = try_file(&r.s("id"))? {
+            return Ok(t);
+        }
+    }
+    Ok(Json::Null)
+}
+
+/// Uses a file (image or .3mf) as the project's card picture; `None` = automatic.
+pub fn set_thumbnail(v: &Vault, id: &str, file_id: Option<&str>) -> DbResult<Json> {
+    let pr = v.db.one("SELECT module_json FROM projects WHERE id=?", p![id])?.ok_or("Project not found")?;
+    let mut module = Json::parse(&pr.s("module_json")).unwrap_or(Json::obj());
+    match file_id {
+        Some(f) => module.set("thumbFileId", f),
+        None => module.remove("thumbFileId"),
+    }
+    v.db.exec("UPDATE projects SET module_json=? WHERE id=?", p![module.to_string(), id])?;
+    Ok(Json::obj().with("ok", true))
 }
 
 pub fn get(v: &Vault, id: &str) -> DbResult<Json> {
@@ -405,6 +474,25 @@ pub fn remove(v: &Vault, id: &str, delete_managed_files: bool) -> DbResult<Json>
 mod tests {
     use super::*;
     use crate::testutil::*;
+    #[test]
+    fn card_picture_choice() {
+        let (t, v) = vault();
+        let d = t.path().join("p");
+        std::fs::create_dir_all(d.join("textures")).unwrap();
+        std::fs::write(d.join("textures/grass.png"), "png1").unwrap();
+        std::fs::write(d.join("Cover shot.jpg"), "jpg").unwrap();
+        std::fs::write(d.join("main.gsc"), "init(){}").unwrap();
+        let id = create(&v, NewProject { name: "P".into(), description: "".into(), category: "game".into(), status: "".into(), link_path: Some(d.clone()), module: Json::obj() }).unwrap().str_of("id").unwrap();
+        crate::files::scan(&v, &id).unwrap();
+        let th = thumbnail(&v, &id).unwrap();
+        assert!(th.str_of("src").unwrap().starts_with("data:image/jpeg;base64,"), "cover-like name wins");
+        let grass = v.db.one("SELECT id FROM files WHERE name='grass.png'", p![]).unwrap().unwrap().s("id");
+        set_thumbnail(&v, &id, Some(&grass)).unwrap();
+        assert_eq!(thumbnail(&v, &id).unwrap().str_of("fileId").unwrap(), grass);
+        let pj = get(&v, &id).unwrap();
+        assert!(pj.str_of("lastFile").is_some());
+    }
+
     #[test]
     fn create_linked_and_managed() {
         let (t, v) = vault();

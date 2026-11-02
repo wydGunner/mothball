@@ -5,7 +5,7 @@ import { ModelViewer } from '../components/ModelViewer';
 import { useFileActions, TEXT_EDITABLE, type FileRef } from '../fileActions';
 import {
   LuFolder, LuFolderOpen, LuChevronRight, LuChevronDown, LuSearch, LuExternalLink, LuFolderSearch, LuCopy, LuTriangleAlert,
-  LuUpload, LuEye, LuFilter, LuCode, LuSave, LuArrowLeft, LuMaximize2, LuMinimize2, LuTrash2, LuArchiveRestore, LuEllipsis, LuShieldCheck, LuPencil, LuLink2, LuX, LuHistory, LuGitCommitHorizontal, LuFileQuestion, LuCopyCheck, LuCircleCheck, LuPlus,
+  LuUpload, LuEye, LuFilter, LuCode, LuSave, LuArrowLeft, LuMaximize2, LuMinimize2, LuTrash2, LuArchiveRestore, LuEllipsis, LuShieldCheck, LuPencil, LuLink2, LuX, LuHistory, LuGitCommitHorizontal, LuFileQuestion, LuCopyCheck, LuCircleCheck, LuPlus, LuImage,
 } from 'react-icons/lu';
 import { call, isTauri, openPath, pickFiles, revealPath, type FileDetail, type FileDocs, type VFile } from '../ipc';
 import { Dropdown, Empty, KindIcon, useConfirm, Markdown, SaveState, TagInput, useAction, useAutosave, useContextMenu, useLoad, useResizable, useToast } from '../components/common';
@@ -192,7 +192,11 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
       onEdit: () => { setSelected(f.id); setEditing(f.id); },
       onHistory: () => { setEditing(null); setSelected(f.id); setHighlightV(''); setTimeout(() => setHighlightV(undefined), 400); },
       onChanged: () => { files.reload(); dirs.reload(); ctx.reload(); },
-      extra: [{ label: sel.length > 1 ? `Mark ${sel.length} files reviewed` : 'Mark reviewed', icon: <LuCircleCheck />, onClick: async () => { await act(() => call('files.markReviewed', { ids: sel.map((x) => x.id) })); files.reload(); ctx.reload(); } }],
+      extra: [
+        { label: sel.length > 1 ? `Mark ${sel.length} files reviewed` : 'Mark reviewed', icon: <LuCircleCheck />, onClick: async () => { await act(() => call('files.markReviewed', { ids: sel.map((x) => x.id) })); files.reload(); ctx.reload(); } },
+        ...(sel.length === 1 && f.state === 'present' && ['png', 'jpg', 'jpeg', 'webp', 'gif', '3mf'].includes(f.ext)
+          ? [{ label: 'Use as the project picture', icon: <LuImage />, onClick: async () => { if (await act(() => call('projects.setThumbnail', { id: pid, fileId: f.id }), 'Shown on the project card')) ctx.nav.refreshProjects(); } }] : []),
+      ],
     }));
   };
 

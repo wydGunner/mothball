@@ -48,6 +48,8 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
             },
         ),
         "projects.update" => projects::update(v, &s(a, "id")?, a.get("patch").unwrap_or(&Json::obj())),
+        "projects.thumbnail" => projects::thumbnail(v, &s(a, "id")?),
+        "projects.setThumbnail" => projects::set_thumbnail(v, &s(a, "id")?, os(a, "fileId").as_deref()),
         "projects.relink" => projects::relink(v, &s(a, "id")?, &PathBuf::from(s(a, "path")?)),
         "projects.remove" => projects::remove(v, &s(a, "id")?, a.get("deleteManagedFiles").and_then(|x| x.as_bool()).unwrap_or(false)),
         "projects.statuses" => projects::statuses(v),

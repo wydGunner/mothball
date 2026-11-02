@@ -103,7 +103,7 @@ function App() {
   return (
     <div className="app">
       <aside className={cx('sidebar', collapsed && 'collapsed')}>
-        <div className="brand"><div className="logo">PV</div><span>Project Vault</span></div>
+        <div className="brand"><svg className="logo" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="15" width="18" height="4" rx="1" fill="currentColor" /><rect x="5" y="9.5" width="14" height="4" rx="1" fill="currentColor" opacity=".7" /><rect x="7" y="4" width="10" height="4" rx="1" fill="currentColor" opacity=".45" /></svg><span>Project Vault</span></div>
         <nav>
           <button className={cx('navitem', route.view === 'dashboard' && 'active')} onClick={() => go({ view: 'dashboard' })} title="Dashboard"><LuLayoutDashboard /><span className="label">Dashboard</span></button>
           <button className="navitem" onClick={() => setNewProject(true)} title="New project (Ctrl+N)"><LuPlus /><span className="label">New project</span></button>

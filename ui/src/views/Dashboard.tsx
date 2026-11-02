@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuDownload, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine } from 'react-icons/lu';
+import { useEffect, useMemo, useState } from 'react';
+import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuDownload, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine, LuImage, LuFileCode } from 'react-icons/lu';
 import { call, pickFolder, revealPath, isTauri, type Project } from '../ipc';
 import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, useLoad, useConfirm, usePrompt } from '../components/common';
 import { ago, bytes, CATEGORY_LABELS, cx } from '../format';
@@ -88,6 +88,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
     { label: 'Open', icon: <LuFolderOpen />, onClick: () => nav.go({ view: 'project', id: p.id }) },
     { label: p.favorite ? 'Remove from favorites' : 'Add to favorites', icon: <LuStar />, onClick: () => toggleFav(p) },
     { label: p.group ? 'Change group…' : 'Add to a group…', icon: <LuFolderInput />, onClick: () => askGroup(p) },
+    ...(p.module?.thumbFileId ? [{ label: 'Use automatic card picture', icon: <LuImage />, onClick: async () => { await act(() => call('projects.setThumbnail', { id: p.id, fileId: null })); thumbCache.delete(p.id); nav.refreshProjects(); } }] : []),
     ...(p.group ? [{ label: `Remove from “${p.group}”`, onClick: () => setGroup([p.id], '') }] : []),
     { label: 'Show folder in Explorer', icon: <LuHardDrive />, onClick: () => act(() => revealPath(p.rootPath)), disabled: !isTauri },
     { label: 'Project notes', onClick: () => nav.go({ view: 'project', id: p.id, tab: 'notes' }) },
@@ -115,10 +116,10 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
 
   return (
     <div className="page">
-      <div className="row"><h1>Projects</h1><span className="muted">{list.length} of {nav.projects.length}</span>
+      <div className="row dash-head"><h1>Projects</h1>{list.length !== nav.projects.length && <span className="muted">{list.length} of {nav.projects.length} shown</span>}
         <div className="right row">
-          <button className="btn" onClick={() => setImportPV(true)}><LuDownload /> Import Print Vault</button>
-          <button className="btn primary" onClick={onNew}><LuPlus /> New project</button>
+          <button className="btn ghost" onClick={() => setImportPV(true)}><LuDownload /> Import Print Vault</button>
+          <button className="btn newbtn" onClick={onNew}><LuPlus /> New project</button>
         </div>
       </div>
       <div className="toolbar">
@@ -160,26 +161,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
       {mode === 'grid' ? (
         <div className="pgrid">
           {sec.items.map((p) => (
-            <div key={p.id} className="card pcard" draggable onDragStart={(e) => { e.dataTransfer.setData('text/pv-project', p.id); e.dataTransfer.effectAllowed = 'move'; }} onClick={() => nav.go({ view: 'project', id: p.id })} onContextMenu={(e) => ctx(e, p)}>
-              <button className={cx('star fav', p.favorite && 'on')} onClick={(e) => { e.stopPropagation(); toggleFav(p); }} title="Favorite"><LuStar fill={p.favorite ? 'currentColor' : 'none'} /></button>
-              <div className="head">
-                <ProjectIcon category={p.category} icon={p.icon} color={p.color} />
-                <div className="grow" style={{ paddingRight: 22 }}>
-                  <div className="name">{p.name}</div>
-                  <div className="row small" style={{ gap: 6 }}><StatusPill status={p.status} colors={colors} /><span className="dim">{CATEGORY_LABELS[p.category]}</span>{p.mode === 'linked' && <span className="dim" title={p.rootPath}><LuLink size={11} /></span>}</div>
-                </div>
-              </div>
-              <div className="desc">{p.description || <span className="dim">No description</span>}</div>
-              {p.tags.length > 0 && <div className="row wrap" style={{ gap: 4 }}>{p.tags.slice(0, 5).map((t) => <span className="tag" key={t}>{t}</span>)}</div>}
-              <div className="progress" title={`${p.progress}%`}><div style={{ width: `${p.progress}%` }} /></div>
-              <div className="stats">
-                <span title="Files"><LuFiles size={12} /> {p.fileCount}</span><span>{bytes(p.bytes)}</span>
-                {p.openTasks > 0 && <span title="Open tasks"><LuListTodo size={12} /> {p.openTasks}</span>}
-                {!p.rootAvailable && <span style={{ color: 'var(--bad)' }} title="Folder not reachable"><LuTriangleAlert size={12} /> offline</span>}
-                {(p.changedFiles > 0 || p.pendingReviews > 0) && <span style={{ color: 'var(--warn)' }}>{p.changedFiles + p.pendingReviews} to review</span>}
-              </div>
-              <div className="small dim" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.latestActivity ? `${p.latestActivity} · ${ago(p.latestActivityAt)}` : `Created ${ago(p.createdAt)}`}</div>
-            </div>
+            <ProjectCard key={p.id} p={p} colors={colors} onOpen={() => nav.go({ view: 'project', id: p.id })} onMenu={(e) => ctx(e, p)} onFav={() => toggleFav(p)} />
           ))}
         </div>
       ) : (
@@ -203,10 +185,63 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
           </section>
         );
       })}
-      {allGroups.length === 0 && list.length > 1 && <p className="small dim" style={{ marginTop: 12 }}>Tip: right-click a project → “Add to a group…” to sort projects into groups like “MW2 mods” or “3D prints”.</p>}
-      {allGroups.length > 0 && <p className="small dim" style={{ marginTop: 12 }}>Drag a project onto a group heading to move it there.</p>}
       {!list.length && <Empty title="No projects match these filters" />}
       {importPV && <ImportPrintVault onClose={() => setImportPV(false)} onDone={nav.refreshProjects} />}
+    </div>
+  );
+}
+
+// card pictures, fetched once per project (until its files change)
+export const thumbCache = new Map<string, { key: string; src: string | null }>();
+
+function useThumb(p: Project) {
+  const key = `${p.fileCount}:${p.bytes}:${p.module?.thumbFileId || ''}`;
+  const cached = thumbCache.get(p.id);
+  const [src, setSrc] = useState<string | null | undefined>(cached?.key === key ? cached.src : undefined);
+  useEffect(() => {
+    if (cached?.key === key) return;
+    let alive = true;
+    call<{ src: string } | null>('projects.thumbnail', { id: p.id }).then((t) => { thumbCache.set(p.id, { key, src: t?.src || null }); if (alive) setSrc(t?.src || null); }, () => alive && setSrc(null));
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.id, key]);
+  return src;
+}
+
+/** A project card: its picture (print plate, cover image) or, for code, the file you touched last. */
+function ProjectCard({ p, colors, onOpen, onMenu, onFav }: { p: Project; colors: Record<string, string>; onOpen: () => void; onMenu: (e: React.MouseEvent) => void; onFav: () => void }) {
+  const thumb = useThumb(p);
+  const attention = p.changedFiles + p.pendingReviews;
+  return (
+    <div className={cx('pcard', p.favorite && 'isfav')} style={p.color ? ({ '--pc': p.color } as React.CSSProperties) : undefined}
+      tabIndex={0} role="link" aria-label={`Open ${p.name}`}
+      draggable onDragStart={(e) => { e.dataTransfer.setData('text/pv-project', p.id); e.dataTransfer.effectAllowed = 'move'; }}
+      onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }} onContextMenu={onMenu}>
+      <div className={cx('pc-face', thumb ? 'pic' : 'nopic')}>
+        {thumb ? <img src={thumb} alt="" loading="lazy" />
+          : p.recentFiles?.length ? <div className="pc-recent" title="Most recently changed files">{p.recentFiles.map((r) => {
+              const d = r.path.includes('/') ? r.path.slice(0, r.path.lastIndexOf('/') + 1) : '';
+              return <div key={r.path} className="pc-rf"><LuFileCode /><span className="pc-file">{r.path.slice(d.length)}</span><span className="pc-dir">{d}</span><span className="pc-when">{ago(r.at)}</span></div>;
+            })}</div>
+          : <div className="pc-empty"><ProjectIcon category={p.category} icon={p.icon} color={p.color} size={28} /></div>}
+      </div>
+      <div className="pc-body">
+        <div className="pc-title">
+          <span className="name">{p.name}</span>
+          <button className={cx('star', p.favorite && 'on')} onClick={(e) => { e.stopPropagation(); onFav(); }} title={p.favorite ? 'Remove from favorites' : 'Add to favorites'} aria-label="Favorite"><LuStar fill={p.favorite ? 'currentColor' : 'none'} /></button>
+        </div>
+        {p.description && <div className="pc-desc">{p.description}</div>}
+        <div className="pc-meta">
+          <span>{CATEGORY_LABELS[p.category]}</span>
+          <span>{p.fileCount} files</span>
+          <span>{bytes(p.bytes)}</span>
+          {p.status !== 'Active' && <StatusPill status={p.status} colors={colors} />}
+          {p.openTasks > 0 && <span title="Open tasks"><LuListTodo size={12} /> {p.openTasks}</span>}
+          {!p.rootAvailable && <span className="pc-warn" title={`Folder not reachable: ${p.rootPath}`}><LuTriangleAlert size={12} /> offline</span>}
+          {attention > 0 && <span className="pc-warn" title="Changed or unconfirmed files to review">{attention} to review</span>}
+        </div>
+        {p.progress > 0 && <div className="pc-progress" title={`${p.progress}% done`}><div style={{ width: `${p.progress}%` }} /></div>}
+      </div>
     </div>
   );
 }

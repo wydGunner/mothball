@@ -57,7 +57,7 @@ or not yet verified on Windows · ⛔ not implemented yet
 | Built-in code editor | 🟡 | Monaco (bundled offline, workers included), syntax colors from the app theme, Ctrl+S, conflict detection if the file changes on disk, previous content kept as a version, CRLF/BOM preserved, full-width mode. Tested here with the plain-text stand-in; Monaco itself is first exercised by CI / your build |
 | Themes | ✅ | black UI, 10 single-hue or analogous palettes + custom shade, syntax highlighting follows the palette |
 | Overview | ✅ | read-only summary (attention items, details, file groups, next tasks, notes, activity) + Edit dialog |
-| Dashboard | ✅ | grid/list, filters (status, category, tag, favorites), sorting, favorites, recent, context menu |
+| Dashboard | ✅ | grid/list; cards show the project's picture (chosen file, else the newest .3mf plate image, else a cover-like image) or its most recently changed files; status only when not Active, progress only when set; filters, sorting, favorites, groups, context menu (“Use as the project picture” on images/.3mf in Files) |
 | Statuses | ✅ | built-ins + custom |
 | Linked / managed projects | ✅ | re-link moved folders, unreachable-drive handling |
 | File index & reconciliation | ✅ | stable ids, hash-based moves, review queue for ambiguity |
@@ -91,6 +91,5 @@ or not yet verified on Windows · ⛔ not implemented yet
 | Print Vault import | ✅ | read-only; projects linked in place |
 | 3MF print info | ✅ | own ZIP/inflate reader: printer, process, layer height, nozzle, infill, walls, supports, plate, filaments (type/colour), sliced plates (time, grams), slicer's plate thumbnail, title/designer/description — Bambu Studio, OrcaSlicer and PrusaSlicer formats; “Fill empty fields from a .3mf” in a print project's details. Checked against a real Bambu X2D project |
 | Multiple projects open as tabs | ⛔ | one project at a time with tabbed sections |
-| Project thumbnails | 🟡 | emoji / category icon; no image thumbnails yet |
 | OS file watcher | ⛔ | polling chosen deliberately (no handles held on project folders); a watcher can be added on top |
 | Installer | 🟡 | NSIS + MSI config, icons; built by CI, not yet run |

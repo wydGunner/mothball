@@ -73,7 +73,7 @@ export interface Project {
   progress: number; favorite: boolean; group: string; module: Record<string, any>; ignoreGlobs: string;
   createdAt: number; updatedAt: number; lastOpenedAt?: number; lastScanAt?: number; tags: string[];
   fileCount: number; bytes: number; missingFiles: number; changedFiles: number; pendingReviews: number;
-  openTasks: number; latestActivity?: string; latestActivityAt?: number;
+  openTasks: number; latestActivity?: string; latestActivityAt?: number; lastFile?: string; lastFileAt?: number; recentFiles?: { path: string; at: number }[];
 }
 export interface VFile {
   id: string; path: string; name: string; ext: string; kind: string; size: number; mtime: number;

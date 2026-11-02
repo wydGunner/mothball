@@ -412,6 +412,33 @@ fn str_list(j: &Json, k: &str) -> Vec<String> {
     }
 }
 
+/// The slicer's plate picture as a data URL (plate 1 / thumbnail / any PNG under Metadata).
+fn thumbnail_of(a: &mut Archive<std::fs::File>) -> Option<String> {
+    let mut thumbs: Vec<String> = a.entries.iter().filter(|e| e.name.starts_with("Metadata/") && e.name.to_lowercase().ends_with(".png")).map(|e| e.name.clone()).collect();
+    thumbs.sort_by_key(|n| {
+        let l = n.to_lowercase();
+        if l == "metadata/plate_1.png" {
+            0
+        } else if l.contains("thumbnail") && !l.contains("small") {
+            1
+        } else if l.contains("plate_") && !l.contains("no_light") && !l.contains("top") && !l.contains("pick") && !l.contains("small") {
+            2
+        } else {
+            9
+        }
+    });
+    let e = a.find(thumbs.first()?)?;
+    if e.usize > 8 * 1024 * 1024 {
+        return None;
+    }
+    a.read(&e, 8 * 1024 * 1024).ok().map(|d| format!("data:image/png;base64,{}", crate::files::base64(&d)))
+}
+
+/// Only the plate picture — cheap, for project cards.
+pub fn threemf_thumbnail(path: &Path) -> Option<String> {
+    thumbnail_of(&mut Archive::open(path).ok()?)
+}
+
 /// Print-relevant information found in a .3mf. Only reports what the file
 /// actually contains; fields that aren't there are left out.
 pub fn threemf_info(path: &Path) -> DbResult<Json> {
@@ -589,27 +616,8 @@ pub fn threemf_info(path: &Path) -> DbResult<Json> {
     let gcode_plates = a.entries.iter().filter(|e| e.name.to_lowercase().ends_with(".gcode")).count();
     out.set("sliced", gcode_plates > 0 || out.get("plates").is_some());
 
-    // thumbnail: plate 1 / slicer thumbnail / any png under Metadata
-    let mut thumbs: Vec<String> = a.entries.iter().filter(|e| e.name.starts_with("Metadata/") && e.name.to_lowercase().ends_with(".png")).map(|e| e.name.clone()).collect();
-    thumbs.sort_by_key(|n| {
-        let l = n.to_lowercase();
-        if l == "metadata/plate_1.png" {
-            0
-        } else if l.contains("thumbnail") && !l.contains("small") {
-            1
-        } else if l.contains("plate_") && !l.contains("no_light") && !l.contains("top") && !l.contains("pick") && !l.contains("small") {
-            2
-        } else {
-            9
-        }
-    });
-    if let Some(n) = thumbs.first() {
-        let e = a.find(n).unwrap();
-        if e.usize < 8 * 1024 * 1024 {
-            if let Ok(d) = a.read(&e, 8 * 1024 * 1024) {
-                out.set("thumbnail", format!("data:image/png;base64,{}", crate::files::base64(&d)));
-            }
-        }
+    if let Some(t) = thumbnail_of(&mut a) {
+        out.set("thumbnail", t);
     }
     out.set("objectFiles", a.entries.iter().filter(|e| e.name.to_lowercase().ends_with(".model")).count() as i64);
     Ok(out)
