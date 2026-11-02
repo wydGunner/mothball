@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { LuArrowLeft, LuArrowRight, LuDownload, LuFolderOpen, LuFolderPlus, LuArchiveRestore, LuX, LuFileText, LuSearch, LuHistory } from 'react-icons/lu';
 import { call, pickFolder, type Project } from '../ipc';
 import { ProjectIcon, useAction } from '../components/common';
-import { CATEGORY_LABELS, cx } from '../format';
+import { CATEGORY_LABELS, cx, hiddenTypes, typeChoices } from '../format';
 import type { Nav } from '../main';
 
 /** Shown instead of an empty dashboard: add the first project in two steps. */
@@ -27,8 +27,9 @@ export function Welcome({ nav, onImportPrintVault }: { nav: Nav; onImportPrintVa
     let live = true;
     call<{ category: string; reason: string } | null>('profiles.guess', { path }).then((g) => {
       if (!live) return;
-      setGuess(g);
-      if (g) setCategory(g.category);
+      const ok = g && !hiddenTypes().includes(g.category) ? g : null;
+      setGuess(ok);
+      if (ok) setCategory(ok.category);
     }).catch(() => {});
     return () => { live = false; };
   }, [mode, path]);
@@ -85,7 +86,7 @@ export function Welcome({ nav, onImportPrintVault }: { nav: Nav; onImportPrintVa
           <div className="field"><label>What kind of project is it?</label>
             {guess && <div className="small muted" style={{ marginBottom: 6 }}>Suggested <b>{CATEGORY_LABELS[guess.category]}</b> because the folder {guess.reason}.</div>}
             <div className="wl-types" role="radiogroup">
-              {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
+              {typeChoices(category).map(([k, v]) => (
                 <button key={k} role="radio" aria-checked={category === k} className={cx('wl-type', category === k && 'on')} onClick={() => setCategory(k)}>
                   <ProjectIcon category={k} size={26} /><span>{v}</span>
                 </button>

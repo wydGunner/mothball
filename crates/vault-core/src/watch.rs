@@ -18,11 +18,15 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_SECONDS: u64 = 15;
+const MAX_BACKOFF: Duration = Duration::from_secs(120);
 
 pub struct Target {
     pub project_id: String,
     pub root: PathBuf,
     pub ignore: String,
+    /// Fingerprint of what the database last recorded for this project, so the
+    /// first check also catches changes made while the app was closed.
+    pub recorded: Option<u64>,
 }
 
 #[derive(Default)]
@@ -66,7 +70,42 @@ pub fn enabled(v: &Vault) -> bool {
 /// Projects to watch (read under the lock; quick).
 pub fn targets(v: &Vault) -> DbResult<Vec<Target>> {
     let rows = v.db.query("SELECT id, root_path, ignore_globs FROM projects", p![])?;
-    Ok(rows.iter().map(|r| Target { project_id: r.s("id"), root: PathBuf::from(r.s("root_path")), ignore: r.s("ignore_globs") }).collect())
+    Ok(rows.iter().map(|r| Target { project_id: r.s("id"), root: PathBuf::from(r.s("root_path")), ignore: r.s("ignore_globs"), recorded: None }).collect())
+}
+
+struct Fnv(u64);
+impl Fnv {
+    fn new() -> Fnv {
+        Fnv(0xcbf2_9ce4_8422_2325)
+    }
+    fn eat(&mut self, b: &[u8]) {
+        for x in b {
+            self.0 ^= *x as u64;
+            self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    fn file(&mut self, rel: &str, size: i64, mtime: i64) {
+        self.eat(rel.as_bytes());
+        self.eat(&size.to_le_bytes());
+        self.eat(&mtime.to_le_bytes());
+        self.eat(b"\n");
+    }
+}
+
+/// The same fingerprint, computed from the files the last scan recorded.
+pub fn recorded_fingerprint(v: &Vault, project_id: &str) -> DbResult<u64> {
+    let mut rows: Vec<(String, i64, i64)> = v
+        .db
+        .query("SELECT rel_path, size, mtime FROM files WHERE project_id=? AND state='present'", p![project_id])?
+        .iter()
+        .map(|r| (r.s("rel_path"), r.i("size"), r.i("mtime")))
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0)); // same order as the walk (byte order)
+    let mut h = Fnv::new();
+    for (rel, size, mtime) in &rows {
+        h.file(rel, *size, *mtime);
+    }
+    Ok(h.0)
 }
 
 /// Hash of every indexed path with its size and modified time. None when the
@@ -76,26 +115,17 @@ pub fn fingerprint(t: &Target) -> Option<u64> {
         return None;
     }
     let w = walk(&t.root, &Ignore::parse(&t.ignore));
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut eat = |b: &[u8]| {
-        for x in b {
-            h ^= *x as u64;
-            h = h.wrapping_mul(0x0100_0000_01b3);
-        }
-    };
+    let mut h = Fnv::new();
     for (rel, s) in &w.files {
-        eat(rel.as_bytes());
-        eat(&s.size.to_le_bytes());
-        eat(&s.mtime.to_le_bytes());
-        eat(b"\n");
+        h.file(rel, s.size, s.mtime);
     }
-    Some(h)
+    Some(h.0)
 }
 
 impl Watcher {
     /// Fingerprints the due projects (call WITHOUT holding the vault lock) and
     /// returns those that changed since the last check. The first check of a
-    /// project only records its fingerprint: opening a project scans it anyway.
+    /// project compares with what the database recorded (when `recorded` is set).
     pub fn changed(&mut self, targets: &[Target]) -> Vec<String> {
         let mut out = Vec::new();
         let now = Instant::now();
@@ -107,14 +137,18 @@ impl Watcher {
             let started = Instant::now();
             let Some(fp) = fingerprint(t) else { continue };
             let took = started.elapsed();
-            // a project that takes long to walk is checked at most every 20x its walk time
-            if took > Duration::from_millis(500) {
-                self.next_due.insert(t.project_id.clone(), now + took * 20);
+            // A project that takes long to walk is checked less often (10x its
+            // walk time), but never less than every 2 minutes: a busy PC (a
+            // game running) makes every walk slow for a while.
+            if took > Duration::from_millis(1000) {
+                self.next_due.insert(t.project_id.clone(), now + (took * 10).min(MAX_BACKOFF));
             } else {
                 self.next_due.remove(&t.project_id);
             }
             match self.prints.insert(t.project_id.clone(), fp) {
                 Some(prev) if prev != fp => out.push(t.project_id.clone()),
+                // first look: compare with what the last scan recorded
+                None if t.recorded.is_some_and(|r| r != fp) => out.push(t.project_id.clone()),
                 _ => {}
             }
         }
@@ -162,27 +196,46 @@ where
     let mut targets = Vec::new();
     let mut on = true;
     let mut wait = Duration::from_secs(DEFAULT_SECONDS);
+    let lock_t = std::time::Instant::now();
+    let dbg = std::env::var_os("PV_WATCH_DEBUG").is_some();
     with(&mut |v: &Vault| {
+        if dbg {
+            eprintln!("[watch] lock after {:?} at {}", lock_t.elapsed(), now_ms());
+        }
         on = enabled(v);
         wait = interval(v);
         if on {
-            targets = targets_or_empty(v);
+            targets = targets_or_empty(v, w);
         }
     });
     if !on {
         return wait;
     }
+    let t0 = std::time::Instant::now();
     let changed = w.changed(&targets);
+    if std::env::var_os("PV_WATCH_DEBUG").is_some() {
+        eprintln!("[watch] {} targets, {} changed, {:?}", targets.len(), changed.len(), t0.elapsed());
+    }
     for id in changed {
         with(&mut |v: &Vault| {
+            let t = std::time::Instant::now();
             scan_changed(v, &id);
+            if dbg {
+                eprintln!("[watch] scanned {id} in {:?}", t.elapsed());
+            }
         });
     }
+    // pick up a changed interval right away
+    with(&mut |v: &Vault| wait = interval(v));
     wait
 }
 
-fn targets_or_empty(v: &Vault) -> Vec<Target> {
-    targets(v).unwrap_or_default()
+fn targets_or_empty(v: &Vault, w: &Watcher) -> Vec<Target> {
+    let mut ts = targets(v).unwrap_or_default();
+    for t in ts.iter_mut().filter(|t| !w.prints.contains_key(&t.project_id)) {
+        t.recorded = recorded_fingerprint(v, &t.project_id).ok();
+    }
+    ts
 }
 
 #[cfg(test)]
@@ -204,12 +257,17 @@ mod tests {
         files::scan(&v, &pa).unwrap();
         files::scan(&v, &pb).unwrap();
         let mut w = Watcher::default();
+        // a change made before the watcher first looks (e.g. while the app was closed)
+        std::fs::write(a.join("while_closed.txt"), "c").unwrap();
+        let ts = targets_or_empty(&v, &w);
+        assert_eq!(w.changed(&ts), vec![pa.clone()], "first look compares with the last scan");
+        assert!(scan_changed(&v, &pa));
         let ts = targets(&v).unwrap();
-        assert!(w.changed(&ts).is_empty(), "first pass only records");
         assert!(w.changed(&ts).is_empty(), "nothing changed");
         std::fs::write(b.join("new.txt"), "n").unwrap();
         assert_eq!(w.changed(&ts), vec![pb.clone()]);
         let before = stamp(&v).unwrap().get("stamp").unwrap().as_i64().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
         assert!(scan_changed(&v, &pb));
         assert!(stamp(&v).unwrap().get("stamp").unwrap().as_i64().unwrap() > before);
         let tl = crate::timeline::list(&v, &pb, 5, None).unwrap();

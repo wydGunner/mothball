@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuDownload, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine, LuImage, LuFileCode, LuUpload, LuCircleCheck } from 'react-icons/lu';
 import { call, pickFiles, pickFolder, revealPath, isTauri, type Project } from '../ipc';
 import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, useLoad, useConfirm, usePrompt } from '../components/common';
-import { ago, bytes, CATEGORY_LABELS, cx } from '../format';
+import { ago, bytes, CATEGORY_LABELS, cx, hiddenTypes, typeChoices } from '../format';
 import type { Nav } from '../main';
 import { Welcome } from './Welcome';
 import { PanelBoard } from '../components/Panels';
@@ -485,7 +485,7 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
       setPath(p);
       if (!name) setName(p.split(/[\\/]/).filter(Boolean).pop() || '');
       const g = await call<{ category: string } | null>('profiles.guess', { path: p }).catch(() => null);
-      if (g && !typeTouched) setCategory(g.category);
+      if (g && !typeTouched && !hiddenTypes().includes(g.category)) setCategory(g.category);
     }
   };
   const create = async () => {
@@ -520,7 +520,7 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
       <div className="field"><label>Description</label><textarea className="input" value={desc} onChange={(e) => setDesc(e.target.value)} rows={2} /></div>
       <div className="grid2">
         <div className="field"><label>Project type</label>
-          <select className="input" value={category} onChange={(e) => { setTypeTouched(true); setCategory(e.target.value); }}>{Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+          <select className="input" value={category} onChange={(e) => { setTypeTouched(true); setCategory(e.target.value); }}>{typeChoices(category).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
         </div>
         <div className="field"><label>Status</label>
           <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>{['Planned', 'Active', 'Paused', 'Completed', 'Archived'].map((s) => <option key={s}>{s}</option>)}</select>

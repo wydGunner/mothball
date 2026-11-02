@@ -688,7 +688,9 @@ input[type=checkbox] { accent-color: var(--accent); }
 .panel.drop-before::before, .panel.drop-after::after { content: ''; position: absolute; left: 0; right: 0; height: 2px; background: var(--accent); border-radius: 2px; z-index: 3; }
 .panel.drop-before::before { top: -8px; }
 .panel.drop-after::after { bottom: -8px; }
-.pzone.dragging { min-height: 60px; outline: 1px dashed var(--line2); outline-offset: 4px; border-radius: 6px; }
+.pzone.dragging { min-height: 60px; outline: 1px dashed var(--line2); outline-offset: 4px; border-radius: 6px; position: relative; }
+.pzone.drop-end::after { content: ''; position: absolute; left: 0; right: 0; bottom: -10px; height: 2px; background: var(--accent); border-radius: 2px; }
+.dash-top.drop-end::after { grid-column: 1 / -1; }
 .panel.collapsed .panel-h { opacity: .85; }
 
 /* dashboard zones */
@@ -712,3 +714,8 @@ input[type=checkbox] { accent-color: var(--accent); }
 .ov2 .panel.attention .panel-h { border-bottom: 0; margin-bottom: 4px; }
 .att-title { display: inline-flex; align-items: center; gap: 8px; }
 .att-title svg { color: var(--accent); }
+
+.typegrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px; }
+.typeopt { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg1); cursor: pointer; color: var(--fg2); }
+.typeopt.on { color: var(--fg0); border-color: var(--line2); }
+.typeopt:not(.on) .picon { opacity: .4; }

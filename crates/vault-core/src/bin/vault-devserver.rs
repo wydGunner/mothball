@@ -48,9 +48,16 @@ fn handle(mut s: TcpStream, vault: &Mutex<Vault>, ui: &Path) {
         if r.read_exact(&mut body).is_err() {
             return respond(&mut s, "400 Bad Request", "text/plain", b"short body");
         }
+        let dbg = std::env::var_os("PV_WATCH_DEBUG").is_some();
+        let t0 = std::time::Instant::now();
         let out = {
             let v = vault.lock().unwrap_or_else(|e| e.into_inner());
-            api::call(&v, cmd, &String::from_utf8_lossy(&body))
+            let t1 = t0.elapsed();
+            let o = api::call(&v, cmd, &String::from_utf8_lossy(&body));
+            if dbg && (t0.elapsed().as_millis() > 1500 || t1.as_millis() > 1500) {
+                eprintln!("[req] {cmd}: waited {t1:?}, total {:?}", t0.elapsed());
+            }
+            o
         };
         return respond(&mut s, "200 OK", "application/json", out.as_bytes());
     }

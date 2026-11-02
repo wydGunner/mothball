@@ -30,6 +30,20 @@ export const CATEGORY_LABELS: Record<string, string> = {
   electronics: 'Electronics', creative: 'Creative (other)', documents: 'Documents',
 };
 
+/** Project types the user has hidden (Settings → Project types). Stored per computer. */
+export function hiddenTypes(): string[] {
+  try { return JSON.parse(localStorage.getItem('pv.hiddenTypes') || '[]'); } catch { return []; }
+}
+export function setHiddenTypes(t: string[]) {
+  try { localStorage.setItem('pv.hiddenTypes', JSON.stringify(t)); } catch { /* ignore */ }
+  window.dispatchEvent(new CustomEvent('pv:types'));
+}
+/** Types to offer in pickers: enabled ones, plus `keep` (a project's current type) so it never disappears. */
+export function typeChoices(keep?: string): [string, string][] {
+  const hidden = new Set(hiddenTypes());
+  return Object.entries(CATEGORY_LABELS).filter(([k]) => !hidden.has(k) || k === keep);
+}
+
 export function cx(...c: (string | false | null | undefined)[]) {
   return c.filter(Boolean).join(' ');
 }

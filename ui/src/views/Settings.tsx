@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import { LuFolderOpen, LuShieldCheck, LuDatabaseBackup, LuRefreshCw, LuInfo, LuTriangleAlert, LuArchiveRestore, LuPalette, LuFileCode, LuHardDrive, LuRadar } from 'react-icons/lu';
+import { LuFolderOpen, LuShieldCheck, LuDatabaseBackup, LuRefreshCw, LuInfo, LuTriangleAlert, LuArchiveRestore, LuPalette, LuFileCode, LuHardDrive, LuRadar, LuShapes } from 'react-icons/lu';
 import { call, pickFolder, pickFiles, revealPath, isTauri } from '../ipc';
-import { Modal, useAction, useConfirm, useLoad, useToast } from '../components/common';
+import { Modal, ProjectIcon, useAction, useConfirm, useLoad, useToast } from '../components/common';
 import { getSaveMode, setSaveMode, getLargeThreshold, setLargeThreshold, type SaveMode } from './SmartSave';
-import { bytes, cx, dateTime } from '../format';
+import { bytes, CATEGORY_LABELS, cx, dateTime, hiddenTypes, setHiddenTypes } from '../format';
 import type { Nav } from '../main';
 import { THEMES, applyTheme, getTheme, themeFromColor } from '../theme';
 
@@ -299,6 +299,37 @@ function UpdateCheck() {
   );
 }
 
+function ProjectTypes({ nav }: { nav: Nav }) {
+  const [hidden, setHidden] = useState<string[]>(hiddenTypes);
+  const used = new Map<string, number>();
+  for (const p of nav.projects) used.set(p.category, (used.get(p.category) || 0) + 1);
+  const toggle = (k: string, on: boolean) => { const n = on ? hidden.filter((x) => x !== k) : [...hidden, k]; setHidden(n); setHiddenTypes(n); };
+  const all = Object.entries(CATEGORY_LABELS);
+  const shown = all.length - hidden.length;
+  return (
+    <div className="card pad">
+      <p className="muted small" style={{ marginTop: 0 }}>Turn off the types you don’t use so they don’t clutter the list when you add or edit a project. Projects that already use a type keep it, and it still shows for them.</p>
+      <div className="typegrid">
+        {all.map(([k, v]) => {
+          const on = !hidden.includes(k);
+          return (
+            <label key={k} className={cx('typeopt', on && 'on')}>
+              <input type="checkbox" checked={on} disabled={on && shown <= 1} onChange={(e) => toggle(k, e.target.checked)} />
+              <ProjectIcon category={k} size={22} />
+              <span className="grow">{v}</span>
+              {used.get(k) ? <span className="small dim">{used.get(k)} project{used.get(k) === 1 ? '' : 's'}</span> : null}
+            </label>
+          );
+        })}
+      </div>
+      <div className="row small" style={{ marginTop: 10 }}>
+        <button className="btn ghost sm" onClick={() => { const n = all.map(([k]) => k).filter((k) => !used.has(k)); setHidden(n); setHiddenTypes(n); }}>Only the types I use</button>
+        <button className="btn ghost sm" onClick={() => { setHidden([]); setHiddenTypes([]); }}>Show all</button>
+      </div>
+    </div>
+  );
+}
+
 function TimeSettings() {
   const sum = useLoad(() => call<{ estimate: boolean }>('time.summary', { since: Date.now() }), []);
   const [on, setOn] = useState<boolean | null>(null);
@@ -342,9 +373,10 @@ function WatchCard() {
   );
 }
 
-type Section = 'appearance' | 'editor' | 'tracking' | 'backups' | 'restore' | 'storage' | 'about';
+type Section = 'appearance' | 'types' | 'editor' | 'tracking' | 'backups' | 'restore' | 'storage' | 'about';
 const SECTIONS: { id: Section; label: string; icon: ReactElement; hint: string }[] = [
   { id: 'appearance', label: 'Appearance', icon: <LuPalette />, hint: 'Accent colors' },
+  { id: 'types', label: 'Project types', icon: <LuShapes />, hint: 'Which project types you can pick' },
   { id: 'editor', label: 'Editor & saving', icon: <LuFileCode />, hint: 'What Ctrl+S does' },
   { id: 'tracking', label: 'Change tracking', icon: <LuRadar />, hint: 'Notice changes to project folders as they happen' },
   { id: 'backups', label: 'Backups', icon: <LuDatabaseBackup />, hint: 'Back up now, or on a schedule' },
@@ -370,6 +402,7 @@ export function SettingsView({ nav }: { nav: Nav }) {
       <div className="set-body" key={sec}>
         <h2 className="set-title">{cur.label}</h2>
         {sec === 'appearance' && <Appearance />}
+        {sec === 'types' && <ProjectTypes nav={nav} />}
         {sec === 'editor' && <EditorSaving />}
         {sec === 'tracking' && <><WatchCard /><TimeSettings /></>}
         {sec === 'backups' && <><BackupCard nav={nav} dataDir={info.data?.dataDir} /><ScheduleCard /></>}

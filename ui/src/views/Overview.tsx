@@ -6,7 +6,7 @@ import {
 import { call, type Project } from '../ipc';
 import { KindIcon, Modal, StatusPill, TagInput, useAction, useLoad, useConfirm, useToast } from '../components/common';
 import { PictureDialog, useThumb } from './Dashboard';
-import { ago, bytes, CATEGORY_LABELS, cx, dateTime } from '../format';
+import { ago, bytes, CATEGORY_LABELS, cx, typeChoices, dateTime } from '../format';
 import { CompareDialog } from './Versions';
 import { Retention } from './History';
 import { TimeCard } from './TimeCard';
@@ -300,7 +300,7 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
           </div>
           <div className="field"><label>…or a custom status</label><input className="input" value={customStatus} onChange={(e) => setCustomStatus(e.target.value)} placeholder="e.g. Waiting on parts" /></div>
           <div className="field"><label>Project type</label>
-            <select className="input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+            <select className="input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{typeChoices(p.category).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
           </div>
         </div>
         <div className="field"><label>Progress — {f.progress}%</label><input type="range" min={0} max={100} step={5} value={f.progress} onChange={(e) => setF({ ...f, progress: Number(e.target.value) })} /></div>

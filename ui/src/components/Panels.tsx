@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { LuChevronDown, LuChevronRight, LuGripVertical } from 'react-icons/lu';
 import { cx } from '../format';
 import { useContextMenu } from './common';
@@ -80,19 +80,53 @@ export function PanelBoard({ storageKey, defaults, panels, zoneClass, before }: 
   const reset = () => { try { localStorage.removeItem('pv.layout.' + storageKey); } catch { /* ignore */ } setLayout(normalize(null, defaults)); };
   const isCustom = JSON.stringify(layout) !== JSON.stringify(normalize(null, defaults));
 
-  const onDragOverPanel = (e: React.DragEvent, zone: string, index: number) => {
-    if (!drag || !e.dataTransfer.types.includes('text/pv-panel')) return;
-    e.preventDefault(); e.stopPropagation();
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const after = e.clientY > r.top + r.height / 2;
-    const at = index + (after ? 1 : 0);
-    if (!drop || drop.zone !== zone || drop.index !== at) setDrop({ zone, index: at });
+  // Where a dragged panel would land, from the pointer position anywhere on the
+  // page: the zone under (or nearest to) the pointer, then the slot in reading
+  // order. Empty space below a zone means "at the end of it".
+  const zoneEls = useRef<Record<string, HTMLDivElement | null>>({});
+  const target = (x: number, y: number): { zone: string; index: number } | null => {
+    let best: { zone: string; dist: number } | null = null;
+    for (const [zone, el] of Object.entries(zoneEls.current)) {
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+      const dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+      const dist = dx * 4 + dy; // prefer the column the pointer is in
+      if (!best || dist < best.dist) best = { zone, dist };
+    }
+    if (!best) return null;
+    const el = zoneEls.current[best.zone]!;
+    const ids = layout.zones[best.zone];
+    const panelsEls = [...el.querySelectorAll(':scope > [data-panel]')] as HTMLElement[];
+    const rects = panelsEls.map((p) => ({ id: p.dataset.panel!, r: p.getBoundingClientRect() }));
+    const multiCol = rects.some((a, i) => rects.some((b, j) => i !== j && Math.abs(a.r.top - b.r.top) < 8));
+    for (const { id, r } of rects) {
+      if (id === drag) continue;
+      const before = y < r.top || (y <= r.bottom && (multiCol ? x < r.left + r.width / 2 && y < r.bottom : y < r.top + r.height / 2));
+      if (before) return { zone: best.zone, index: ids.indexOf(id) };
+    }
+    return { zone: best.zone, index: ids.length };
   };
-  const finish = (e: React.DragEvent) => {
-    e.preventDefault(); e.stopPropagation();
-    if (drag && drop) move(drag, drop.zone, drop.index);
-    setDrag(null); setDrop(null);
-  };
+  useEffect(() => {
+    if (!drag) return;
+    const over = (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes('text/pv-panel')) return;
+      e.preventDefault();
+      const t = target(e.clientX, e.clientY);
+      setDrop((d) => (t && (!d || d.zone !== t.zone || d.index !== t.index) ? t : d));
+    };
+    const dropped = (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes('text/pv-panel')) return;
+      e.preventDefault();
+      const t = target(e.clientX, e.clientY);
+      if (t) move(drag, t.zone, t.index);
+      setDrag(null); setDrop(null);
+    };
+    window.addEventListener('dragover', over);
+    window.addEventListener('drop', dropped);
+    return () => { window.removeEventListener('dragover', over); window.removeEventListener('drop', dropped); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drag, layout]);
 
   return (
     <>
@@ -100,17 +134,14 @@ export function PanelBoard({ storageKey, defaults, panels, zoneClass, before }: 
         const ids = layout.zones[zone];
         const visible = ids.map((id, i) => ({ id, i })).filter(({ id }) => byId[id] && !byId[id].hidden);
         return (
-          <div key={zone} className={cx(zoneClass[zone], 'pzone', drag && 'dragging')}
-            onDragOver={(e) => { if (!drag) return; e.preventDefault(); if (e.target === e.currentTarget && (!drop || drop.zone !== zone || drop.index !== ids.length)) setDrop({ zone, index: ids.length }); }}
-            onDrop={finish}>
+          <div key={zone} ref={(el) => { zoneEls.current[zone] = el; }} className={cx(zoneClass[zone], 'pzone', drag && 'dragging', drag && drop?.zone === zone && drop.index >= ids.length && !visible.some((v) => v.id !== drag) && 'drop-end')}>
             {before?.[zone]}
             {visible.map(({ id, i }) => {
               const p = byId[id];
               const collapsed = layout.collapsed.includes(id);
               const line = drop && drop.zone === zone ? (drop.index === i ? 'drop-before' : drop.index === i + 1 && !visible.some((v) => v.i === i + 1) ? 'drop-after' : '') : '';
               return (
-                <section key={id} className={cx('panel', p.className, collapsed && 'collapsed', drag === id && 'is-dragged', line)} data-panel={id}
-                  onDragOver={(e) => onDragOverPanel(e, zone, i)} onDrop={finish}>
+                <section key={id} className={cx('panel', p.className, collapsed && 'collapsed', drag === id && 'is-dragged', line)} data-panel={id}>
                   <div className="panel-h" draggable
                     onDragStart={(e) => { e.dataTransfer.setData('text/pv-panel', id); e.dataTransfer.effectAllowed = 'move'; setDrag(id); }}
                     onDragEnd={() => { setDrag(null); setDrop(null); }}

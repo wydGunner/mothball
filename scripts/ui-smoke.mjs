@@ -945,9 +945,8 @@ await step('Background watching: outside changes appear without Rescan', async (
   await api('watch.setSettings', { patch: { seconds: 5 } });
   await page.locator('.sidebar .navitem').filter({ hasText: "What's Left?" }).first().click();
   await page.getByRole('tab', { name: /Timeline/ }).click();
-  await page.waitForTimeout(6000); // let the watcher take its baseline
   writeFileSync(join(tmp, 'WhatsLeft', 'Options.lua'), 'local x = 1\n');
-  await page.locator('.tlitem').filter({ hasText: 'File changes detected: 1 added' }).waitFor({ timeout: 30000 });
+  await page.locator('.tlitem').filter({ hasText: 'File changes detected: 1 added' }).waitFor({ timeout: 60000 });
   await page.getByRole('button', { name: 'Dashboard' }).click();
   await page.locator('.ds-row').filter({ hasText: 'Options.lua' }).waitFor({ timeout: 15000 });
 });
@@ -985,6 +984,10 @@ await step('Panels: drag to rearrange, collapse, remembered, reset', async () =>
   await page.locator('[data-panel=recent].collapsed').waitFor();
   if ((await order()).join() !== 'recent,attention,projects') throw new Error('not remembered: ' + await order());
   if (shots) await page.screenshot({ path: join(shots, 'x-panels.png') });
+  // drop into the empty space at the bottom of the page: goes below Projects
+  const vh = page.viewportSize().height;
+  await page.locator('[data-panel=attention] > .panel-h').dragTo(page.locator('.content'), { targetPosition: { x: 600, y: vh - 80 } });
+  await page.waitForFunction(() => [...document.querySelectorAll('.dash-top > .panel, .dash-bottom > .panel')].map((e) => e.getAttribute('data-panel')).join() === 'recent,projects,attention');
   // reset from the header's menu
   await page.locator('[data-panel=recent] > .panel-h').click({ button: 'right' });
   await page.locator('.ctx button').filter({ hasText: 'Reset layout' }).click();
@@ -1005,6 +1008,21 @@ await step('Panels: drag to rearrange, collapse, remembered, reset', async () =>
   await page.locator('[data-panel=time] .tc-big').waitFor({ state: 'detached' });
   await page.locator('[data-panel=time] .panel-t').click();
   await page.locator('[data-panel=time] .tc-big').waitFor();
+});
+
+await step('Settings: hide project types from the pickers', async () => {
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.locator('.set-link').filter({ hasText: 'Project types' }).click();
+  await page.getByRole('button', { name: 'Only the types I use' }).click();
+  const video = page.locator('.typeopt').filter({ hasText: 'Video editing' });
+  if (await video.locator('input').isChecked()) throw new Error('unused type still on');
+  if (shots) await page.screenshot({ path: join(shots, 'x-project-types.png') });
+  await page.getByRole('button', { name: 'New project' }).first().click();
+  const opts = await page.locator('.modal select').first().locator('option').allTextContents();
+  if (opts.includes('Video editing') || !opts.includes('Software')) throw new Error('picker not filtered: ' + opts.join(', '));
+  await page.locator('.modal').getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Show all' }).click();
 });
 
 await step('Dashboard overview screenshot', async () => {
