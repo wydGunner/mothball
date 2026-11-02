@@ -100,7 +100,6 @@ export function CommandPalette({ nav, route, onClose, onNewProject }: { nav: Nav
     const cmds: Item[] = [
       { key: 'new', icon: <LuPlus />, label: 'New project…', run: onNewProject },
       { key: 'dash', icon: <LuLayoutDashboard />, label: 'Go to dashboard', run: () => nav.go({ view: 'dashboard' }) },
-      { key: 'search', icon: <LuSearch />, label: 'Open full search', run: () => nav.go({ view: 'search', query: q }) },
       { key: 'settings', icon: <LuSettings />, label: 'Settings & backup', run: () => nav.go({ view: 'settings' }) },
     ];
     if (route.view === 'project') {
@@ -166,7 +165,9 @@ export function CommandPalette({ nav, route, onClose, onNewProject }: { nav: Nav
       sub: `${d.projectName} / ${d.path}:${d.line}`,
       run: () => { onClose(); nav.go({ view: 'project', id: d.projectId, tab: 'files', focus: { type: 'file', id: d.fileId, action: 'edit', line: d.line, nonce: Date.now() } }); },
     }));
-    return (q.trim().startsWith('@') ? symItems : [...local, ...remote, ...symItems]).slice(0, 60);
+    const all: Item = { key: 'allresults', icon: <LuSearch />, label: q.trim() ? `See all results for “${q.trim()}” (filter by type and project)` : 'Open full search', run: () => nav.go({ view: 'search', query: q }) };
+    const list = q.trim().startsWith('@') ? symItems : [...local, ...remote, ...symItems];
+    return [...list.slice(0, 59), ...(q.trim().length >= 2 && !q.trim().startsWith('@') ? [all] : [])];
   }, [q, hits, syms, nav, route, onNewProject, terms, goFile, goHistory, goFolder, onClose]);
 
   useEffect(() => setSel(0), [q]);

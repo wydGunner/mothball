@@ -106,7 +106,6 @@ function App() {
         <div className="brand"><div className="logo">PV</div><span>Project Vault</span></div>
         <nav>
           <button className={cx('navitem', route.view === 'dashboard' && 'active')} onClick={() => go({ view: 'dashboard' })} title="Dashboard"><LuLayoutDashboard /><span className="label">Dashboard</span></button>
-          <button className={cx('navitem', route.view === 'search' && 'active')} onClick={() => go({ view: 'search' })} title="Search (Ctrl+Shift+F)"><LuSearch /><span className="label">Search</span></button>
           <button className="navitem" onClick={() => setNewProject(true)} title="New project (Ctrl+N)"><LuPlus /><span className="label">New project</span></button>
         </nav>
         <div className="scroll">

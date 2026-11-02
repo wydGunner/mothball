@@ -440,8 +440,11 @@ await step('Overview summary and edit dialog', async () => {
 });
 
 await step('Universal search', async () => {
-  await page.getByRole('button', { name: 'Search', exact: true }).click();
-  await page.getByPlaceholder(/Search projects, file names/).fill('instashoot');
+  // the full results page is reached from Ctrl+K (no separate sidebar entry)
+  await page.keyboard.press('Control+K');
+  await page.locator('.palette input').fill('instashoot');
+  await page.locator('.palette .item').filter({ hasText: 'See all results for' }).click();
+  await page.getByPlaceholder(/Search projects, file names/).waitFor();
   await page.locator('.card').filter({ hasText: 'tuner.gsc' }).first().waitFor();
   await page.locator('.card').filter({ hasText: 'Instashoot desync' }).first().waitFor();
 });
