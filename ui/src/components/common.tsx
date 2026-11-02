@@ -352,8 +352,12 @@ export function useAutosave(save: () => Promise<void>, delay = 800) {
 }
 
 export function SaveState({ state }: { state: string }) {
-  const label = { idle: '', pending: 'Unsaved changes…', saving: 'Saving…', saved: 'Saved', error: 'Save failed — retrying on next edit' }[state] || '';
-  return <span className="savestate" style={state === 'error' ? { color: 'var(--bad)' } : undefined}>{label}</span>;
+  if (state === 'error') return <span className="savestate" style={{ color: 'var(--bad)' }}>Save failed — retrying on next edit</span>;
+  // Every label is laid out in the same grid cell and only the current one is visible,
+  // so the slot is as wide as the longest label in whatever font is in use: the
+  // changing text never reflows the row (a reflow mid-click makes clicks miss).
+  const labels: Record<string, string> = { pending: 'Unsaved changes…', saving: 'Saving…', saved: 'Saved' };
+  return <span className="savestate" aria-live="polite">{Object.entries(labels).map(([k, l]) => <span key={k} aria-hidden={k !== state} style={{ visibility: k === state ? 'visible' : 'hidden' }}>{l}</span>)}</span>;
 }
 
 // ---------------------------------------------------------------- dropdown menu

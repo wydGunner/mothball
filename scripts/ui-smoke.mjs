@@ -147,7 +147,7 @@ await step('Document weapon_tuner.gsc', async () => {
   await page.locator('textarea.code').fill('- Contains instashoot configuration\n- Depends on [[file:configs/weapons.json]]\n- Requires dedicated server testing');
   await page.locator('.addrow .chip').filter({ hasText: 'Warning' }).click();
   await page.getByPlaceholder('e.g. Never edit while the server is running').fill('Requires dedicated server testing before release');
-  await page.locator('.savestate').filter({ hasText: 'Saved' }).waitFor({ timeout: 5000 });
+  await page.locator('.savestate > span:visible').filter({ hasText: /^Saved$/ }).waitFor({ timeout: 5000 });
   await page.getByRole('button', { name: 'Done' }).click();
   await page.locator('.md').getByText('Contains instashoot configuration').waitFor();
 });
@@ -214,11 +214,11 @@ await step('Project notes knowledge base', async () => {
   await page.getByRole('tab', { name: /Notes/ }).click();
   await page.locator('.tnode').filter({ hasText: 'Weapon Systems' }).click();
   await page.locator('textarea.body').fill('Architecture of weapon systems.\n\n[[file:scripts/weapons/tuner.gsc]]');
-  await page.locator('.savestate').filter({ hasText: 'Saved' }).waitFor({ timeout: 5000 });
+  await page.locator('.savestate > span:visible').filter({ hasText: /^Saved$/ }).waitFor({ timeout: 5000 });
   await page.getByRole('button', { name: 'Note', exact: true }).click();
   await page.locator('input.title[value="Untitled"]').waitFor();
   await page.locator('input.title').fill('Server Setup');
-  await page.locator('.savestate').filter({ hasText: 'Saved' }).waitFor({ timeout: 5000 });
+  await page.locator('.savestate > span:visible').filter({ hasText: /^Saved$/ }).waitFor({ timeout: 5000 });
   await page.locator('.tnode').filter({ hasText: 'Server Setup' }).waitFor();
   await page.locator('.tnode').filter({ hasText: 'Weapon Systems' }).waitFor();
 });

@@ -213,7 +213,8 @@ table.list tr.sel td { background: var(--accent-bg); }
 .editor .title { font-size: 20px; font-weight: 600; border: 0; background: transparent; outline: none; padding: 16px 20px 6px; width: 100%; }
 .editor textarea.body { flex: 1; border: 0; background: transparent; resize: none; outline: none; padding: 8px 20px 40px; font-family: var(--mono); font-size: 13px; line-height: 1.65; }
 .editor .md { padding: 8px 20px 40px; overflow: auto; flex: 1; }
-.savestate { font-size: 11.5px; color: var(--fg3); display: inline-block; min-width: 8.5em; text-align: right; white-space: nowrap; flex-shrink: 0; } /* fixed slot: a changing label must not reflow the row under the pointer */
+.savestate { font-size: 11.5px; color: var(--fg3); display: inline-grid; white-space: nowrap; flex-shrink: 0; justify-items: end; } /* sized to its longest label so saving never reflows the row */
+.savestate > span { grid-area: 1 / 1; }
 
 /* kanban & calendar */
 .kanban { display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: 12px; align-items: start; }
