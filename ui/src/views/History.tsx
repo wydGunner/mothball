@@ -115,7 +115,7 @@ function Snapshots({ ctx }: { ctx: ProjectCtx }) {
             <div className="grow" style={{ minWidth: 0 }}>
               <div className="row" style={{ gap: 6 }}><span className="kindtag snapshot">snapshot</span><b>{s.name}</b></div>
               {s.description && <div className="small">{s.description}</div>}
-              <div className="small dim">{dateTime(s.at)} ({ago(s.at)}) · {s.fileCount} files · {bytes(s.bytes)}{s.skipped.length ? ` · ${s.skipped.length} skipped` : ''}</div>
+              <div className="small dim">{dateTime(s.at)} ({ago(s.at)}) · {s.fileCount} {s.fileCount === 1 ? 'file' : 'files'} · {bytes(s.bytes)}{s.skipped.length ? ` · ${s.skipped.length} skipped` : ''}</div>
             </div>
             <button className="btn ghost sm icon" title="Details" onClick={() => setViewing(s)}><LuEye /></button>
             <button className="btn ghost sm" onClick={() => setRestoring(s)}><LuUndo2 /> Restore…</button>
@@ -125,7 +125,7 @@ function Snapshots({ ctx }: { ctx: ProjectCtx }) {
       {creating && <CreateSnapshot projectId={pid} onClose={() => setCreating(false)} onDone={() => { setCreating(false); list.reload(); ctx.reload(); }} />}
       {restoring && <RestoreSnapshot s={restoring} root={ctx.project.rootPath} onClose={() => setRestoring(null)} onDone={() => { setRestoring(null); list.reload(); ctx.scan(true); }} />}
       {viewing && <Modal title={`Snapshot · ${viewing.name}`} onClose={() => setViewing(null)}>
-        <p className="small">{dateTime(viewing.at)} · {viewing.fileCount} files · {bytes(viewing.bytes)}</p>
+        <p className="small">{dateTime(viewing.at)} · {viewing.fileCount} {viewing.fileCount === 1 ? 'file' : 'files'} · {bytes(viewing.bytes)}</p>
         {viewing.description && <p>{viewing.description}</p>}
         {viewing.skipped.length ? <><b className="small">Not included</b><ul className="small">{viewing.skipped.slice(0, 200).map((x) => <li key={x.path}><span className="mono">{x.path}</span> — {x.reason}</li>)}</ul></> : <p className="small dim">Every tracked file was included.</p>}
       </Modal>}

@@ -63,7 +63,7 @@ export function SearchView({ nav, initial }: { nav: Nav; initial?: string }) {
           <div key={h.type + h.id} className="card" style={{ padding: '10px 14px', marginBottom: 6, cursor: 'pointer' }} onClick={() => openHit(nav, h)}>
             <div className="row">{HIT_ICON[h.type]}{(h.type === 'backup' || h.type === 'snapshot') && <span className={`kindtag ${h.type}`}>{h.type === 'backup' ? 'backup copy' : 'snapshot'}</span>}<b className={h.type === 'file' || h.type === 'backup' ? 'mono' : ''}>{h.title}</b>{h.state === 'missing' && <span className="badge bad">missing</span>}<span className="small dim right">{h.type === 'backup' ? 'stored copy, not the live file' : h.type} · {h.projectName}</span></div>
             {h.type === 'backup' && <div className="small dim">Backup of <span className="mono">{h.path}</span>{h.at ? ` · ${dateTime(h.at)}` : ''}</div>}
-            {h.type === 'snapshot' && <div className="small dim">Project snapshot{h.at ? ` · ${dateTime(h.at)}` : ''}{h.fileCount != null ? ` · ${h.fileCount} files` : ''}</div>}
+            {h.type === 'snapshot' && <div className="small dim">Project snapshot{h.at ? ` · ${dateTime(h.at)}` : ''}{h.fileCount != null ? ` · ${h.fileCount} ${h.fileCount === 1 ? 'file' : 'files'}` : ''}</div>}
             {h.path && h.type !== 'backup' && <div className="small dim mono">{h.path}</div>}
             <Snippet text={h.snippet} />
           </div>

@@ -830,6 +830,31 @@ await step('Dashboard: project groups', async () => {
   if (before.join('|') !== after.join('|')) throw new Error('sidebar reordered: ' + before + ' -> ' + after);
 });
 
+await step('WoW addon: .toc panel and Lua functions', async () => {
+  const wl = join(tmp, 'WhatsLeft');
+  mkdirSync(join(wl, 'Modules'), { recursive: true });
+  writeFileSync(join(wl, 'WhatsLeft.toc'), "## Interface: 110205\n## Title: |cff33ff99What's Left?|r\n## Version: 2.1.0\n## SavedVariables: WhatsLeftDB\n\nCore.lua\nModules\\Farm.lua\nGone.lua\n");
+  writeFileSync(join(wl, 'Core.lua'), 'local WL = {}\nfunction WL:OnEnable()\n  self:Refresh()\nend\nfunction WL:Refresh()\nend\n');
+  writeFileSync(join(wl, 'Modules/Farm.lua'), 'WL:OnEnable()\n');
+  writeFileSync(join(wl, 'Unused.lua'), '');
+  const pr = (await api('projects.create', { name: "What's Left?", category: 'addon', linkPath: wl })).data;
+  await api('files.scan', { projectId: pr.id });
+  await page.evaluate(() => location.reload());
+  await page.locator('.sidebar .navitem').filter({ hasText: "What's Left?" }).first().click();
+  await page.getByRole('tab', { name: /Files/ }).click();
+  await page.locator('.filerow').filter({ hasText: 'WhatsLeft.toc' }).click();
+  const sec = page.locator('.docsec').filter({ hasText: 'Addon' });
+  await sec.getByText("What's Left?", { exact: true }).waitFor();
+  await sec.getByText('11.2.5 (Retail)').waitFor();
+  await sec.locator('.tocrow.missing').filter({ hasText: 'Gone.lua' }).waitFor();
+  await sec.getByText(/Not loaded by this .toc/).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-wow-toc.png') });
+  await page.locator('.filerow').filter({ hasText: 'Core.lua' }).click();
+  await page.locator('.symrow').filter({ hasText: 'function WL:Refresh()' }).waitFor();
+  await page.locator('.symrow').filter({ hasText: 'function WL:OnEnable()' }).getByRole('button', { name: 'Uses' }).click();
+  await page.locator('.refrow').filter({ hasText: 'Modules/Farm.lua:1' }).waitFor();
+});
+
 await step('Dashboard: remove a managed project and delete its folder', async () => {
   const pr = (await api('projects.create', { name: 'Scratch To Delete', category: 'game' })).data;
   await page.evaluate(() => location.reload());

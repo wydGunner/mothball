@@ -168,7 +168,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
 
         {/* ---------- pick up where you left off */}
         <section className="ov2-sec">
-          <div className="ov2-h"><h2>Recently changed</h2><button className="btn sm ghost" onClick={() => ctx.openFiles()}>All {p.fileCount} files <LuChevronRight /></button></div>
+          <div className="ov2-h"><h2>Recently changed</h2><button className="btn sm ghost" onClick={() => ctx.openFiles()}>All {p.fileCount} {p.fileCount === 1 ? 'file' : 'files'} <LuChevronRight /></button></div>
           {recent.data?.length ? <div className="ov2-files">
             {recent.data.map((f) => {
               const d = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/') + 1) : '';
@@ -252,7 +252,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
           <div className="kv">
             <span>Folder</span><span className="mono" style={{ wordBreak: 'break-all' }}>{p.rootPath}</span>
             <span>Files</span><span>{p.mode === 'linked' ? 'Edited where they are' : 'Kept in app storage'}</span>
-            <span>Size</span><span>{p.fileCount} files, {bytes(p.bytes)}</span>
+            <span>Size</span><span>{p.fileCount} {p.fileCount === 1 ? 'file' : 'files'}, {bytes(p.bytes)}</span>
             <span>Created</span><span>{dateTime(p.createdAt)}</span>
           </div>
         </section>
@@ -328,6 +328,7 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
 
       {tab === 'details' && <>
         {f.category === '3d-printing' && <FillFrom3mf projectId={p.id} module={module} onFill={setModule} />}
+        {f.category === 'addon' && <FillFromToc projectId={p.id} module={module} onFill={setModule} />}
         {mod ? <>
           <div className="grid2">
             {mod.fields.filter((x) => !x.multiline).map((x) => (
@@ -389,6 +390,46 @@ function PrintLog({ log, onChange }: { log: any[]; onChange: (l: any[]) => void 
 }
 
 /** Fills empty print fields from what a .3mf in the project says (only empty fields; nothing is saved until Save). */
+/** Fills addon details from a WoW .toc file. */
+function FillFromToc({ projectId, module, onFill }: { projectId: string; module: Record<string, any>; onFill: (m: Record<string, any>) => void }) {
+  const files = useLoad(() => call<any[]>('files.list', { projectId, exts: ['toc'], limit: 50 }), [projectId]);
+  const [pick, setPick] = useState('');
+  const [msg, setMsg] = useState('');
+  const act = useAction();
+  if (!files.data?.length) return null;
+  const fill = async () => {
+    const d: any = await act(() => call('symbols.toc', { fileId: pick || files.data![0].id }));
+    if (!d) return;
+    const fl = d.fields || {};
+    const clean = (x?: string) => (x || '').replace(/\|c[0-9a-fA-F]{8}|\|r/g, '');
+    const found: Record<string, string> = {
+      game: d.gameVersions.length ? `World of Warcraft (${d.gameVersions.map((v: string) => (Number(v.split('.')[0]) >= 11 ? 'Retail' : 'Classic')).filter((x: string, i: number, a: string[]) => a.indexOf(x) === i).join(', ')})` : '',
+      interface: fl.Interface || '',
+      addonVersion: clean(fl.Version),
+      savedVariables: [fl.SavedVariables, fl.SavedVariablesPerCharacter].filter(Boolean).join(', '),
+      dependencies: [fl.RequiredDeps || fl.Dependencies, fl.OptionalDeps && `Optional: ${fl.OptionalDeps}`, fl['X-Embeds'] && `Embeds: ${fl['X-Embeds']}`].filter(Boolean).join('\n'),
+      pageUrl: fl['X-Website'] || fl['X-Curse-Project-ID'] && `https://www.curseforge.com/projects/${fl['X-Curse-Project-ID']}` || '',
+    };
+    const next = { ...module };
+    const filled: string[] = [];
+    for (const [k, v] of Object.entries(found)) if (v && !String(next[k] || '').trim()) { next[k] = v; filled.push(k); }
+    onFill(next);
+    setMsg(filled.length ? `Filled ${filled.length} empty field(s). Check them, then Save.` : 'Nothing new: every field the .toc has is already filled in.');
+  };
+  return (
+    <div className="alert info" style={{ marginBottom: 12 }}>
+      <div className="grow">
+        <div className="row" style={{ flexWrap: 'wrap' }}>
+          <span>Fill empty fields from</span>
+          <select className="input" style={{ width: 'auto', maxWidth: 320 }} value={pick || files.data[0].id} onChange={(e) => setPick(e.target.value)}>{files.data.map((x) => <option key={x.id} value={x.id}>{x.path}</option>)}</select>
+          <button className="btn sm" onClick={fill}>Fill</button>
+        </div>
+        {msg && <div className="small" style={{ marginTop: 4 }}>{msg}</div>}
+      </div>
+    </div>
+  );
+}
+
 function FillFrom3mf({ projectId, module, onFill }: { projectId: string; module: Record<string, any>; onFill: (m: Record<string, any>) => void }) {
   const files = useLoad(() => call<any[]>('files.list', { projectId, exts: ['3mf'], limit: 200 }), [projectId]);
   const [pick, setPick] = useState('');

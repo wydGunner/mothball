@@ -68,6 +68,7 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "symbols.find" => symbols::find(v, &s(a, "projectId")?, &s(a, "name")?, &os(a, "qualifier").unwrap_or_default()),
         "symbols.inFile" => symbols::in_file(v, &s(a, "fileId")?),
         "symbols.search" => symbols::search(v, os(a, "projectId").as_deref(), &s(a, "query")?, a.get("limit").and_then(|x| x.as_i64()).unwrap_or(20)),
+        "symbols.toc" => symbols::toc_info(v, &s(a, "fileId")?),
         "symbols.references" => symbols::references(v, &s(a, "projectId")?, &s(a, "name")?, 200),
         "files.threemfInfo" => files::threemf_info(v, &s(a, "id")?),
         "files.import" => files::import_op(

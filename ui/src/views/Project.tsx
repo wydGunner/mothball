@@ -72,7 +72,7 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
       const changes = r.added + r.modified + r.moved + r.missing + r.restored;
       if (!quiet || changes > 0 || r.needsReview > 0) {
         const parts = [r.added && `${r.added} added`, r.modified && `${r.modified} modified`, r.moved && `${r.moved} moved/renamed`, r.missing && `${r.missing} missing`, r.restored && `${r.restored} restored`, r.needsReview && `${r.needsReview} need review`].filter(Boolean);
-        toast(changes || r.needsReview ? `Changes detected: ${parts.join(', ')}` : `Up to date (${r.total} files)`, changes ? 'info' : 'success');
+        toast(changes || r.needsReview ? `Changes detected: ${parts.join(', ')}` : `Up to date (${r.total} ${r.total === 1 ? 'file' : 'files'})`, changes ? 'info' : 'success');
       }
       if (r.errorCount > 0) toast(`${r.errorCount} item(s) could not be read:\n${r.errors.slice(0, 3).join('\n')}`, 'error');
       setScanTick((t) => t + 1);

@@ -258,7 +258,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
               { title: 'Group by', items: GROUP_BYS.map(([k, l]) => ({ key: 'g' + k, label: l, checked: groupBy === k, onSelect: () => setGroupBy(k) })) },
             ]} />
           </div>
-          <div className="small dim">{files.data ? `${files.data.length}${files.data.length >= 5000 ? '+' : ''} files${dir ? ` in ${dir}/` : ''}${exts ? ' (filtered by type)' : ''}` : 'Loading…'}{multi.size > 1 && ` · ${multi.size} selected`}</div>
+          <div className="small dim">{files.data ? `${files.data.length}${files.data.length >= 5000 ? '+' : ''} ${files.data.length === 1 ? 'file' : 'files'}${dir ? ` in ${dir}/` : ''}${exts ? ' (filtered by type)' : ''}` : 'Loading…'}{multi.size > 1 && ` · ${multi.size} selected`}</div>
         </div>
         <div style={{ overflow: 'auto', flex: 1 }} tabIndex={0} onKeyDown={keyNav}>
           {fileSections.map((sec) => <Fragment key={sec.key}>
@@ -416,6 +416,7 @@ function FileDetailPanel({ fileId, ctx, onChanged, onEdit, highlightVersion }: {
         return add.length > 0 && <div className="addrow">{add.map((x) => <button key={x.label} className="chip" onClick={x.on}><LuPlus /> {x.label}</button>)}</div>;
       })()}
 
+      {f.ext === 'toc' && f.state === 'present' && <TocInfo f={f} ctx={ctx} />}
       {SCRIPT_EXTS.has(f.ext) && f.state === 'present' && <ScriptOutline f={f} ctx={ctx} />}
 
       <FilePreview f={f} />
@@ -454,6 +455,48 @@ export async function resolveInternal(ctx: ProjectCtx, kind: 'note' | 'file' | '
     }
     toast(`No ${kind} named “${target}” in this project`, 'error');
   } catch (e: any) { toast(e.message, 'error'); }
+}
+
+const wowText = (s: string) => (s || '').replace(/\|c[0-9a-fA-F]{8}|\|r/g, '');
+const wowFlavor = (v: string) => { const major = Number(v.split('.')[0]); return major >= 11 ? 'Retail' : major === 1 ? 'Classic Era' : 'Classic'; };
+
+/** A WoW addon .toc: its details, the files it loads (missing ones flagged), and Lua/XML files nothing loads. */
+function TocInfo({ f, ctx }: { f: FileDetail; ctx: ProjectCtx }) {
+  const info = useLoad(() => call<any>('symbols.toc', { fileId: f.id }), [f.id, f.sha256]);
+  const [open, setOpen] = useState(true);
+  const go = (fileId: string) => ctx.nav.go({ view: 'project', id: ctx.project.id, tab: 'files', focus: { type: 'file', id: fileId, action: 'reveal', nonce: Date.now() } });
+  if (info.error) return <div className="docsec"><h3>Addon</h3><div className="small muted">{info.error}</div></div>;
+  const d = info.data;
+  if (!d) return null;
+  const fl = d.fields || {};
+  const missing = d.files.filter((x: any) => x.status === 'missing');
+  const rows: [string, string][] = ([
+    ['Title', wowText(fl.Title)], ['Version', fl.Version], ['Game version', d.gameVersions.map((v: string) => `${v} (${wowFlavor(v)})`).join(', ')],
+    ['Author', fl.Author], ['Notes', wowText(fl.Notes)], ['Saved variables', [fl.SavedVariables, fl.SavedVariablesPerCharacter && `${fl.SavedVariablesPerCharacter} (per character)`].filter(Boolean).join(', ')],
+    ['Requires', fl.RequiredDeps || fl.Dependencies || fl.Dep], ['Optional', fl.OptionalDeps], ['Embedded libraries', fl['X-Embeds']],
+  ] as [string, string | undefined][]).filter(([, v]) => v) as [string, string][];
+  return (
+    <div className="docsec">
+      <h3 style={{ cursor: 'pointer' }} onClick={() => setOpen(!open)}>{open ? <LuChevronDown /> : <LuChevronRight />} Addon <span className="small dim" style={{ fontWeight: 400 }}>{d.files.length} file{d.files.length === 1 ? '' : 's'} in load order{missing.length ? ` · ${missing.length} missing` : ''}</span></h3>
+      {open && <>
+        {rows.length > 0 && <div className="kv" style={{ marginBottom: 10 }}>{rows.map(([k, v]) => <Fragment key={k}><span>{k}</span><span>{v}</span></Fragment>)}</div>}
+        {missing.length > 0 && <div className="alert bad small" style={{ marginBottom: 8 }}><LuTriangleAlert /> {missing.length === 1 ? 'A file this .toc loads doesn’t exist' : `${missing.length} files this .toc loads don’t exist`} — the game will show a load error.</div>}
+        <div className="toclist">
+          {d.files.map((x: any, i: number) => (
+            <div key={i} className={cx('tocrow', x.status)}>
+              <span className="dim small">{i + 1}</span>
+              {x.fileId ? <button className="linklike mono" onClick={() => go(x.fileId)} title={`Line ${x.line} of the .toc`}>{x.entry}</button> : <span className="mono">{x.entry}</span>}
+              {x.status === 'missing' && <span className="badge bad">missing</span>}
+              {x.status === 'variable' && <span className="badge" title="Contains a [variable] the game fills in, so it isn't checked">not checked</span>}
+            </div>
+          ))}
+        </div>
+        {d.notLoaded.length > 0 && <div className="small muted" style={{ marginTop: 8 }}>
+          Not loaded by this .toc (or any XML it loads): {d.notLoaded.slice(0, 12).map((x: any, i: number) => <Fragment key={x.fileId}>{i > 0 && ', '}<button className="linklike mono" onClick={() => go(x.fileId)}>{x.path}</button></Fragment>)}{d.notLoaded.length > 12 ? ` and ${d.notLoaded.length - 12} more` : ''}
+        </div>}
+      </>}
+    </div>
+  );
 }
 
 /** Functions defined in a script, its #includes, and where each function is used. */
@@ -633,7 +676,7 @@ function FileHistory({ f, ctx, highlight }: { f: FileDetail; ctx: ProjectCtx; hi
   );
 }
 
-const SCRIPT_EXTS = new Set(['gsc', 'csc', 'gsh']);
+const SCRIPT_EXTS = new Set(['gsc', 'csc', 'gsh', 'lua']);
 
 function EditorPane({ fileId, ctx, onClose, onSaved, onDirty, wide, onToggleWide, gotoLine }: { fileId: string; ctx: ProjectCtx; onClose: () => void; onSaved: () => void; onDirty: (d: boolean) => void; wide: boolean; onToggleWide: () => void; gotoLine?: { line: number; nonce: number } }) {
   const doc = useLoad(() => call<any>('files.readText', { id: fileId }), [fileId]);
@@ -688,7 +731,8 @@ function EditorPane({ fileId, ctx, onClose, onSaved, onDirty, wide, onToggleWide
     let text: string | null = null;
     try {
       const defs = await call<any[]>('symbols.find', { projectId: ctx.project.id, name: word, qualifier });
-      if (defs.length) text = defs.slice(0, 3).map((d) => '```gsc\n' + d.signature + '\n```\n' + `${d.path}:${d.line}`).join('\n\n') + (defs.length > 3 ? `\n\n…and ${defs.length - 3} more` : '') + '\n\nF12 or Ctrl+click to go there';
+      const lang = /\.lua$/i.test(defs[0]?.path || '') ? 'lua' : 'gsc';
+      if (defs.length) text = defs.slice(0, 3).map((d) => '```' + lang + '\n' + d.signature + '\n```\n' + `${d.path}:${d.line}`).join('\n\n') + (defs.length > 3 ? `\n\n…and ${defs.length - 3} more` : '') + '\n\nF12 or Ctrl+click to go there';
     } catch { /* not indexed */ }
     hoverCache.current.set(k, text);
     return text;

@@ -340,7 +340,7 @@ function ProjectCard({ p, colors, onOpen, onMenu, onFav, onPictureChanged }: { p
         {p.description && <div className="pc-desc">{p.description}</div>}
         <div className="pc-meta">
           <span>{CATEGORY_LABELS[p.category]}</span>
-          <span>{p.fileCount} files</span>
+          <span>{p.fileCount} {p.fileCount === 1 ? 'file' : 'files'}</span>
           <span>{bytes(p.bytes)}</span>
           {p.status !== 'Active' && <StatusPill status={p.status} colors={colors} />}
           {p.openTasks > 0 && <span title="Open tasks"><LuListTodo size={12} /> {p.openTasks}</span>}
@@ -448,7 +448,7 @@ function ImportPrintVault({ onClose, onDone }: { onClose: () => void; onDone: ()
         <div className="row"><input className="input mono" value={path} onChange={(e) => setPath(e.target.value)} placeholder="D:\PrintVault\3D Prints Vault" /><button className="btn" onClick={async () => { const p = await pickFolder('Print Vault folder'); if (p) setPath(p); }}><LuFolderOpen /> Browse…</button></div>
       </> : <>
         <p><b>{result.created.length}</b> project(s) imported.</p>
-        <ul>{result.created.map((c: any) => <li key={c.id}>{c.name} <span className="dim">— {c.files} files</span></li>)}</ul>
+        <ul>{result.created.map((c: any) => <li key={c.id}>{c.name} <span className="dim">— {c.files} {c.files === 1 ? 'file' : 'files'}</span></li>)}</ul>
         {result.skipped.length > 0 && <><p className="muted">Skipped:</p><ul>{result.skipped.map((s: any, i: number) => <li key={i}>{s.name}: <span className="muted">{s.reason}</span></li>)}</ul></>}
       </>}
     </Modal>

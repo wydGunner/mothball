@@ -1,14 +1,16 @@
 //! Function index for GSC / CSC scripts (Call of Duty modding: IW4X, Plutonium,
-//! BO3…). Finds top-level function definitions and #include / #using lines,
-//! kept per file and refreshed only when a file's content hash changes.
-//! Used for go-to-definition, the per-file function list and symbol search.
+//! BO3…) and Lua (WoW addons and other Lua projects). Finds function
+//! definitions (plus #include / #using lines in GSC), kept per file and
+//! refreshed only when a file's content hash changes. Used for
+//! go-to-definition, the per-file function list and symbol search.
+//! Also reads WoW addon .toc files.
 
 use crate::db::DbResult;
 use crate::json::Json;
 use crate::util::safe_join;
 use crate::{p, projects, Vault};
 
-pub const SCRIPT_EXTS: &[&str] = &["gsc", "csc", "gsh"];
+pub const SCRIPT_EXTS: &[&str] = &["gsc", "csc", "gsh", "lua"];
 const MAX_SCRIPT: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, PartialEq)]
@@ -72,7 +74,153 @@ fn is_ident(c: char) -> bool {
 
 const NOT_FUNCS: &[&str] = &["if", "while", "for", "foreach", "switch", "return", "wait", "thread", "else"];
 
-/// Top-level function definitions and include lines in a script.
+/// Definitions in a script, by file extension.
+pub fn parse_for(ext: &str, src: &str) -> Vec<Def> {
+    if ext.eq_ignore_ascii_case("lua") {
+        parse_lua(src)
+    } else {
+        parse(src)
+    }
+}
+
+fn strip_for(ext: &str, src: &str) -> String {
+    if ext.eq_ignore_ascii_case("lua") {
+        strip_lua(src)
+    } else {
+        strip(src)
+    }
+}
+
+/// Blanks out Lua comments and string contents, keeping newlines.
+fn strip_lua(src: &str) -> String {
+    let b: Vec<char> = src.chars().collect();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    let blank = |out: &mut String, c: char| out.push(if c == '\n' { '\n' } else { ' ' });
+    // `[[`, `[=[`, `[==[` … : returns the number of '=' when a long bracket opens at i
+    let long_open = |i: usize| -> Option<usize> {
+        if b.get(i) != Some(&'[') {
+            return None;
+        }
+        let mut j = i + 1;
+        while b.get(j) == Some(&'=') {
+            j += 1;
+        }
+        (b.get(j) == Some(&'[')).then_some(j - i - 1)
+    };
+    let skip_long = |out: &mut String, mut i: usize, eq: usize| -> usize {
+        let close: Vec<char> = std::iter::once(']').chain(std::iter::repeat('=').take(eq)).chain(std::iter::once(']')).collect();
+        while i < b.len() {
+            if b[i..].starts_with(&close) {
+                for _ in 0..close.len() {
+                    out.push(' ');
+                }
+                return i + close.len();
+            }
+            blank(out, b[i]);
+            i += 1;
+        }
+        i
+    };
+    while i < b.len() {
+        let c = b[i];
+        if c == '-' && b.get(i + 1) == Some(&'-') {
+            out.push_str("  ");
+            i += 2;
+            if let Some(eq) = long_open(i) {
+                for _ in 0..eq + 2 {
+                    out.push(' ');
+                }
+                i = skip_long(&mut out, i + eq + 2, eq);
+            } else {
+                while i < b.len() && b[i] != '\n' {
+                    out.push(' ');
+                    i += 1;
+                }
+            }
+        } else if let Some(eq) = long_open(i) {
+            for _ in 0..eq + 2 {
+                out.push(' ');
+            }
+            i = skip_long(&mut out, i + eq + 2, eq);
+        } else if c == '"' || c == '\'' {
+            out.push(c);
+            i += 1;
+            while i < b.len() && b[i] != c && b[i] != '\n' {
+                if b[i] == '\\' {
+                    out.push(' ');
+                    i += 1;
+                }
+                if i < b.len() {
+                    blank(&mut out, b[i]);
+                    i += 1;
+                }
+            }
+            if i < b.len() && b[i] == c {
+                out.push(c);
+                i += 1;
+            }
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Lua function definitions: `function A.b:c(…)`, `local function f(…)` and
+/// `name = function(…)` / `t.name = function(…)`. The indexed name is the last
+/// part (`c`), so `self:c()` and `A.b:c()` both find it; the signature keeps
+/// the full name.
+pub fn parse_lua(src: &str) -> Vec<Def> {
+    let s = strip_lua(src);
+    let mut out = Vec::new();
+    let is_name = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == ':';
+    for (n, line) in s.lines().enumerate() {
+        let t = line.trim_start();
+        let mut push = |full: &str, args: &str, local: bool| {
+            let full = full.trim();
+            let last = full.rsplit(['.', ':']).next().unwrap_or(full);
+            if last.is_empty() || !last.chars().next().unwrap().is_ascii_alphabetic() && !last.starts_with('_') {
+                return;
+            }
+            let args = args.split_whitespace().collect::<Vec<_>>().join(" ");
+            out.push(Def { name: last.to_string(), kind: "function", line: n as i64 + 1, signature: format!("{}function {full}({args})", if local { "local " } else { "" }) });
+        };
+        // function NAME(args)  /  local function NAME(args)
+        let (local, rest) = match t.strip_prefix("local function ") {
+            Some(r) => (true, Some(r)),
+            None => (false, t.strip_prefix("function ")),
+        };
+        if let Some(r) = rest {
+            let r = r.trim_start();
+            let name: String = r.chars().take_while(|c| is_name(*c)).collect();
+            let after = r[name.len()..].trim_start();
+            if !name.is_empty() {
+                if let Some(a) = after.strip_prefix('(') {
+                    push(&name, a.split(')').next().unwrap_or(""), local);
+                }
+            }
+            continue;
+        }
+        // NAME = function(args)   (also `local NAME = function`)
+        let t2 = t.strip_prefix("local ").unwrap_or(t);
+        let name: String = t2.chars().take_while(|c| is_name(*c)).collect();
+        if !name.is_empty() {
+            let after = t2[name.len()..].trim_start();
+            if let Some(r) = after.strip_prefix('=') {
+                if let Some(a) = r.trim_start().strip_prefix("function") {
+                    if let Some(a) = a.trim_start().strip_prefix('(') {
+                        push(&name, a.split(')').next().unwrap_or(""), t.starts_with("local "));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Top-level function definitions and include lines in a GSC script.
 pub fn parse(src: &str) -> Vec<Def> {
     let s = strip(src);
     let mut out = Vec::new();
@@ -157,7 +305,7 @@ pub fn refresh(v: &Vault, project_id: &str) -> DbResult<i64> {
     let root = projects::root_of(v, project_id)?;
     let rows = v.db.query(
         &format!(
-            "SELECT f.id, f.rel_path, f.sha256, f.size, s.sha256 AS done FROM files f LEFT JOIN symbol_files s ON s.file_id=f.id
+            "SELECT f.id, f.rel_path, f.ext, f.sha256, f.size, s.sha256 AS done FROM files f LEFT JOIN symbol_files s ON s.file_id=f.id
              WHERE f.project_id=? AND f.state='present' AND f.ext IN ({})",
             SCRIPT_EXTS.iter().map(|e| format!("'{e}'")).collect::<Vec<_>>().join(",")
         ),
@@ -170,7 +318,7 @@ pub fn refresh(v: &Vault, project_id: &str) -> DbResult<i64> {
         }
         let defs = if r.i("size") as u64 <= MAX_SCRIPT {
             match safe_join(&root, &r.s("rel_path")).and_then(|p| std::fs::read(p).map_err(|e| e.to_string())) {
-                Ok(b) => parse(&String::from_utf8_lossy(&b)),
+                Ok(b) => parse_for(&r.s("ext"), &String::from_utf8_lossy(&b)),
                 Err(_) => continue,
             }
         } else {
@@ -261,7 +409,7 @@ pub fn search(v: &Vault, project_id: Option<&str>, query: &str, limit: i64) -> D
     if let Some(pid) = project_id {
         refresh(v, pid)?;
     } else {
-        for r in v.db.query("SELECT DISTINCT project_id FROM files WHERE ext IN ('gsc','csc','gsh')", p![])? {
+        for r in v.db.query("SELECT DISTINCT project_id FROM files WHERE ext IN ('gsc','csc','gsh','lua')", p![])? {
             let _ = refresh(v, &r.s("project_id"));
         }
     }
@@ -282,7 +430,7 @@ pub fn search(v: &Vault, project_id: Option<&str>, query: &str, limit: i64) -> D
 pub fn references(v: &Vault, project_id: &str, name: &str, limit: usize) -> DbResult<Json> {
     let root = projects::root_of(v, project_id)?;
     let rows = v.db.query(
-        &format!("SELECT id, rel_path, size FROM files WHERE project_id=? AND state='present' AND ext IN ({}) ORDER BY rel_path", SCRIPT_EXTS.iter().map(|e| format!("'{e}'")).collect::<Vec<_>>().join(",")),
+        &format!("SELECT id, rel_path, ext, size FROM files WHERE project_id=? AND state='present' AND ext IN ({}) ORDER BY rel_path", SCRIPT_EXTS.iter().map(|e| format!("'{e}'")).collect::<Vec<_>>().join(",")),
         p![project_id],
     )?;
     let lname = name.to_lowercase();
@@ -300,7 +448,7 @@ pub fn references(v: &Vault, project_id: &str, name: &str, limit: usize) -> DbRe
         }
         let Ok(text) = safe_join(&root, &r.s("rel_path")).and_then(|p| std::fs::read(p).map_err(|e| e.to_string())) else { continue };
         let raw = String::from_utf8_lossy(&text).to_string();
-        let code = strip(&raw);
+        let code = strip_for(&r.s("ext"), &raw);
         for (n, (line, orig)) in code.lines().zip(raw.lines()).enumerate() {
             if defs.contains(&(r.s("id"), n as i64 + 1)) {
                 continue; // the definition itself
@@ -327,9 +475,170 @@ pub fn references(v: &Vault, project_id: &str, name: &str, limit: usize) -> DbRe
     Ok(Json::Arr(out))
 }
 
+/// A WoW addon .toc file: its `## Key: value` fields and the files it loads,
+/// each resolved against the project (missing ones flagged), plus the Lua/XML
+/// files in that addon folder that no .toc loads.
+pub fn toc_info(v: &Vault, file_id: &str) -> DbResult<Json> {
+    let f = v.db.one("SELECT * FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
+    let pid = f.s("project_id");
+    let root = projects::root_of(v, &pid)?;
+    let text = std::fs::read(safe_join(&root, &f.s("rel_path"))?).map_err(|e| format!("Cannot read the .toc file: {e}"))?;
+    let text = String::from_utf8_lossy(&text).trim_start_matches('\u{feff}').to_string();
+    let rel = f.s("rel_path");
+    let dir = rel.rsplit_once('/').map(|x| x.0.to_string()).unwrap_or_default();
+    let in_dir = |p: &str| if dir.is_empty() { p.to_string() } else { format!("{dir}/{p}") };
+    let mut fields = Json::obj();
+    let mut order: Vec<Json> = Vec::new();
+    let mut loaded: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let lookup = |path: &str| -> DbResult<Option<crate::db::Row>> {
+        v.db.one("SELECT id, rel_path FROM files WHERE project_id=? AND state='present' AND lower(rel_path)=lower(?)", p![pid.clone(), path])
+    };
+    for (n, line) in text.lines().enumerate() {
+        let t = line.trim();
+        if let Some(kv) = t.strip_prefix("##") {
+            if let Some((k, val)) = kv.split_once(':') {
+                fields.set(k.trim(), val.trim());
+            }
+            continue;
+        }
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        // load-order entry; may carry [AllowLoad...] style tokens or variables like [Family]
+        let entry = t.replace('\\', "/");
+        let has_var = entry.contains('[');
+        let path = in_dir(&entry);
+        let found = if has_var { None } else { lookup(&path)? };
+        if let Some(r) = &found {
+            loaded.insert(r.s("rel_path").to_lowercase());
+            // an XML file may load more files; count those as loaded too
+            if r.s("rel_path").to_lowercase().ends_with(".xml") {
+                for inc in xml_includes(&root, &r.s("rel_path")) {
+                    loaded.insert(inc.to_lowercase());
+                }
+            }
+        }
+        order.push(
+            Json::obj()
+                .with("line", n as i64 + 1)
+                .with("entry", entry.clone())
+                .with("fileId", found.as_ref().map(|r| Json::from(r.s("id"))).unwrap_or(Json::Null))
+                .with("status", if has_var { "variable" } else if found.is_some() { "ok" } else { "missing" }),
+        );
+    }
+    // Lua/XML files in this addon folder that nothing loads
+    let like = if dir.is_empty() { "%".to_string() } else { format!("{dir}/%") };
+    let mut unloaded = Vec::new();
+    for r in v.db.query(
+        "SELECT id, rel_path FROM files WHERE project_id=? AND state='present' AND ext IN ('lua','xml') AND lower(rel_path) LIKE lower(?) ORDER BY rel_path",
+        p![pid.clone(), like],
+    )? {
+        let rp = r.s("rel_path");
+        if !loaded.contains(&rp.to_lowercase()) {
+            unloaded.push(Json::obj().with("fileId", r.s("id")).with("path", rp));
+        }
+    }
+    // Interface 110205 -> 11.2.5
+    let iface = fields.str_of("Interface").unwrap_or_default();
+    let versions: Vec<Json> = iface
+        .split(',')
+        .filter_map(|x| x.trim().parse::<u32>().ok())
+        .map(|n| Json::from(format!("{}.{}.{}", n / 10000, (n / 100) % 100, n % 100)))
+        .collect();
+    Ok(Json::obj().with("fields", fields).with("gameVersions", Json::Arr(versions)).with("files", Json::Arr(order)).with("notLoaded", Json::Arr(unloaded)))
+}
+
+/// Files an addon XML file pulls in with <Script file="…"/> or <Include file="…"/>,
+/// as project-relative paths.
+fn xml_includes(root: &std::path::Path, rel: &str) -> Vec<String> {
+    let Ok(text) = safe_join(root, rel).and_then(|p| std::fs::read_to_string(p).map_err(|e| e.to_string())) else { return vec![] };
+    let dir = rel.rsplit_once('/').map(|x| x.0.to_string()).unwrap_or_default();
+    let mut out = Vec::new();
+    let low = text.to_lowercase();
+    for tag in ["<script", "<include"] {
+        let mut from = 0;
+        while let Some(pos) = low[from..].find(tag) {
+            let at = from + pos;
+            let end = low[at..].find('>').map(|e| at + e).unwrap_or(low.len());
+            let seg = &text[at..end];
+            if let Some(fp) = seg.to_lowercase().find("file=") {
+                let rest = &seg[fp + 5..];
+                let q = rest.chars().next().unwrap_or('"');
+                if q == '"' || q == '\'' {
+                    if let Some(val) = rest[1..].split(q).next() {
+                        let v = val.replace('\\', "/");
+                        out.push(if dir.is_empty() { v } else { format!("{dir}/{v}") });
+                    }
+                }
+            }
+            from = end.max(at + 1);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_lua_functions() {
+        let src = r#"local addonName, ns = ...
+local WL = LibStub("AceAddon-3.0"):NewAddon("WhatsLeft")
+-- function Commented(x) end
+--[[ function Block(y)
+end ]]
+function WL:OnInitialize()
+  self.db = {}
+end
+function WL.Util.Format(n, unit)
+  return ("%d %s"):format(n, unit) -- "function Fake()"
+end
+local function helper(a)
+end
+ns.Count = function(list) return #list end
+local s = [[ function InString() end ]]
+"#;
+        let d = parse_lua(src);
+        let f: Vec<(&str, i64, &str)> = d.iter().map(|x| (x.name.as_str(), x.line, x.signature.as_str())).collect();
+        assert_eq!(
+            f,
+            vec![
+                ("OnInitialize", 6, "function WL:OnInitialize()"),
+                ("Format", 9, "function WL.Util.Format(n, unit)"),
+                ("helper", 12, "local function helper(a)"),
+                ("Count", 14, "function ns.Count(list)"),
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_wow_toc_and_finds_lua_definitions() {
+        let (t, v) = crate::testutil::vault();
+        let d = t.path().join("WhatsLeft");
+        std::fs::create_dir_all(d.join("Modules")).unwrap();
+        std::fs::write(d.join("WhatsLeft.toc"), "## Interface: 110205, 50500\n## Title: What's Left?\n## Version: 2.1.0\n## SavedVariables: WhatsLeftDB\n\nCore.lua\nModules\\Modules.xml\nGone.lua\nLocale_[TextLocale].lua\n").unwrap();
+        std::fs::write(d.join("Core.lua"), "function WL:OnEnable()\nend\n").unwrap();
+        std::fs::write(d.join("Modules/Modules.xml"), "<Ui><Script file=\"Farm.lua\"/></Ui>").unwrap();
+        std::fs::write(d.join("Modules/Farm.lua"), "local x = 1\nWL:OnEnable()\n").unwrap();
+        std::fs::write(d.join("Unused.lua"), "").unwrap();
+        let pid = crate::projects::create(&v, crate::projects::NewProject { name: "WL".into(), description: "".into(), category: "addon".into(), status: "".into(), link_path: Some(d.clone()), module: Json::obj() }).unwrap().str_of("id").unwrap();
+        crate::files::scan(&v, &pid).unwrap();
+        let toc = v.db.one("SELECT id FROM files WHERE name='WhatsLeft.toc'", p![]).unwrap().unwrap().s("id");
+        let i = toc_info(&v, &toc).unwrap();
+        assert_eq!(i.get("fields").unwrap().str_of("Title").unwrap(), "What's Left?");
+        assert_eq!(i.get("gameVersions").unwrap().as_arr().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect::<Vec<_>>(), vec!["11.2.5", "5.5.0"]);
+        let st: Vec<String> = i.get("files").unwrap().as_arr().unwrap().iter().map(|x| format!("{}={}", x.str_of("entry").unwrap(), x.str_of("status").unwrap())).collect();
+        assert_eq!(st, vec!["Core.lua=ok", "Modules/Modules.xml=ok", "Gone.lua=missing", "Locale_[TextLocale].lua=variable"]);
+        let nl: Vec<String> = i.get("notLoaded").unwrap().as_arr().unwrap().iter().map(|x| x.str_of("path").unwrap()).collect();
+        assert_eq!(nl, vec!["Unused.lua"], "Farm.lua is loaded through the XML");
+        // go to definition and references work for Lua
+        let defs = find(&v, &pid, "OnEnable", "").unwrap();
+        assert_eq!(defs.as_arr().unwrap()[0].str_of("path").unwrap(), "Core.lua");
+        let refs = references(&v, &pid, "OnEnable", 10).unwrap();
+        assert_eq!(refs.as_arr().unwrap().len(), 1);
+        assert_eq!(refs.as_arr().unwrap()[0].str_of("path").unwrap(), "Modules/Farm.lua");
+    }
     #[test]
     fn parses_gsc_functions_and_includes() {
         let src = r#"#include maps\mp\_utility;
