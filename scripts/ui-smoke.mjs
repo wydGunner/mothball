@@ -184,10 +184,14 @@ await step('Detect external modification', async () => {
 await step('Compare file versions (no Git needed)', async () => {
   await page.getByRole('button', { name: /^Backups & versions/ }).click();
   await page.locator('.verrow').nth(1).getByRole('button', { name: /vs now/ }).click();
-  await page.locator('.modal .dl.add, .modal .half.add').first().waitFor();
+  // Monaco's diff view when monaco-editor is installed (CI), the built-in one otherwise
+  const added = '.modal .dl.add, .modal .half.add, .modal .monaco-diff-editor .line-insert';
+  await page.locator(added).first().waitFor();
   await page.locator('.modal').getByText('// tweak').first().waitFor();
+  const monaco = (await page.locator('.modal .monaco-diff-editor').count()) > 0;
   await page.locator('.modal').getByRole('button', { name: /Unified/ }).click();
-  await page.locator('.modal .dl.add .tx').filter({ hasText: '// tweak' }).waitFor();
+  if (monaco) { await page.locator('.modal .monaco-diff-editor .line-insert').first().waitFor(); await page.locator('.modal .monaco-diff-editor').getByText('// tweak').first().waitFor(); }
+  else await page.locator('.modal .dl.add .tx').filter({ hasText: '// tweak' }).waitFor();
   await page.locator('.modal').getByRole('button', { name: /Side by side/ }).click();
   if (shots) await page.screenshot({ path: join(shots, 'x-diff.png') });
   await page.keyboard.press('Escape');

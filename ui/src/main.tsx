@@ -215,6 +215,13 @@ function App() {
   );
 }
 
+// Monaco cancels in-flight work (hover, diff computation) when an editor closes and
+// leaves the rejection unhandled. Its CancellationError is expected; ignore only that.
+window.addEventListener('unhandledrejection', (e) => {
+  const r = e.reason;
+  if (r && r.name === 'Canceled' && r.message === 'Canceled') e.preventDefault();
+});
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ToastProvider><ConfirmProvider><PromptProvider><ContextMenuProvider><FileDialogsProvider><App /><TooltipLayer /></FileDialogsProvider></ContextMenuProvider></PromptProvider></ConfirmProvider></ToastProvider>
