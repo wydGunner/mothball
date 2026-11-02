@@ -5,7 +5,6 @@ import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextM
 import { ago, bytes, CATEGORY_LABELS, cx, hiddenTypes, typeChoices } from '../format';
 import type { Nav } from '../main';
 import { Welcome } from './Welcome';
-import { PanelBoard } from '../components/Panels';
 
 type Sort = 'custom' | 'recent' | 'name' | 'updated' | 'created' | 'size' | 'progress';
 const SORTS: [Sort, string][] = [['custom', 'My order (drag cards)'], ['recent', 'Recently opened'], ['updated', 'Latest activity'], ['name', 'Name'], ['created', 'Newest'], ['size', 'Storage used'], ['progress', 'Progress']];
@@ -38,7 +37,9 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   const colors = Object.fromEntries((statuses.data || []).map((s) => [s.name, s.color]));
   const allTags = useMemo(() => [...new Set(nav.projects.flatMap((p) => p.tags))].sort(), [nav.projects]);
   const dashStamp = nav.projects.map((p) => `${p.id}:${p.lastScanAt}:${p.fileCount}`).join('|');
-  const dash = useLoad(() => call<DashData>('projects.dashboard', { limit: 6 }), [dashStamp]);
+  const dash = useLoad(() => call<DashData>('projects.dashboard', { limit: 15 }), [dashStamp]);
+  const [drawer, setDrawer] = useState<null | 'attention' | 'recent'>(null);
+  const attCount = dash.data?.attention.length || 0;
 
   const list = useMemo(() => {
     const t = text.toLowerCase();
@@ -149,20 +150,8 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
 
   return (
     <div className="page">
-      <div className="row dash-head"><h1>Dashboard</h1>
-        <div className="right btngroup">
-          <button className="btn newbtn" onClick={onNew}><LuPlus /> New project</button>
-          <button className="btn newbtn icon" title="More ways to add projects" aria-label="More ways to add projects" onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu({ clientX: r.right - 220, clientY: r.bottom + 4, preventDefault() {} } as any, [
-            { label: 'Import from Print Vault…', icon: <LuDownload />, onClick: () => setImportPV(true) },
-          ]); }}><LuChevronDown /></button>
-        </div>
-      </div>
-      <PanelBoard storageKey="dashboard" defaults={{ top: ['attention', 'recent'], bottom: ['projects'] }} zoneClass={{ top: 'dash-top', bottom: 'dash-bottom' }} panels={[
-        { id: 'attention', icon: <LuTriangleAlert />, title: 'Needs attention', summary: dash.data ? (dash.data.attention.length ? dash.data.attention.map((a) => a.name).join(', ') : 'All clear') : undefined, meta: dash.data?.attention.length ? dash.data.attention.length : undefined, body: <AttentionList data={dash.data} nav={nav} />,
-          actions: (dash.data?.attention.length || 0) > 1 ? <button className="btn ghost sm" onClick={() => setAttention(true)}>Show only these</button> : undefined },
-        { id: 'recent', icon: <LuHistory />, title: 'Recently changed', summary: dash.data?.recent[0] ? <>{dash.data.recent[0].name} · {dash.data.recent[0].projectName} · {ago(dash.data.recent[0].at)}</> : undefined, body: <RecentList data={dash.data} nav={nav} /> },
-        { id: 'projects', icon: <LuLayoutGrid />, title: 'Projects', meta: list.length !== nav.projects.length ? `${list.length} of ${nav.projects.length}` : nav.projects.length, body: <>
-      <div className="toolbar">
+      <div className="toolbar dash-bar">
+        <h1 className="dash-title">Projects{nav.projects.length > 0 && <span className="dash-count">{list.length !== nav.projects.length ? `${list.length} of ${nav.projects.length}` : nav.projects.length}</span>}</h1>
         <div className="searchinput"><LuSearch /><input className="input" placeholder="Search projects…" value={text} onChange={(e) => setText(e.target.value)} aria-label="Search projects" /></div>
         <Dropdown label="Filter by" icon={<LuFilter />} badge={activeFilters.length || undefined} sections={[
           { title: 'Show', items: [
@@ -179,7 +168,18 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
         {activeFilters.map((f) => <span key={f.key} className="fchip">{f.label}<button aria-label={`Remove filter ${f.label}`} onClick={f.clear}><LuX size={12} /></button></span>)}
         {activeFilters.length > 1 && <button className="btn ghost sm" onClick={() => activeFilters.forEach((f) => f.clear())}>Clear all</button>}
         <div className="seg right"><button className={cx(mode === 'grid' && 'on')} onClick={() => setMode2('grid')} title="Grid"><LuLayoutGrid /></button><button className={cx(mode === 'list' && 'on')} onClick={() => setMode2('list')} title="List"><LuList /></button></div>
+        <button className={cx('btn icon dash-pop', drawer === 'attention' && 'on', attCount > 0 && 'alert')} title={attCount ? `Needs attention (${attCount})` : 'Needs attention: all clear'} aria-label="Needs attention" onClick={() => setDrawer(drawer === 'attention' ? null : 'attention')}>
+          <LuTriangleAlert />{attCount > 0 && <span className="dash-badge">{attCount}</span>}
+        </button>
+        <button className={cx('btn icon dash-pop', drawer === 'recent' && 'on')} title="Recently changed files" aria-label="Recently changed" onClick={() => setDrawer(drawer === 'recent' ? null : 'recent')}><LuHistory /></button>
+        <div className="btngroup">
+          <button className="btn newbtn" onClick={onNew}><LuPlus /> New project</button>
+          <button className="btn newbtn icon" title="More ways to add projects" aria-label="More ways to add projects" onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu({ clientX: r.right - 220, clientY: r.bottom + 4, preventDefault() {} } as any, [
+            { label: 'Import from Print Vault…', icon: <LuDownload />, onClick: () => setImportPV(true) },
+          ]); }}><LuChevronDown /></button>
+        </div>
       </div>
+      {drawer && <DashDrawer which={drawer} data={dash.data} nav={nav} onClose={() => setDrawer(null)} onShowOnly={() => { setAttention(true); setDrawer(null); }} />}
 
       {sections.map((sec) => {
         const isCollapsed = !!sec.label && collapsed.includes(sec.key || '\u0000');
@@ -230,8 +230,6 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
         );
       })}
       {!list.length && <Empty title="No projects match these filters" />}
-        </> },
-      ]} />
       {importPV && <ImportPrintVault onClose={() => setImportPV(false)} onDone={nav.refreshProjects} />}
       {pictureFor && <PictureDialog p={pictureFor} onClose={() => setPictureFor(null)} onSaved={() => { setPictureFor(null); nav.refreshProjects(); }} />}
     </div>
@@ -383,6 +381,31 @@ interface DashData {
 }
 const CHANGE_WORD: Record<string, string> = { added: 'added', modified: 'changed', moved: 'moved', restored: 'back', 'restored-version': 'restored', renamed: 'renamed', imported: 'imported' };
 
+/** Slide-out panel on the right for Needs attention / Recently changed. */
+function DashDrawer({ which, data, nav, onClose, onShowOnly }: { which: 'attention' | 'recent'; data?: DashData; nav: Nav; onClose: () => void; onShowOnly: () => void }) {
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [onClose]);
+  return (
+    <>
+      <div className="drawer-scrim" onClick={onClose} />
+      <aside className="drawer" role="dialog" aria-label={which === 'attention' ? 'Needs attention' : 'Recently changed'}>
+        <div className="drawer-h">
+          {which === 'attention' ? <LuTriangleAlert /> : <LuHistory />}
+          <h2>{which === 'attention' ? 'Needs attention' : 'Recently changed'}</h2>
+          {which === 'attention' && (data?.attention.length || 0) > 1 && <button className="btn ghost sm" onClick={onShowOnly}>Show only these projects</button>}
+          <button className="btn ghost sm icon" onClick={onClose} title="Close (Esc)" aria-label="Close"><LuX /></button>
+        </div>
+        <div className="drawer-b" onClick={(e) => { if ((e.target as HTMLElement).closest('.ds-row')) setTimeout(onClose, 0); }}>
+          {which === 'attention' ? <AttentionList data={data} nav={nav} /> : <RecentList data={data} nav={nav} />}
+        </div>
+      </aside>
+    </>
+  );
+}
+
 /** Projects with missing files, offline folders, matches to confirm or stale notes. */
 function AttentionList({ data, nav }: { data?: DashData; nav: Nav }) {
   if (!data) return null;
@@ -390,7 +413,7 @@ function AttentionList({ data, nav }: { data?: DashData; nav: Nav }) {
     const k = a.reasons[0]?.kind;
     nav.go({ view: 'project', id: a.projectId, tab: k === 'staleDocs' || k === 'missing' ? 'files' : 'overview' });
   };
-  return data.attention.length ? <>{data.attention.slice(0, 8).map((a) => (
+  return data.attention.length ? <>{data.attention.map((a) => (
     <button key={a.projectId} className="ds-row" onClick={() => fix(a)}>
       <ProjectIcon category={a.category} icon={a.icon} color={a.color} size={22} />
       <span className="ds-name">{a.name}</span>

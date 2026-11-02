@@ -948,7 +948,10 @@ await step('Background watching: outside changes appear without Rescan', async (
   writeFileSync(join(tmp, 'WhatsLeft', 'Options.lua'), 'local x = 1\n');
   await page.locator('.tlitem').filter({ hasText: 'File changes detected: 1 added' }).waitFor({ timeout: 60000 });
   await page.getByRole('button', { name: 'Dashboard' }).click();
-  await page.locator('.ds-row').filter({ hasText: 'Options.lua' }).waitFor({ timeout: 15000 });
+  await page.getByRole('button', { name: 'Recently changed' }).click();
+  await page.locator('.drawer .ds-row').filter({ hasText: 'Options.lua' }).waitFor({ timeout: 15000 });
+  await page.keyboard.press('Escape');
+  await page.locator('.drawer').waitFor({ state: 'detached' });
 });
 
 await step('Dashboard: remove a managed project and delete its folder', async () => {
@@ -970,29 +973,35 @@ await step('Dashboard: remove a managed project and delete its folder', async ()
   await toastGone();
 });
 
-await step('Panels: drag to rearrange, collapse, remembered, reset', async () => {
+await step('Dashboard: one top bar, attention and recent in drawers; overview panels rearrange', async () => {
   await page.getByRole('button', { name: 'Dashboard' }).click();
-  const order = () => page.locator('.dash-top > .panel, .dash-bottom > .panel').evaluateAll((els) => els.map((e) => e.getAttribute('data-panel')));
-  if ((await order()).join() !== 'attention,recent,projects') throw new Error('default order: ' + await order());
-  // drag "Recently changed" above "Needs attention"
-  await page.locator('[data-panel=recent] > .panel-h').dragTo(page.locator('[data-panel=attention]'), { targetPosition: { x: 40, y: 4 } });
-  await page.waitForFunction(() => document.querySelector('.dash-top > .panel')?.getAttribute('data-panel') === 'recent');
-  // collapse it; survives a reload
-  await page.locator('[data-panel=recent] .panel-t').click();
-  await page.locator('[data-panel=recent] .panel-b').waitFor({ state: 'detached' });
+  const bar = page.locator('.dash-bar');
+  await bar.getByPlaceholder('Search projects…').waitFor();
+  await bar.getByRole('button', { name: 'New project' }).waitFor();
+  // attention badge -> drawer
+  const att = bar.getByRole('button', { name: 'Needs attention' });
+  const badge = await att.locator('.dash-badge').textContent().catch(() => '');
+  await att.click();
+  await page.locator('.drawer').filter({ hasText: 'Needs attention' }).waitFor();
+  if (badge && !(await page.locator('.drawer .ds-row').count())) throw new Error('badge but empty drawer');
+  await page.waitForTimeout(400);
+  if (shots) await page.screenshot({ path: join(shots, 'x-dash-drawer.png') });
+  await page.locator('.drawer-scrim').click({ position: { x: 20, y: 300 } });
+  await page.locator('.drawer').waitFor({ state: 'detached' });
+  // overview panels: drag Activity to the top of the side column, collapse, remembered, reset
+  await page.locator('.sidebar .navitem').filter({ hasText: 'OMEN v2' }).first().click();
+  const rail = () => page.locator('.ov2-rail > .panel').evaluateAll((els) => els.map((e) => e.getAttribute('data-panel')));
+  await page.locator('[data-panel=activity] > .panel-h').dragTo(page.locator('[data-panel=time]'), { targetPosition: { x: 40, y: 4 } });
+  await page.waitForFunction(() => document.querySelector('.ov2-rail > .panel')?.getAttribute('data-panel') === 'activity');
+  await page.locator('[data-panel=activity] .panel-t').click();
   await page.evaluate(() => location.reload());
-  await page.locator('[data-panel=recent].collapsed').waitFor();
-  if ((await order()).join() !== 'recent,attention,projects') throw new Error('not remembered: ' + await order());
-  if (shots) await page.screenshot({ path: join(shots, 'x-panels.png') });
-  // drop into the empty space at the bottom of the page: goes below Projects
-  const vh = page.viewportSize().height;
-  await page.locator('[data-panel=attention] > .panel-h').dragTo(page.locator('.content'), { targetPosition: { x: 600, y: vh - 80 } });
-  await page.waitForFunction(() => [...document.querySelectorAll('.dash-top > .panel, .dash-bottom > .panel')].map((e) => e.getAttribute('data-panel')).join() === 'recent,projects,attention');
-  // reset from the header's menu
-  await page.locator('[data-panel=recent] > .panel-h').click({ button: 'right' });
+  await page.locator('.sidebar .navitem').filter({ hasText: 'OMEN v2' }).first().click();
+  await page.locator('[data-panel=activity].collapsed').waitFor();
+  if ((await rail())[0] !== 'activity') throw new Error('layout not remembered: ' + await rail());
+  await page.locator('[data-panel=activity] > .panel-h').click({ button: 'right' });
   await page.locator('.ctx button').filter({ hasText: 'Reset layout' }).click();
-  await page.waitForFunction(() => document.querySelector('.dash-top > .panel')?.getAttribute('data-panel') === 'attention');
-  await page.locator('[data-panel=recent] .panel-b').waitFor();
+  await page.waitForFunction(() => document.querySelector('.ov2-rail > .panel')?.getAttribute('data-panel') === 'time');
+  await page.getByRole('button', { name: 'Dashboard' }).click();
   // project cards: drag one onto another -> "My order"
   const names = () => page.locator('.pgroup').last().locator('.pcard .name').allTextContents();
   const before = await names();
@@ -1032,7 +1041,7 @@ await step('Settings: hide project types from the pickers', async () => {
 
 await step('Dashboard overview screenshot', async () => {
   await page.getByRole('button', { name: 'Dashboard' }).click();
-  await page.locator('.dash-top').waitFor();
+  await page.locator('.dash-bar').waitFor();
   await page.evaluate(() => document.querySelector('.content')?.scrollTo(0, 0));
   await page.waitForTimeout(800);
   if (shots) await page.screenshot({ path: join(shots, 'x-dashboard.png') });

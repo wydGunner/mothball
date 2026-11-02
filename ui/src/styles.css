@@ -733,3 +733,22 @@ input[type=checkbox] { accent-color: var(--accent); }
 .panel.collapsed .panel-h { opacity: 1; }
 .panel-h:hover { background: color-mix(in srgb, var(--fg0) 3%, transparent); border-radius: 4px; }
 .ov2-rail .panel.collapsed .panel-h { padding-top: 2px; }
+
+/* dashboard top bar + drawers */
+.dash-bar { position: sticky; top: 0; z-index: 5; background: var(--bg0); margin: -20px -24px 14px; padding: 16px 24px 12px; border-bottom: 1px solid var(--line); }
+.dash-title { font-size: 22px; margin: 0 8px 0 0; display: inline-flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.dash-count { font-family: var(--sans, inherit); font-size: 13px; font-weight: 400; color: var(--fg2); }
+.dash-bar .seg.right + .dash-pop { margin-left: 4px; }
+.dash-pop { position: relative; }
+.dash-pop.on { background: var(--bg4); border-color: var(--line2); }
+.dash-pop.alert svg { color: var(--accent); }
+.dash-badge { position: absolute; top: -6px; right: -6px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; background: var(--accent); color: var(--accent-fg); font-size: 10.5px; font-weight: 700; display: grid; place-items: center; line-height: 1; }
+.drawer-scrim { position: fixed; inset: 44px 0 0 0; background: rgba(0,0,0,.35); z-index: 40; }
+.drawer { position: fixed; top: 44px; right: 0; bottom: 0; width: min(440px, 92vw); background: var(--bg1); border-left: 1px solid var(--line2); z-index: 41; display: flex; flex-direction: column; box-shadow: -12px 0 32px rgba(0,0,0,.45); }
+@media (prefers-reduced-motion: no-preference) { .drawer { animation: pvslide .16s ease-out; } }
+@keyframes pvslide { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.drawer-h { display: flex; align-items: center; gap: 8px; padding: 14px 14px 10px 18px; border-bottom: 1px solid var(--line); }
+.drawer-h > svg { color: var(--accent); flex: none; }
+.drawer-h h2 { flex: 1; font-size: 15px; margin: 0; }
+.drawer-b { flex: 1; overflow: auto; padding: 8px 10px; }
+.drawer-b .ds-name { max-width: 55%; }
