@@ -196,6 +196,13 @@ fn row_json(v: &Vault, r: &Row) -> DbResult<Json> {
         p![id.clone()],
     )?;
     let reviews = v.db.scalar_i64("SELECT count(*) FROM reconcile_reviews WHERE project_id=?", p![id.clone()])?;
+    // documented files whose content changed after the notes were written
+    let stale_docs = v.db.scalar_i64(
+        "SELECT count(*) FROM file_docs d JOIN files f ON f.id=d.file_id
+         WHERE f.project_id=? AND f.state='present' AND d.doc_sha256 IS NOT NULL AND d.doc_sha256 != COALESCE(f.sha256,'')
+           AND (d.purpose!='' OR d.notes_md!='' OR d.warnings!='')",
+        p![id.clone()],
+    )?;
     let latest = v.db.one(
         "SELECT summary, at FROM timeline WHERE project_id=? ORDER BY at DESC LIMIT 1",
         p![id.clone()],
@@ -236,6 +243,7 @@ fn row_json(v: &Vault, r: &Row) -> DbResult<Json> {
         .with("missingFiles", st.i("missing"))
         .with("changedFiles", st.i("changed"))
         .with("pendingReviews", reviews)
+        .with("staleDocs", stale_docs)
         .with("openTasks", open_tasks)
         .with("latestActivity", latest.as_ref().map(|l| l.s("summary")))
         .with("latestActivityAt", latest.as_ref().map(|l| l.i("at")))
@@ -573,6 +581,60 @@ pub fn remove(v: &Vault, id: &str, delete_managed_files: bool) -> DbResult<Json>
     Ok(Json::obj().with("removed", true).with("filesDeleted", deleted))
 }
 
+/// What the dashboard shows above the project grid: projects that need
+/// attention (with the reasons) and the latest file changes across projects.
+pub fn dashboard(v: &Vault, limit: i64) -> DbResult<Json> {
+    let mut attention = Vec::new();
+    for r in v.db.query("SELECT * FROM projects ORDER BY lower(name)", p![])? {
+        let j = row_json(v, &r)?;
+        let mut reasons = Vec::new();
+        if !j.get("rootAvailable").and_then(|x| x.as_bool()).unwrap_or(true) {
+            reasons.push(Json::obj().with("kind", "offline").with("text", "Folder not reachable"));
+        }
+        let n = |k: &str| j.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
+        if n("missingFiles") > 0 {
+            reasons.push(Json::obj().with("kind", "missing").with("count", n("missingFiles")).with("text", format!("{} missing file{}", n("missingFiles"), if n("missingFiles") == 1 { "" } else { "s" })));
+        }
+        if n("pendingReviews") > 0 {
+            reasons.push(Json::obj().with("kind", "reviews").with("count", n("pendingReviews")).with("text", format!("{} file match{} to confirm", n("pendingReviews"), if n("pendingReviews") == 1 { "" } else { "es" })));
+        }
+        if n("staleDocs") > 0 {
+            reasons.push(Json::obj().with("kind", "staleDocs").with("count", n("staleDocs")).with("text", format!("{} file note{} may be out of date", n("staleDocs"), if n("staleDocs") == 1 { "" } else { "s" })));
+        }
+        if !reasons.is_empty() {
+            attention.push(Json::obj().with("projectId", r.s("id")).with("name", r.s("name")).with("category", r.s("category")).with("icon", r.s("icon")).with("color", r.s("color")).with("reasons", Json::Arr(reasons)));
+        }
+    }
+    // latest change per file (first indexing isn't a change)
+    let recent = v.db.query(
+        "SELECT e.file_id, e.kind, MAX(e.at) AS at, f.rel_path, f.name, f.ext, f.state, p.id AS project_id, p.name AS project_name
+         FROM file_events e JOIN files f ON f.id=e.file_id JOIN projects p ON p.id=e.project_id
+         WHERE e.kind IN ('added','modified','moved','restored','restored-version','renamed','imported')
+         GROUP BY e.file_id ORDER BY at DESC LIMIT ?",
+        p![limit.clamp(1, 50)],
+    )?;
+    Ok(Json::obj().with("attention", Json::Arr(attention)).with(
+        "recent",
+        Json::Arr(
+            recent
+                .iter()
+                .map(|r| {
+                    Json::obj()
+                        .with("fileId", r.s("file_id"))
+                        .with("path", r.s("rel_path"))
+                        .with("name", r.s("name"))
+                        .with("ext", r.s("ext"))
+                        .with("present", r.s("state") == "present")
+                        .with("change", r.s("kind"))
+                        .with("at", r.i("at"))
+                        .with("projectId", r.s("project_id"))
+                        .with("projectName", r.s("project_name"))
+                })
+                .collect(),
+        ),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -629,6 +691,32 @@ mod tests {
         let l = create(&v, NewProject { name: "L".into(), description: "".into(), category: "game".into(), status: "".into(), link_path: Some(d.clone()), module: Json::obj() }).unwrap();
         remove(&v, &l.str_of("id").unwrap(), true).unwrap();
         assert!(d.exists());
+    }
+
+    #[test]
+    fn dashboard_lists_attention_and_recent_changes() {
+        let (t, v) = vault();
+        let d = t.path().join("p");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("a.gsc"), "1").unwrap();
+        std::fs::write(d.join("b.gsc"), "1").unwrap();
+        let id = create(&v, NewProject { name: "P".into(), description: "".into(), category: "game".into(), status: "".into(), link_path: Some(d.clone()), module: Json::obj() }).unwrap().str_of("id").unwrap();
+        crate::files::scan(&v, &id).unwrap();
+        let db = dashboard(&v, 10).unwrap();
+        assert!(db.get("attention").unwrap().as_arr().unwrap().is_empty());
+        assert!(db.get("recent").unwrap().as_arr().unwrap().is_empty(), "first indexing isn't a change");
+        let a = v.db.one("SELECT id FROM files WHERE name='a.gsc'", p![]).unwrap().unwrap().s("id");
+        crate::files::docs_save(&v, &a, &Json::obj().with("purpose", "Entry point")).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::fs::write(d.join("a.gsc"), "22").unwrap();
+        std::fs::remove_file(d.join("b.gsc")).unwrap();
+        crate::files::scan(&v, &id).unwrap();
+        let db = dashboard(&v, 10).unwrap();
+        let reasons: Vec<String> = db.get("attention").unwrap().as_arr().unwrap()[0].get("reasons").unwrap().as_arr().unwrap().iter().map(|r| r.str_of("kind").unwrap()).collect();
+        assert_eq!(reasons, vec!["missing", "staleDocs"]);
+        let recent = db.get("recent").unwrap().as_arr().unwrap();
+        assert_eq!(recent[0].str_of("path").unwrap(), "a.gsc");
+        assert_eq!(recent[0].str_of("change").unwrap(), "modified");
     }
 
     #[test]

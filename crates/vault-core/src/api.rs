@@ -101,6 +101,7 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "files.duplicates" => files::duplicates(v, &s(a, "projectId")?),
         "files.groups" => files::groups(v, &s(a, "projectId")?),
         "profiles.groups" => Ok(profiles::groups_json(&s(a, "category")?)),
+        "projects.dashboard" => projects::dashboard(v, a.get("limit").and_then(|x| x.as_i64()).unwrap_or(8)),
         "deploy.get" => deploy::get(v, &s(a, "projectId")?),
         "deploy.set" => deploy::set(v, &s(a, "projectId")?, a.get("patch").unwrap_or(&Json::obj())),
         "deploy.preview" => deploy::preview(v, &s(a, "projectId")?),

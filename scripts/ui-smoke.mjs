@@ -524,7 +524,8 @@ await step('Global search: right-click menu and copy paths', async () => {
 
 await step('Import Print Vault', async () => {
     await page.getByRole('button', { name: 'Dashboard' }).click();
-    await page.getByRole('button', { name: /Import Print Vault/ }).click();
+    await page.getByRole('button', { name: 'More ways to add projects' }).click();
+    await page.locator('.ctx button').filter({ hasText: 'Import from Print Vault' }).click();
     await page.getByPlaceholder('D:\\PrintVault\\3D Prints Vault').fill(pvDir);
     await page.locator('.modal').getByRole('button', { name: 'Import' }).click();
     await page.getByText(/project\(s\) imported/).waitFor({ timeout: 30000 });
@@ -788,8 +789,8 @@ await step('Tooltips', async () => {
 await step('Dashboard: change a project picture', async () => {
   await page.getByRole('button', { name: 'Dashboard' }).click();
   const card = page.locator('.pcard').filter({ hasText: 'Cat - Green And Yellow' });
-  await card.locator('.pc-face img').waitFor();
-  const before = await card.locator('.pc-face img').getAttribute('src');
+  await card.locator('.pc-face .pc-img').waitFor();
+  const before = await card.locator('.pc-face .pc-img').getAttribute('src');
   await card.hover();
   await card.getByRole('button', { name: 'Picture' }).click();
   const m = page.locator('.modal').filter({ hasText: 'Picture for' });
@@ -800,7 +801,7 @@ await step('Dashboard: change a project picture', async () => {
   if (shots) await page.screenshot({ path: join(shots, 'x-picture-dialog.png') });
   await m.getByRole('button', { name: 'Save' }).click();
   await m.waitFor({ state: 'detached' });
-  await page.waitForFunction((b) => { const i = [...document.querySelectorAll('.pcard')].find((c) => c.textContent.includes('Cat - Green And Yellow'))?.querySelector('.pc-face img'); return i && i.getAttribute('src') !== b && i.style.objectFit === 'contain'; }, before);
+  await page.waitForFunction((b) => { const i = [...document.querySelectorAll('.pcard')].find((c) => c.textContent.includes('Cat - Green And Yellow'))?.querySelector('.pc-face .pc-img'); return i && i.getAttribute('src') !== b && i.style.objectFit === 'contain'; }, before);
   // and back to no picture: the card lists recent files
   await card.hover();
   await card.getByRole('button', { name: 'Picture' }).click();
@@ -901,6 +902,14 @@ await step('Dashboard: remove a managed project and delete its folder', async ()
   if (!pr.rootPath) throw new Error('no rootPath from projects.create');
   if ((await import('node:fs')).existsSync(pr.rootPath)) throw new Error('managed folder still on disk');
   await toastGone();
+});
+
+await step('Dashboard overview screenshot', async () => {
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  await page.locator('.dash-sum').waitFor();
+  await page.evaluate(() => document.querySelector('.content')?.scrollTo(0, 0));
+  await page.waitForTimeout(800);
+  if (shots) await page.screenshot({ path: join(shots, 'x-dashboard.png') });
 });
 
 await browser.close();

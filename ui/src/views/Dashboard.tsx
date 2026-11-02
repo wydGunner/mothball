@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuDownload, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine, LuImage, LuFileCode, LuUpload } from 'react-icons/lu';
+import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuDownload, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine, LuImage, LuFileCode, LuUpload, LuCircleCheck } from 'react-icons/lu';
 import { call, pickFiles, pickFolder, revealPath, isTauri, type Project } from '../ipc';
 import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, useLoad, useConfirm, usePrompt } from '../components/common';
 import { ago, bytes, CATEGORY_LABELS, cx } from '../format';
@@ -38,7 +38,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
     const t = text.toLowerCase();
     const out = nav.projects.filter((p) =>
       (groupF === null || p.group === groupF) && (!status || p.status === status) && (!category || p.category === category) && (!tag || p.tags.includes(tag)) && (!favOnly || p.favorite) &&
-      (!attention || p.changedFiles + p.pendingReviews + p.missingFiles > 0 || !p.rootAvailable) &&
+      (!attention || (p.staleDocs || 0) + p.pendingReviews + p.missingFiles > 0 || !p.rootAvailable) &&
       (!t || p.name.toLowerCase().includes(t) || p.description.toLowerCase().includes(t)));
     const by: Record<Sort, (a: Project, b: Project) => number> = {
       recent: (a, b) => (b.lastOpenedAt || b.updatedAt) - (a.lastOpenedAt || a.updatedAt),
@@ -129,19 +129,22 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
 
   return (
     <div className="page">
-      <div className="row dash-head"><h1>Projects</h1>{list.length !== nav.projects.length && <span className="muted">{list.length} of {nav.projects.length} shown</span>}
-        <div className="right row">
-          <button className="btn ghost" onClick={() => setImportPV(true)}><LuDownload /> Import Print Vault</button>
+      <div className="row dash-head"><h1>Projects</h1>
+        <div className="right btngroup">
           <button className="btn newbtn" onClick={onNew}><LuPlus /> New project</button>
+          <button className="btn newbtn icon" title="More ways to add projects" aria-label="More ways to add projects" onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); menu({ clientX: r.right - 220, clientY: r.bottom + 4, preventDefault() {} } as any, [
+            { label: 'Import from Print Vault…', icon: <LuDownload />, onClick: () => setImportPV(true) },
+          ]); }}><LuChevronDown /></button>
         </div>
       </div>
+      <DashSummary nav={nav} onAttention={() => setAttention(true)} />
       <div className="toolbar">
         <div className="searchinput"><LuSearch /><input className="input" placeholder="Search projects…" value={text} onChange={(e) => setText(e.target.value)} aria-label="Search projects" /></div>
         <Dropdown label="Filter by" icon={<LuFilter />} badge={activeFilters.length || undefined} sections={[
           { title: 'Show', items: [
             { key: 'all', label: 'All projects', checked: !favOnly && !attention, onSelect: () => { setFavOnly(false); setAttention(false); } },
             { key: 'fav', label: 'Favorites only', checked: favOnly, onSelect: () => setFavOnly(!favOnly) },
-            { key: 'att', label: 'Needs attention', hint: 'Changed, missing or unconfirmed files, or folder offline', checked: attention, onSelect: () => setAttention(!attention) },
+            { key: 'att', label: 'Needs attention', hint: 'Missing files, file matches to confirm, notes that may be out of date, or folder offline', checked: attention, onSelect: () => setAttention(!attention) },
           ] },
           ...(allGroups.length ? [{ title: 'Group', items: [...allGroups, ''].map((g) => ({ key: 'g:' + g, label: g || 'Ungrouped', checked: groupF === g, onSelect: () => setGroupF(groupF === g ? null : g) })) }] : []),
           { title: 'Status', items: (statuses.data || []).map((x) => ({ key: x.name, label: x.name, checked: status === x.name, onSelect: () => setStatus(status === x.name ? '' : x.name) })) },
@@ -151,7 +154,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
         <Dropdown label={<>Sort: {SORTS.find((x) => x[0] === sort)?.[1]}</>} sections={[{ items: SORTS.map(([k, l]) => ({ key: k, label: l, checked: sort === k, onSelect: () => setSort(k) })) }]} width={200} />
         {activeFilters.map((f) => <span key={f.key} className="fchip">{f.label}<button aria-label={`Remove filter ${f.label}`} onClick={f.clear}><LuX size={12} /></button></span>)}
         {activeFilters.length > 1 && <button className="btn ghost sm" onClick={() => activeFilters.forEach((f) => f.clear())}>Clear all</button>}
-        <div className="seg right"><button className={cx(mode === 'grid' && 'on')} onClick={() => setMode2('grid')} title="Grid"><LuLayoutGrid /></button><button className={cx(mode === 'list' && 'on')} onClick={() => setMode2('list')} title="List"><LuList /></button></div>
+        <div className="seg right">{list.length !== nav.projects.length && <span className="muted small" style={{ alignSelf: 'center', marginRight: 10 }}>{list.length} of {nav.projects.length} shown</span>}<button className={cx(mode === 'grid' && 'on')} onClick={() => setMode2('grid')} title="Grid"><LuLayoutGrid /></button><button className={cx(mode === 'list' && 'on')} onClick={() => setMode2('list')} title="List"><LuList /></button></div>
       </div>
 
       {sections.map((sec) => {
@@ -218,10 +221,41 @@ function useThumb(p: Project) {
     const c = thumbCache.get(p.id);
     if (c?.key === key) { setT(c.t); return; }
     let alive = true;
-    call<Thumb | null>('projects.thumbnail', { id: p.id }).then((r) => { thumbCache.set(p.id, { key, t: r }); if (alive) setT(r); }, () => alive && setT(null));
+    call<Thumb | null>('projects.thumbnail', { id: p.id })
+      .then(async (r) => (r && (r as any).mode !== 'file' && (r as any).mode !== 'custom' && !(await looksUsable(r.src)) ? null : r))
+      .then((r) => { thumbCache.set(p.id, { key, t: r }); if (alive) setT(r); }, () => alive && setT(null));
     return () => { alive = false; };
   }, [p.id, key]);
   return t;
+}
+
+/** Automatic picks only: skip images that are tiny or almost entirely dark
+ *  (a black texture or a menu background makes a card look empty). */
+function looksUsable(src: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      if (img.naturalWidth < 96 || img.naturalHeight < 64) return resolve(false);
+      try {
+        const c = document.createElement('canvas');
+        c.width = 32; c.height = 32;
+        const g = c.getContext('2d');
+        if (!g) return resolve(true);
+        g.drawImage(img, 0, 0, 32, 32);
+        const d = g.getImageData(0, 0, 32, 32).data;
+        let lum = 0, bright = 0, seen = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i + 3] < 16) continue; // transparent pixels don't count
+          const l = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+          lum += l; seen++; if (l > 60) bright++;
+        }
+        if (!seen) return resolve(false);
+        resolve(lum / seen > 28 || bright / seen > 0.08);
+      } catch { resolve(true); }
+    };
+    img.onerror = () => resolve(false);
+    img.src = src;
+  });
 }
 
 const imgStyle = (t: Thumb): React.CSSProperties => ({ objectFit: t.fit || 'cover', objectPosition: `${t.x ?? 50}% ${t.y ?? 50}%` });
@@ -313,11 +347,55 @@ export function PictureDialog({ p, onClose, onSaved }: { p: Project; onClose: ()
   );
 }
 
+interface DashData {
+  attention: { projectId: string; name: string; category: string; icon: string; color: string; reasons: { kind: string; text: string; count?: number }[] }[];
+  recent: { fileId: string; path: string; name: string; ext: string; present: boolean; change: string; at: number; projectId: string; projectName: string }[];
+}
+const CHANGE_WORD: Record<string, string> = { added: 'added', modified: 'changed', moved: 'moved', restored: 'back', 'restored-version': 'restored', renamed: 'renamed', imported: 'imported' };
+
+/** Above the grid: what needs attention, and what changed lately, across all projects. */
+function DashSummary({ nav, onAttention }: { nav: Nav; onAttention: () => void }) {
+  const stamp = nav.projects.map((p) => `${p.id}:${p.lastScanAt}:${p.fileCount}`).join('|');
+  const d = useLoad(() => call<DashData>('projects.dashboard', { limit: 6 }), [stamp]);
+  const data = d.data;
+  if (!data) return null;
+  const openFile = (r: DashData['recent'][number]) => nav.go({ view: 'project', id: r.projectId, tab: 'files', focus: r.present ? { type: 'file', id: r.fileId, action: 'reveal', nonce: Date.now() } : undefined });
+  const fix = (a: DashData['attention'][number]) => {
+    const k = a.reasons[0]?.kind;
+    nav.go({ view: 'project', id: a.projectId, tab: k === 'staleDocs' || k === 'missing' ? 'files' : 'overview' });
+  };
+  return (
+    <div className="dash-sum">
+      <section className="ds-box">
+        <div className="ds-h"><h2>Needs attention</h2>{data.attention.length > 1 && <button className="btn ghost sm" onClick={onAttention}>Show only these</button>}</div>
+        {data.attention.length ? data.attention.slice(0, 5).map((a) => (
+          <button key={a.projectId} className="ds-row" onClick={() => fix(a)}>
+            <ProjectIcon category={a.category} icon={a.icon} color={a.color} size={22} />
+            <span className="ds-name">{a.name}</span>
+            <span className="ds-why">{a.reasons.map((r) => r.text).join(' · ')}</span>
+          </button>
+        )) : <div className="ds-empty"><LuCircleCheck /> All clear — no missing files, offline folders or out-of-date notes.</div>}
+      </section>
+      <section className="ds-box">
+        <div className="ds-h"><h2>Recently changed</h2></div>
+        {data.recent.length ? data.recent.map((r) => (
+          <button key={r.fileId} className="ds-row" onClick={() => openFile(r)} title={`${r.projectName}: ${r.path}`}>
+            <LuFileCode className="ds-fi" />
+            <span className="ds-name mono">{r.name}</span>
+            <span className="ds-why">{r.projectName} · {CHANGE_WORD[r.change] || r.change}</span>
+            <span className="ds-when">{ago(r.at)}</span>
+          </button>
+        )) : <div className="ds-empty">Edits you make to project files — here or in other programs — show up here.</div>}
+      </section>
+    </div>
+  );
+}
+
 /** A project card: its picture (print plate, cover image) or, for code, the file you touched last. */
 function ProjectCard({ p, colors, onOpen, onMenu, onFav, onPictureChanged }: { p: Project; colors: Record<string, string>; onOpen: () => void; onMenu: (e: React.MouseEvent) => void; onFav: () => void; onPictureChanged: () => void }) {
   const thumb = useThumb(p);
   const [picking, setPicking] = useState(false);
-  const attention = p.changedFiles + p.pendingReviews;
+  const attention = p.missingFiles + p.pendingReviews + (p.staleDocs || 0);
   return (
     <div className={cx('pcard', p.favorite && 'isfav')} style={p.color ? ({ '--pc': p.color } as React.CSSProperties) : undefined}
       tabIndex={0} role="link" aria-label={`Open ${p.name}`}
@@ -325,12 +403,20 @@ function ProjectCard({ p, colors, onOpen, onMenu, onFav, onPictureChanged }: { p
       onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }} onContextMenu={onMenu}>
       <div className={cx('pc-face', thumb ? 'pic' : 'nopic')}>
         <button className="pc-edit btn sm" title="Change the picture" onClick={(e) => { e.stopPropagation(); setPicking(true); }}><LuImage /> Picture</button>
-        {thumb ? <img src={thumb.src} alt="" loading="lazy" style={imgStyle(thumb)} />
-          : p.recentFiles?.length ? <div className="pc-recent" title="Most recently changed files">{p.recentFiles.map((r) => {
-              const d = r.path.includes('/') ? r.path.slice(0, r.path.lastIndexOf('/') + 1) : '';
-              return <div key={r.path} className="pc-rf"><LuFileCode /><span className="pc-file">{r.path.slice(d.length)}</span><span className="pc-dir">{d}</span><span className="pc-when">{ago(r.at)}</span></div>;
-            })}</div>
-          : <div className="pc-empty"><ProjectIcon category={p.category} icon={p.icon} color={p.color} size={28} /></div>}
+        {thumb ? <>
+            {thumb.fit === 'contain' && <img className="pc-backdrop" src={thumb.src} alt="" aria-hidden />}
+            <img className="pc-img" src={thumb.src} alt="" loading="lazy" style={imgStyle(thumb)} />
+          </>
+          : <>
+            <div className="pc-watermark" aria-hidden><ProjectIcon category={p.category} icon={p.icon} color={p.color} size={92} /></div>
+            {p.recentFiles?.length ? <div className="pc-recent" title="Most recently changed files">
+              <div className="pc-recent-h">Recently changed</div>
+              {p.recentFiles.map((r) => {
+                const d = r.path.includes('/') ? r.path.slice(0, r.path.lastIndexOf('/') + 1) : '';
+                return <div key={r.path} className="pc-rf"><LuFileCode /><span className="pc-file">{r.path.slice(d.length)}</span><span className="pc-dir">{d}</span><span className="pc-when">{ago(r.at)}</span></div>;
+              })}
+            </div> : <div className="pc-recent"><div className="pc-recent-h">No files yet</div></div>}
+          </>}
       </div>
       <div className="pc-body">
         <div className="pc-title">
@@ -345,7 +431,7 @@ function ProjectCard({ p, colors, onOpen, onMenu, onFav, onPictureChanged }: { p
           {p.status !== 'Active' && <StatusPill status={p.status} colors={colors} />}
           {p.openTasks > 0 && <span title="Open tasks"><LuListTodo size={12} /> {p.openTasks}</span>}
           {!p.rootAvailable && <span className="pc-warn" title={`Folder not reachable: ${p.rootPath}`}><LuTriangleAlert size={12} /> offline</span>}
-          {attention > 0 && <span className="pc-warn" title="Changed or unconfirmed files to review">{attention} to review</span>}
+          {attention > 0 && <span className="pc-warn" title={[p.missingFiles && `${p.missingFiles} missing`, p.pendingReviews && `${p.pendingReviews} file matches to confirm`, p.staleDocs && `${p.staleDocs} file notes may be out of date`].filter(Boolean).join(' · ')}><LuTriangleAlert size={12} /> Needs attention</span>}
         </div>
         {p.progress > 0 && <div className="pc-progress" title={`${p.progress}% done`}><div style={{ width: `${p.progress}%` }} /></div>}
       </div>
