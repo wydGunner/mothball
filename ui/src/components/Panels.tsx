@@ -11,6 +11,10 @@ export interface PanelDef {
   actions?: ReactNode;
   /** Small text after the title, e.g. a count. */
   meta?: ReactNode;
+  /** Small icon before the title, in the accent colour. */
+  icon?: ReactNode;
+  /** One line shown in the header while the panel is collapsed. */
+  summary?: ReactNode;
   className?: string;
   body: ReactNode;
   /** Not shown right now (keeps its place in the layout). */
@@ -159,10 +163,11 @@ export function PanelBoard({ storageKey, defaults, panels, zoneClass, before }: 
                     }}>
                     <LuGripVertical className="grip" aria-hidden title="Drag to move" />
                     <button className="panel-t" aria-expanded={!collapsed} onClick={() => toggle(id)} title={collapsed ? 'Expand' : 'Collapse'}>
-                      {collapsed ? <LuChevronRight /> : <LuChevronDown />}<h2>{p.title}</h2>{p.meta && <span className="panel-meta">{p.meta}</span>}
+                      {collapsed ? <LuChevronRight /> : <LuChevronDown />}{p.icon && <span className="panel-icon">{p.icon}</span>}<h2>{p.title}</h2>{p.meta && <span className="panel-meta">{p.meta}</span>}
                     </button>
                     {p.actions && <div className="panel-actions" onMouseDown={(e) => e.stopPropagation()}>{p.actions}</div>}
                   </div>
+                  {collapsed && p.summary && <button className="panel-summary" onClick={() => toggle(id)} title="Expand">{p.summary}</button>}
                   {!collapsed && <div className="panel-b">{p.body}</div>}
                 </section>
               );

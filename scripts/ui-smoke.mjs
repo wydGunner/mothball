@@ -1008,6 +1008,11 @@ await step('Panels: drag to rearrange, collapse, remembered, reset', async () =>
   await page.locator('[data-panel=time] .tc-big').waitFor({ state: 'detached' });
   await page.locator('[data-panel=time] .panel-t').click();
   await page.locator('[data-panel=time] .tc-big').waitFor();
+  // collapsed panels still say what's in them
+  for (const id of ['time', 'next', 'notes', 'activity', 'info']) await page.locator(`[data-panel=${id}] .panel-t`).click();
+  await page.locator('[data-panel=activity] .panel-summary').waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-collapsed-rail.png') });
+  for (const id of ['time', 'next', 'notes', 'activity', 'info']) await page.locator(`[data-panel=${id}] .panel-t`).click();
 });
 
 await step('Settings: hide project types from the pickers', async () => {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuDownload, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine, LuImage, LuFileCode, LuUpload, LuCircleCheck } from 'react-icons/lu';
+import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuDownload, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine, LuImage, LuFileCode, LuUpload, LuCircleCheck, LuHistory } from 'react-icons/lu';
 import { call, pickFiles, pickFolder, revealPath, isTauri, type Project } from '../ipc';
 import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, useLoad, useConfirm, usePrompt } from '../components/common';
 import { ago, bytes, CATEGORY_LABELS, cx, hiddenTypes, typeChoices } from '../format';
@@ -158,10 +158,10 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
         </div>
       </div>
       <PanelBoard storageKey="dashboard" defaults={{ top: ['attention', 'recent'], bottom: ['projects'] }} zoneClass={{ top: 'dash-top', bottom: 'dash-bottom' }} panels={[
-        { id: 'attention', title: 'Needs attention', meta: dash.data?.attention.length ? dash.data.attention.length : undefined, body: <AttentionList data={dash.data} nav={nav} />,
+        { id: 'attention', icon: <LuTriangleAlert />, title: 'Needs attention', summary: dash.data ? (dash.data.attention.length ? dash.data.attention.map((a) => a.name).join(', ') : 'All clear') : undefined, meta: dash.data?.attention.length ? dash.data.attention.length : undefined, body: <AttentionList data={dash.data} nav={nav} />,
           actions: (dash.data?.attention.length || 0) > 1 ? <button className="btn ghost sm" onClick={() => setAttention(true)}>Show only these</button> : undefined },
-        { id: 'recent', title: 'Recently changed', body: <RecentList data={dash.data} nav={nav} /> },
-        { id: 'projects', title: 'Projects', meta: list.length !== nav.projects.length ? `${list.length} of ${nav.projects.length}` : nav.projects.length, body: <>
+        { id: 'recent', icon: <LuHistory />, title: 'Recently changed', summary: dash.data?.recent[0] ? <>{dash.data.recent[0].name} · {dash.data.recent[0].projectName} · {ago(dash.data.recent[0].at)}</> : undefined, body: <RecentList data={dash.data} nav={nav} /> },
+        { id: 'projects', icon: <LuLayoutGrid />, title: 'Projects', meta: list.length !== nav.projects.length ? `${list.length} of ${nav.projects.length}` : nav.projects.length, body: <>
       <div className="toolbar">
         <div className="searchinput"><LuSearch /><input className="input" placeholder="Search projects…" value={text} onChange={(e) => setText(e.target.value)} aria-label="Search projects" /></div>
         <Dropdown label="Filter by" icon={<LuFilter />} badge={activeFilters.length || undefined} sections={[

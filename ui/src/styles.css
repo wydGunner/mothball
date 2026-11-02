@@ -719,3 +719,17 @@ input[type=checkbox] { accent-color: var(--accent); }
 .typeopt { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg1); cursor: pointer; color: var(--fg2); }
 .typeopt.on { color: var(--fg0); border-color: var(--line2); }
 .typeopt:not(.on) .picon { opacity: .4; }
+
+/* panel headers: accent icon, readable titles, preview line when collapsed */
+.panel-icon { display: inline-flex; color: var(--accent); flex: none; }
+.panel-icon svg { width: 15px; height: 15px; }
+.panel-t > svg:first-child { color: var(--fg3); }
+.panel-t:hover > svg:first-child { color: var(--fg0); }
+.panel-summary { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 0 0 2px 44px; margin: -2px 0 0; color: var(--fg1); font: inherit; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.panel-summary:hover { color: var(--fg0); }
+.ov2 .panel.collapsed .panel-h { border-bottom: 0; margin-bottom: 0; }
+.ov2 .panel.collapsed { border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.panel-summary .mono { font-size: 12px; }
+.panel.collapsed .panel-h { opacity: 1; }
+.panel-h:hover { background: color-mix(in srgb, var(--fg0) 3%, transparent); border-radius: 4px; }
+.ov2-rail .panel.collapsed .panel-h { padding-top: 2px; }

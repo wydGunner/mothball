@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   LuTriangleAlert, LuGitCompareArrows, LuPlus, LuTrash2, LuCircleCheck, LuCircleX, LuFileWarning, LuPencil,
   LuNotebookPen, LuListTodo, LuHistory, LuChevronRight, LuDiff, LuBug, LuImage, LuCode,
+  LuInfo, LuFileClock, LuSlidersHorizontal, LuClock, LuFolder,
 } from 'react-icons/lu';
 import { call, type Project } from '../ipc';
 import { KindIcon, Modal, StatusPill, TagInput, useAction, useLoad, useConfirm, useToast } from '../components/common';
@@ -9,7 +10,7 @@ import { PictureDialog, useThumb } from './Dashboard';
 import { ago, bytes, CATEGORY_LABELS, cx, typeChoices, dateTime } from '../format';
 import { CompareDialog } from './Versions';
 import { Retention } from './History';
-import { TimeCard } from './TimeCard';
+import { TimeCard, fmtHM } from './TimeCard';
 import { PanelBoard } from '../components/Panels';
 import type { ProjectCtx } from './Project';
 
@@ -102,13 +103,16 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const nextTasks = (tasks.data || []).filter((t) => t.status !== 'done').slice(0, 5);
   const attention = (reviews.data?.length || 0) + (changed.data?.length || 0) + (missing.data?.length || 0);
   const recentNotes = [...(notes.data || [])].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
+  const openCount = (tasks.data || []).filter((t) => t.status !== 'done').length;
+  const timeSum = useLoad(() => call<{ totalMs: number }>('time.summary', { projectId: p.id, since: Date.now() }), [p.id, ctx.scanTick]);
+  const timeTotal = timeSum.data?.totalMs || 0;
 
   const ext = (path: string) => (path.includes('.') ? path.split('.').pop()!.toLowerCase() : '');
   return (
     <div className="page ov2">
       <PanelBoard storageKey="overview" defaults={{ main: ['about', 'attention', 'recent', 'details'], rail: ['time', 'next', 'notes', 'activity', 'info'] }}
         zoneClass={{ main: 'ov2-main', rail: 'ov2-rail' }} panels={[
-        { id: 'about', title: 'About', className: 'ov2-hero-panel', body: <div className="ov2-hero">
+        { id: 'about', icon: <LuInfo />, summary: p.description ? p.description.split('\n')[0] : undefined, title: 'About', className: 'ov2-hero-panel', body: <div className="ov2-hero">
           {thumb && <button className="ov2-pic" title="Change the picture" onClick={() => setPicking(true)}><img src={thumb.src} alt="" style={{ objectFit: thumb.fit || 'cover', objectPosition: `${thumb.x ?? 50}% ${thumb.y ?? 50}%` }} /></button>}
           <div className="ov2-about">
             {p.description
@@ -127,7 +131,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
             </div>
           </div>
         </div> },
-        { id: 'attention', title: <span className="att-title"><LuTriangleAlert /> Needs your attention</span>, meta: attention || undefined, hidden: attention === 0, className: 'ov2-sec attention', body: <>
+        { id: 'attention', icon: <LuTriangleAlert />, title: 'Needs your attention', summary: `${attention} item${attention === 1 ? '' : 's'} to look at`, meta: attention || undefined, hidden: attention === 0, className: 'ov2-sec attention', body: <>
             {(reviews.data || []).map((r) => (
               <div key={r.id} className="att-row">
                 <LuGitCompareArrows />
@@ -162,7 +166,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
             ))}
             {(changed.data?.length || 0) > 1 && <button className="btn sm" style={{ marginTop: 6 }} onClick={async () => { await act(() => call('files.markReviewed', { ids: changed.data!.map((f) => f.id) })); changed.reload(); ctx.reload(); }}>Dismiss all changes</button>}
         </> },
-        { id: 'recent', title: 'Recently changed', actions: <button className="btn sm ghost" onClick={() => ctx.openFiles()}>All {p.fileCount} {p.fileCount === 1 ? 'file' : 'files'} <LuChevronRight /></button>, body: <>
+        { id: 'recent', icon: <LuFileClock />, summary: recent.data?.[0] ? <>{recent.data[0].name} · {ago(recent.data[0].lastChanged)}</> : undefined, title: 'Recently changed', actions: <button className="btn sm ghost" onClick={() => ctx.openFiles()}>All {p.fileCount} {p.fileCount === 1 ? 'file' : 'files'} <LuChevronRight /></button>, body: <>
           {recent.data?.length ? <div className="ov2-files">
             {recent.data.map((f) => {
               const d = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/') + 1) : '';
@@ -184,7 +188,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
             ))}
           </div>}
         </> },
-        { id: 'details', title: mod?.title || 'Details', hidden: !mod, actions: <button className="btn sm ghost" onClick={() => setEditing('details')}><LuPencil /> Edit</button>, body: <>
+        { id: 'details', icon: <LuSlidersHorizontal />, summary: filled.length || custom.length ? `${filled.length + custom.length} filled in` : 'Nothing filled in yet', title: mod?.title || 'Details', hidden: !mod, actions: <button className="btn sm ghost" onClick={() => setEditing('details')}><LuPencil /> Edit</button>, body: <>
             {filled.length === 0 && !custom.length ? (
               <p className="muted small" style={{ margin: 0 }}><a href="#" onClick={(e) => { e.preventDefault(); setEditing('details'); }}>Add {p.category === '3d-printing' ? 'material, printer and print time' : 'details'}</a>{p.category === '3d-printing' ? ', or fill them from a .3mf in this project.' : '.'}</p>
             ) : (
@@ -213,10 +217,10 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
               </div>
             )}
         </> },
-        { id: 'time', title: 'Time', body: <>
+        { id: 'time', icon: <LuClock />, summary: timeTotal ? `${fmtHM(timeTotal)} in total` : 'No time recorded yet', title: 'Time', body: <>
           <TimeCard projectId={p.id} onTimerChange={() => window.dispatchEvent(new CustomEvent('pv:timer'))} />
         </> },
-        { id: 'next', title: 'Next up', actions: <button className="btn sm ghost" onClick={() => ctx.openTask('')}>Board <LuChevronRight /></button>, body: <>
+        { id: 'next', icon: <LuListTodo />, summary: openCount ? `${openCount} open${nextTasks[0] ? ` · ${nextTasks[0].title}` : ''}` : 'Nothing open', title: 'Next up', actions: <button className="btn sm ghost" onClick={() => ctx.openTask('')}>Board <LuChevronRight /></button>, body: <>
           {nextTasks.length ? nextTasks.map((t) => (
             <div key={t.id} className="linkrow" onClick={() => ctx.openTask(t.id)}>
               {t.kind === 'bug' ? <LuBug color="var(--accent)" /> : <span className={`prio p${t.priority}`} title={['Low', 'Normal', 'High', 'Urgent'][t.priority] + ' priority'} />}
@@ -224,17 +228,17 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
             </div>
           )) : <div className="muted small"><a href="#" onClick={(e) => { e.preventDefault(); ctx.openTask(''); }}>Add a task</a> so you know where to pick up next time.</div>}
         </> },
-        { id: 'notes', title: 'Notes', actions: <button className="btn sm ghost" onClick={() => ctx.openNote('')}>All <LuChevronRight /></button>, body: <>
+        { id: 'notes', icon: <LuNotebookPen />, summary: (notes.data?.length || 0) ? `${notes.data!.length} note${notes.data!.length === 1 ? '' : 's'}${recentNotes[0] ? ` · ${recentNotes[0].title}` : ''}` : 'No notes yet', title: 'Notes', actions: <button className="btn sm ghost" onClick={() => ctx.openNote('')}>All <LuChevronRight /></button>, body: <>
           {recentNotes.length ? recentNotes.map((n) => (
             <div key={n.id} className="linkrow" onClick={() => ctx.openNote(n.id)}><span className="grow">{n.title}</span><span className="dim small">{ago(n.updatedAt)}</span></div>
           )) : <div className="muted small"><a href="#" onClick={(e) => { e.preventDefault(); ctx.openNote(''); }}>Write the first note</a>: setup steps, decisions, how things fit together.</div>}
         </> },
-        { id: 'activity', title: 'Activity', actions: <button className="btn sm ghost" onClick={() => ctx.openTimeline()}>Timeline <LuChevronRight /></button>, body: <>
+        { id: 'activity', icon: <LuHistory />, summary: timeline.data?.[0] ? <>{timeline.data[0].summary} · {ago(timeline.data[0].at)}</> : undefined, title: 'Activity', actions: <button className="btn sm ghost" onClick={() => ctx.openTimeline()}>Timeline <LuChevronRight /></button>, body: <>
           {(timeline.data || []).map((e) => (
             <div key={e.id} className="row small" style={{ padding: '3px 0', alignItems: 'baseline' }}><span className="grow" style={e.manual ? { fontWeight: 600 } : undefined}>{e.summary}</span><span className="dim" style={{ whiteSpace: 'nowrap' }}>{ago(e.at)}</span></div>
           ))}
         </> },
-        { id: 'info', title: 'Folder', className: 'small', body: <>
+        { id: 'info', icon: <LuFolder />, summary: <span className="mono">{p.rootPath}</span>, title: 'Folder', className: 'small', body: <>
 
           <div className="kv">
             <span>Folder</span><span className="mono" style={{ wordBreak: 'break-all' }}>{p.rootPath}</span>
