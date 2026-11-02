@@ -66,6 +66,15 @@ pub fn run() {
                     std::thread::sleep(wait);
                 }
             });
+            // Read-only printer status (see vault_core::printers), over TLS.
+            let printers_vault = vault.clone();
+            let locker: vault_core::printers::Locker = Arc::new(move |f: &mut dyn FnMut(&vault_core::Vault)| {
+                let guard = printers_vault.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(v) = guard.as_ref() {
+                    f(v);
+                }
+            });
+            vault_core::printers::start(bambu_tls::connector(), locker);
             app.manage(AppState { vault, open_error });
             Ok(())
         })

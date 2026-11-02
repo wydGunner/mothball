@@ -5,7 +5,7 @@
 use crate::db::DbResult;
 use crate::json::Json;
 use crate::projects::NewProject;
-use crate::{backup, deploy, files, git, knowledge, profiles, projects, search, snapshots, symbols, tasks, timeline, versions, watch, time, Vault};
+use crate::{backup, deploy, files, git, knowledge, printers, profiles, projects, search, snapshots, symbols, tasks, timeline, versions, watch, time, Vault};
 use std::path::PathBuf;
 
 fn s(a: &Json, k: &str) -> DbResult<String> {
@@ -30,6 +30,12 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
             .with("noteCategories", Json::Arr(knowledge::NOTE_CATEGORIES.iter().map(|c| Json::from(*c)).collect()))),
 
         // projects
+        "printers.list" => printers::list(v),
+        "printers.save" => printers::save(v, a),
+        "printers.remove" => printers::remove(v, &s(a, "id")?),
+        "printers.resetCertificate" => printers::reset_certificate(v, &s(a, "id")?),
+        "printers.history" => printers::history_json(v, a.get("limit").and_then(|x| x.as_i64()).unwrap_or(50).clamp(1, 300) as usize),
+        "printers.assign" => printers::assign(v, &s(a, "key")?, os(a, "projectId").as_deref(), a.get("remember").and_then(|x| x.as_bool()).unwrap_or(false)),
         "projects.list" => projects::list(v),
         "projects.get" => {
             let id = s(a, "id")?;

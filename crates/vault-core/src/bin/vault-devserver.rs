@@ -104,6 +104,12 @@ fn main() {
             }
         });
     }
+    {
+        // printer status; the dev server talks plain TCP (to a fake printer in tests)
+        let v = vault.clone();
+        let locker: vault_core::printers::Locker = Arc::new(move |f: &mut dyn FnMut(&Vault)| f(&v.lock().unwrap_or_else(|p| p.into_inner())));
+        vault_core::printers::start(vault_core::printers::plain_tcp_connector(), locker);
+    }
     for s in l.incoming().flatten() {
         let (v, ui) = (vault.clone(), ui.clone());
         std::thread::spawn(move || handle(s, &v, &ui));

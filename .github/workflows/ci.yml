@@ -18,6 +18,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
       - name: Core unit tests
         run: cargo test --manifest-path crates/vault-core/Cargo.toml
+      - name: Printer TLS tests
+        run: cargo test --manifest-path crates/bambu-tls/Cargo.toml
       - name: Build dev server
         run: cargo build --manifest-path crates/vault-core/Cargo.toml --bin vault-devserver
       - run: npm install

@@ -1,0 +1,15 @@
+[package]
+name = "bambu-tls"
+version = "0.2.1"
+edition = "2021"
+description = "TLS connection to a Bambu Lab printer's local MQTT broker, for Mothball."
+license = "GPL-3.0-or-later"
+
+# Kept separate from vault-core (which has no dependencies) so the TLS layer can
+# be built and tested on its own in CI.
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+vault-core = { path = "../vault-core", default-features = false }
+
+[dev-dependencies]
+vault-core = { path = "../vault-core" }

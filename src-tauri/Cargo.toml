@@ -24,6 +24,8 @@ serde_json = "1"
 # Supplies SQLite (compiled from source, FTS5 enabled) to vault-core's FFI layer.
 libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 vault-core = { path = "../crates/vault-core", default-features = false }
+# TLS for the read-only Bambu printer connection (see crates/bambu-tls)
+bambu-tls = { path = "../crates/bambu-tls" }
 
 [profile.release]
 codegen-units = 1
