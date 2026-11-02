@@ -29,6 +29,8 @@ if (!hasTauriApi) {
   alias['@tauri-apps/api/webview'] = join(here, 'shims/webview.ts');
   alias['@tauri-apps/plugin-dialog'] = join(here, 'shims/dialog.ts');
   alias['@tauri-apps/plugin-opener'] = join(here, 'shims/opener.ts');
+  alias['@tauri-apps/plugin-updater'] = join(here, 'shims/updater.ts');
+  alias['@tauri-apps/plugin-process'] = join(here, 'shims/process.ts');
 }
 
 const out = join(here, 'dist');

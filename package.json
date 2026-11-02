@@ -1,7 +1,7 @@
 {
   "name": "project-vault",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "build:ui": "node ui/build.mjs",
@@ -12,7 +12,8 @@
     "devserver": "cargo run --manifest-path crates/vault-core/Cargo.toml --bin vault-devserver -- .devdata ui/dist 1420",
     "tauri": "tauri",
     "dev": "tauri dev",
-    "build": "tauri build"
+    "build": "tauri build",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.5.0",
@@ -21,7 +22,9 @@
     "marked": "^18.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-icons": "^5.7.0"
+    "react-icons": "^5.7.0",
+    "@tauri-apps/plugin-updater": "^2.7.0",
+    "@tauri-apps/plugin-process": "^2.2.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.5.0",

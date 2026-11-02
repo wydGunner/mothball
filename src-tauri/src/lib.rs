@@ -38,6 +38,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // PROJECT_VAULT_DATA overrides the location (portable installs, tests).
             let dir = match std::env::var_os("PROJECT_VAULT_DATA") {

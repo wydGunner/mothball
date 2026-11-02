@@ -9,6 +9,8 @@ import { SearchView } from './views/Search';
 import { SettingsView } from './views/Settings';
 import { CommandPalette } from './views/Palette';
 import { cx } from './format';
+import { checkForUpdate, type AvailableUpdate } from './updater';
+import { LuDownload } from 'react-icons/lu';
 
 export type Route =
   | { view: 'dashboard' }
@@ -25,6 +27,16 @@ function App() {
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem('pv.sidebar') === '1'; } catch { return false; } });
   const [palette, setPalette] = useState(false);
   const [newProject, setNewProject] = useState(false);
+  const [update, setUpdate] = useState<AvailableUpdate | null>(null);
+  const [updating, setUpdating] = useState<number | null | false>(false);
+  useEffect(() => {
+    let off = false;
+    const run = () => checkForUpdate().then((u) => { if (!off) setUpdate(u); }).catch(() => { /* offline or no release yet */ });
+    const t = setTimeout(run, 4000);
+    const i = setInterval(run, 6 * 60 * 60 * 1000);
+    (window as any).__pvCheckUpdate = async () => { const u = await checkForUpdate(); setUpdate(u); return u; };
+    return () => { off = true; clearTimeout(t); clearInterval(i); };
+  }, []);
 
   const refreshProjects = useCallback(() => { call<Project[]>('projects.list').then(setProjects).catch(() => {}); }, []);
   useEffect(refreshProjects, [refreshProjects]);
@@ -83,7 +95,13 @@ function App() {
             {route.view === 'search' && <><LuChevronRight /><span className="cur">Search</span></>}
             {route.view === 'settings' && <><LuChevronRight /><span className="cur">Settings & backup</span></>}
           </div>
-          <div className="searchbox" onClick={() => setPalette(true)} role="button" tabIndex={0}><LuSearch /> Search or run a command… <kbd>Ctrl K</kbd></div>
+          {update && (
+            <button className="btn primary sm" style={{ marginLeft: 'auto' }} disabled={updating !== false} title={update.notes || undefined}
+              onClick={async () => { setUpdating(null); try { await update.install((p) => setUpdating(p)); } catch (e: any) { setUpdating(false); alert('Update failed: ' + (e?.message || e)); } }}>
+              <LuDownload /> {updating === false ? `Update to v${update.version}` : updating === null ? 'Downloading…' : updating >= 100 ? 'Installing…' : `Downloading ${updating}%`}
+            </button>
+          )}
+          <div className="searchbox" style={update ? { marginLeft: 8 } : undefined} onClick={() => setPalette(true)} role="button" tabIndex={0}><LuSearch /> Search or run a command… <kbd>Ctrl K</kbd></div>
         </div>
         <div className="content">
           {route.view === 'dashboard' && <Dashboard nav={nav} onNew={() => setNewProject(true)} />}

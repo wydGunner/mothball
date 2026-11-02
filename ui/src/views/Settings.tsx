@@ -4,6 +4,20 @@ import { call, pickFolder, revealPath, isTauri } from '../ipc';
 import { useAction, useLoad } from '../components/common';
 import type { Nav } from '../main';
 
+function UpdateCheck() {
+  const [state, setState] = useState<string>('');
+  return (
+    <>
+      <button className="btn sm" onClick={async () => {
+        setState('Checking…');
+        try { const u = await (window as any).__pvCheckUpdate?.(); setState(u ? `Version ${u.version} is available — use the Update button at the top.` : 'You have the latest version.'); }
+        catch (e: any) { setState('Could not check: ' + (e?.message || e)); }
+      }}>Check for updates</button>
+      <span className="small muted">{state}</span>
+    </>
+  );
+}
+
 export function SettingsView({ nav }: { nav: Nav }) {
   const info = useLoad(() => call<any>('app.info'), []);
   const [dest, setDest] = useState(() => localStorage.getItem('pv.backupDest') || '');
@@ -62,7 +76,7 @@ export function SettingsView({ nav }: { nav: Nav }) {
       <div className="card pad">
         <h2 className="row" style={{ marginBottom: 8 }}><LuInfo /> About</h2>
         <div className="kv">
-          <span>Version</span><span>{info.data?.version}</span>
+          <span>Version</span><span className="row">{info.data?.version} {isTauri && <UpdateCheck />}</span>
           <span>Database schema</span><span>v{info.data?.schemaVersion} (SQLite {info.data?.sqlite})</span>
           <span>Data folder</span><span className="mono row">{info.data?.dataDir}{isTauri && info.data && <button className="btn ghost sm" onClick={() => act(() => revealPath(info.data.dataDir + '/vault.db'))}>Show</button>}</span>
           <span>Shortcuts</span><span><kbd>Ctrl K</kbd> command palette · <kbd>Ctrl Shift F</kbd> search · <kbd>Ctrl N</kbd> new project · <kbd>Ctrl B</kbd> sidebar · <kbd>Alt 1–6</kbd> project tabs · <kbd>F5</kbd> rescan · <kbd>Ctrl S</kbd> save note · <kbd>Alt ←</kbd> back</span>

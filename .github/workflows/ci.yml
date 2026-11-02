@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches: ['**']
+    tags-ignore: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -29,20 +31,3 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: ui-screenshots, path: ui-shots }
-
-  windows-installer:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npm install
-      - name: Build installers (NSIS + MSI)
-        run: npx tauri build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: project-vault-windows
-          path: |
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/msi/*.msi
