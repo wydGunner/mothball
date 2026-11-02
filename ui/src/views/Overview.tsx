@@ -7,6 +7,7 @@ import { call, type Project } from '../ipc';
 import { Modal, StatusPill, TagInput, useAction, useLoad, useConfirm, useToast } from '../components/common';
 import { ago, bytes, CATEGORY_LABELS, cx, dateTime } from '../format';
 import { CompareDialog } from './Versions';
+import { Retention } from './History';
 import type { ProjectCtx } from './Project';
 
 type FieldDef = { key: string; label: string; multiline?: boolean; options?: string[]; placeholder?: string };
@@ -298,10 +299,7 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
           {pol.keyExts.length > 0 && <label className="row small" style={{ marginBottom: 6 }}><input type="checkbox" checked={pol.keyFiles} onChange={(e) => setPol({ ...pol, keyFiles: e.target.checked })} /> Project files ({pol.keyExts.map((x: string) => '.' + x).join(', ')}) up to <input className="input" type="number" min={1} step={10} style={{ width: 80, padding: '2px 6px' }} value={pol.keyMaxMb} onChange={(e) => setPol({ ...pol, keyMaxMb: Number(e.target.value) })} /> MB</label>}
           <p className="small dim">Any file can also be saved by hand from its History panel.</p>
         </>}
-        {stats.data && <div className="row small" style={{ margin: '10px 0' }}>
-          <span className="grow">Stored: <b>{stats.data.versions}</b> versions of {stats.data.files} files · <b>{bytes(stats.data.bytes)}</b></span>
-          <button className="btn sm" onClick={async () => { const r: any = await act(() => call('versions.prune', { projectId: p.id, keep: 10 })); if (r) { toast(`Removed ${r.deletedVersions} old versions, freed ${bytes(r.freedBytes)}`, 'success'); stats.reload(); } }}>Keep only the last 10 per file</button>
-        </div>}
+        <div style={{ margin: '10px 0' }}><Retention projectId={p.id} onDone={() => stats.reload()} /></div>
         <h3 style={{ margin: '16px 0 6px' }}>Folders and file types to skip</h3>
         <p className="small dim" style={{ marginTop: 0 }}>One per line: <code>Library/</code> (folder anywhere), <code>Assets/Generated/</code> (folder path), <code>*.tmp</code>, or a file name. .git and node_modules are always skipped.</p>
         <textarea className="input code" rows={5} value={f.ignoreGlobs} onChange={(e) => setF({ ...f, ignoreGlobs: e.target.value })} />

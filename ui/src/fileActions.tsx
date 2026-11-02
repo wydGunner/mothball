@@ -1,9 +1,44 @@
 // File management actions shared by the Files tab and global search, so both
 // use the same dialogs, validation and backend commands.
-import { useCallback } from 'react';
-import { LuExternalLink, LuFolderSearch, LuCopy, LuPencilLine, LuTrash2, LuCode, LuLocateFixed, LuArchiveRestore, LuFileText } from 'react-icons/lu';
-import { call, isTauri, openPath, revealPath } from './ipc';
-import { type MenuItem, useAction, useConfirm, usePrompt, useToast } from './components/common';
+import { createContext, useCallback, useContext, useState, type ReactNode } from 'react';
+import { LuExternalLink, LuFolderSearch, LuCopy, LuPencilLine, LuTrash2, LuCode, LuLocateFixed, LuArchiveRestore, LuFileText, LuEyeOff, LuFolderInput, LuHistory } from 'react-icons/lu';
+import { call, isTauri, openPath, revealPath, type Project } from './ipc';
+import { Modal, type MenuItem, useAction, useConfirm, usePrompt, useToast } from './components/common';
+
+// ---- "Move to another project" dialog (promise-based, mounted once in main.tsx)
+type MoveReq = { files: FileRef[]; resolve: (r: { projectId: string; dir: string } | null) => void };
+const MoveCtx = createContext<(files: FileRef[]) => Promise<{ projectId: string; dir: string } | null>>(async () => null);
+export function FileDialogsProvider({ children }: { children: ReactNode }) {
+  const [req, setReq] = useState<MoveReq | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [target, setTarget] = useState('');
+  const [dir, setDir] = useState('');
+  const ask = useCallback((files: FileRef[]) => new Promise<{ projectId: string; dir: string } | null>((resolve) => {
+    call<Project[]>('projects.list').then((ps) => { setProjects(ps.filter((p) => p.id !== files[0]?.projectId)); setTarget(''); setDir(''); setReq({ files, resolve }); });
+  }), []);
+  const done = (v: { projectId: string; dir: string } | null) => { req?.resolve(v); setReq(null); };
+  const tp = projects.find((p) => p.id === target);
+  return (
+    <MoveCtx.Provider value={ask}>
+      {children}
+      {req && (
+        <Modal title={req.files.length === 1 ? `Move “${req.files[0].name}” to another project` : `Move ${req.files.length} files to another project`} onClose={() => done(null)}
+          footer={<><button className="btn" onClick={() => done(null)}>Cancel</button><button className="btn primary" disabled={!target} onClick={() => done({ projectId: target, dir: dir.trim().replace(/^[\\/]+|[\\/]+$/g, '') })}>Move</button></>}>
+          <div className="field"><label>Destination project</label>
+            <select className="input" value={target} onChange={(e) => setTarget(e.target.value)} autoFocus>
+              <option value="">Choose a project…</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          <div className="field"><label>Folder inside that project (optional)</label><input className="input mono" value={dir} onChange={(e) => setDir(e.target.value)} placeholder="e.g. scripts/mp — empty = project root" /></div>
+          {tp && <p className="small muted" style={{ margin: 0 }}>
+            The file{req.files.length > 1 ? 's are' : ' is'} copied to <span className="mono">{tp.rootPath}{dir ? '\\' + dir.replace(/\//g, '\\') : ''}</span> and checked, then the original
+            {req.files.length > 1 ? 's go' : ' goes'} to the Recycle Bin. Notes, tags and stored versions move along; links to notes/tasks in the old project are removed.
+          </p>}
+        </Modal>
+      )}
+    </MoveCtx.Provider>
+  );
+}
 
 export interface FileRef {
   id: string;
@@ -35,6 +70,7 @@ export function useFileActions() {
   const confirm = useConfirm();
   const prompt = usePrompt();
   const toast = useToast();
+  const askMove = useContext(MoveCtx);
 
   const copy = useCallback(async (text: string, what: string) => {
     try { await navigator.clipboard.writeText(text); toast(`${what} copied`); } catch { toast('Could not access the clipboard', 'error'); }
@@ -55,8 +91,12 @@ export function useFileActions() {
       title: one ? `Delete “${live[0].name}”?` : `Delete ${live.length} files?`,
       confirm: 'Delete', danger: true,
       body: <>
-        {one ? <span className="mono">{live[0].path}</span> : <ul style={{ margin: '0 0 8px', paddingLeft: 18, maxHeight: 160, overflow: 'auto' }}>{live.map((f) => <li key={f.id} className="mono">{f.path}</li>)}</ul>}
-        {one ? ' will be' : 'These will be'} moved to the {isTauri ? 'Windows Recycle Bin' : 'trash'}. Project Vault keeps a verified copy and {one ? 'its' : 'their'} notes, so you can restore {one ? 'it' : 'them'} from the file page (Files → Filter → Deleted).
+        <p style={{ marginTop: 0 }}><b>This deletes the actual file{one ? '' : 's'} from your disk</b> (moved to the {isTauri ? 'Windows Recycle Bin' : 'trash'}).
+          {' '}To only stop tracking a file in Project Vault, use “Remove from Project Vault” instead.</p>
+        <div className="delete-list">
+          {live.map((f) => <div key={f.id}><b>{f.name}</b><div className="mono small dim" style={{ wordBreak: 'break-all' }}>{f.absPath || f.path}</div></div>)}
+        </div>
+        <p className="small" style={{ marginBottom: 0 }}>Project Vault keeps a verified copy and the notes, so you can restore {one ? 'it' : 'them'} from Files → Filter → Deleted.</p>
       </>,
     });
     if (!ok) return false;
@@ -69,6 +109,33 @@ export function useFileActions() {
 
   const restore = useCallback(async (f: FileRef) => !!(await act(() => call('files.restoreDeleted', { id: f.id }), `Restored ${f.path}`)), [act]);
 
+  /** Stop tracking — the file stays on disk. */
+  const untrack = useCallback(async (files: FileRef[]): Promise<boolean> => {
+    const one = files.length === 1;
+    const ok = await confirm({
+      title: one ? `Remove “${files[0].name}” from Project Vault?` : `Remove ${files.length} files from Project Vault?`,
+      confirm: 'Remove from Project Vault',
+      body: <>
+        <p style={{ marginTop: 0 }}><b>The file{one ? ' stays' : 's stay'} on your disk, untouched.</b> Project Vault stops tracking {one ? 'it' : 'them'}: {one ? 'its' : 'their'} notes, tags, links and stored versions in Project Vault are removed, and a rule is added so future scans skip {one ? 'it' : 'them'} (you can remove the rule under Edit → Files &amp; versions).</p>
+        <div className="delete-list">{files.map((f) => <div key={f.id} className="mono small">{f.path}</div>)}</div>
+      </>,
+    });
+    if (!ok) return false;
+    return !!(await act(() => call('files.stopTracking', { ids: files.map((f) => f.id) }), one ? `No longer tracking ${files[0].path}` : `No longer tracking ${files.length} files`));
+  }, [act, confirm]);
+
+  const move = useCallback(async (files: FileRef[]): Promise<boolean> => {
+    const live = files.filter((f) => f.state === 'present');
+    if (!live.length) return false;
+    const dest = await askMove(live);
+    if (!dest) return false;
+    const r: any = await act(() => call('files.moveToProject', { ids: live.map((f) => f.id), targetProjectId: dest.projectId, destDir: dest.dir }));
+    if (!r) return false;
+    if (r.errors.length) toast(r.errors.join('\n'), 'error');
+    if (r.moved.length) toast(`Moved ${r.moved.length} file${r.moved.length === 1 ? '' : 's'}`, 'success');
+    return r.moved.length > 0;
+  }, [act, askMove, toast]);
+
   /**
    * Context-menu entries for a file. `selection` = all selected files when the
    * menu is opened on a multi-selection (bulk delete).
@@ -78,6 +145,7 @@ export function useFileActions() {
     onOpen?: () => void;      // show the file in Project Vault
     onEdit?: () => void;      // open in the built-in editor
     onReveal?: () => void;    // go to project → Files → select
+    onHistory?: () => void;   // open the file's version history
     onChanged: (kind: 'renamed' | 'deleted' | 'restored') => void;
     extra?: MenuItem[];
   }): MenuItem[] => {
@@ -87,6 +155,7 @@ export function useFileActions() {
     if (o.onEdit && f.editable && present) items.push({ label: 'Edit in Project Vault', icon: <LuCode />, onClick: o.onEdit });
     if (o.onOpen) items.push({ label: 'Open file details', icon: <LuFileText />, onClick: o.onOpen });
     if (o.onReveal) items.push({ label: 'Reveal in project', icon: <LuLocateFixed />, onClick: o.onReveal });
+    if (o.onHistory) items.push({ label: 'Version history', icon: <LuHistory />, onClick: o.onHistory });
     items.push(
       { label: 'Open with default app', icon: <LuExternalLink />, disabled: !isTauri || !present || !f.absPath, onClick: () => act(() => openPath(f.absPath!)) },
       { label: 'Show in Windows Explorer', icon: <LuFolderSearch />, disabled: !isTauri || !present || !f.absPath, onClick: () => act(() => revealPath(f.absPath!)) },
@@ -101,11 +170,14 @@ export function useFileActions() {
     } else {
       items.push(
         { label: 'Rename…', icon: <LuPencilLine />, disabled: !present || sel.length > 1, onClick: async () => { if (await rename(f)) o.onChanged('renamed'); } },
-        { label: sel.length > 1 ? `Delete ${sel.filter((x) => x.state === 'present').length} files…` : 'Delete…', icon: <LuTrash2 />, danger: true, disabled: !sel.some((x) => x.state === 'present'), onClick: async () => { if (await remove(sel)) o.onChanged('deleted'); } },
+        { label: 'Move to another project…', icon: <LuFolderInput />, disabled: !sel.some((x) => x.state === 'present'), onClick: async () => { if (await move(sel)) o.onChanged('deleted'); } },
+        { sep: true, label: '' },
+        { label: sel.length > 1 ? `Remove ${sel.length} from Project Vault…` : 'Remove from Project Vault…', icon: <LuEyeOff />, onClick: async () => { if (await untrack(sel)) o.onChanged('deleted'); } },
+        { label: sel.length > 1 ? `Delete ${sel.filter((x) => x.state === 'present').length} files from disk…` : 'Delete file from disk…', icon: <LuTrash2 />, danger: true, disabled: !sel.some((x) => x.state === 'present'), onClick: async () => { if (await remove(sel)) o.onChanged('deleted'); } },
       );
     }
     return items;
-  }, [act, copy, rename, remove, restore]);
+  }, [act, copy, rename, remove, restore, untrack, move]);
 
-  return { menuItems, rename, remove, restore, copy };
+  return { menuItems, rename, remove, restore, copy, untrack, move };
 }

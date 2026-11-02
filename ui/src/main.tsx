@@ -11,6 +11,7 @@ import { CommandPalette } from './views/Palette';
 import { cx } from './format';
 import { checkForUpdate, type AvailableUpdate } from './updater';
 import { applyTheme, getTheme } from './theme';
+import { FileDialogsProvider } from './fileActions';
 
 applyTheme(getTheme());
 import { LuDownload } from 'react-icons/lu';
@@ -22,7 +23,8 @@ export type Route =
   | { view: 'project'; id: string; tab?: Tab; focus?: Focus };
 
 /** What to show in a project. `action` + `nonce` let the same file be revealed/opened again. */
-export interface Focus { type: 'file' | 'note' | 'task'; id: string; action?: 'reveal' | 'edit'; nonce?: number }
+/** What a project view should bring into view. type 'folder': id is the folder's relative path ('' = project root). action 'history': open the file's history, highlighting versionId when given. */
+export interface Focus { type: 'file' | 'note' | 'task' | 'folder'; id: string; action?: 'reveal' | 'edit' | 'history'; versionId?: string; nonce?: number }
 
 export interface Nav { go: (r: Route) => void; refreshProjects: () => void; projects: Project[] }
 
@@ -124,6 +126,6 @@ function App() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ToastProvider><ConfirmProvider><PromptProvider><ContextMenuProvider><App /></ContextMenuProvider></PromptProvider></ConfirmProvider></ToastProvider>
+    <ToastProvider><ConfirmProvider><PromptProvider><ContextMenuProvider><FileDialogsProvider><App /></FileDialogsProvider></ContextMenuProvider></PromptProvider></ConfirmProvider></ToastProvider>
   </StrictMode>,
 );

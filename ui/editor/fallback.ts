@@ -11,7 +11,7 @@ export function create(el: HTMLElement, o: EditorOptions): EditorHandle {
   ta.spellcheck = false;
   ta.addEventListener('input', () => o.onChange(ta.value));
   ta.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); o.onSave(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (e.shiftKey) o.onSaveWithBackup?.(); else o.onSave(); }
     if (e.key === 'Tab') { e.preventDefault(); const s = ta.selectionStart; ta.setRangeText('    ', s, ta.selectionEnd, 'end'); o.onChange(ta.value); }
   });
   el.appendChild(ta);
@@ -23,3 +23,6 @@ export function create(el: HTMLElement, o: EditorOptions): EditorHandle {
     dispose: () => ta.remove(),
   };
 }
+
+// The stand-in has no diff view; the app falls back to its own diff renderer.
+export const createDiff = undefined;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
-import { LuLayoutDashboard, LuFiles, LuNotebookPen, LuListTodo, LuHistory, LuGitBranch, LuRefreshCw, LuTriangleAlert, LuFolderOpen, LuLink, LuStar, LuCircleCheck } from 'react-icons/lu';
+import { LuLayoutDashboard, LuFiles, LuNotebookPen, LuListTodo, LuHistory, LuGitBranch, LuRefreshCw, LuTriangleAlert, LuFolderOpen, LuLink, LuStar, LuCircleCheck, LuShieldCheck } from 'react-icons/lu';
 import { call, isTauri, pickFolder, revealPath, onFileDrop, type Project, type ScanReport } from '../ipc';
 import { Empty, ProjectIcon, StatusPill, useAction, useToast, useConfirm } from '../components/common';
 import { ago, cx } from '../format';
@@ -10,14 +10,17 @@ import { NotesTab } from './Notes';
 import { TasksTab } from './Tasks';
 import { TimelineTab } from './Timeline';
 import { GitTab } from './Git';
+import { HistoryTab } from './History';
+import { ImportDialog } from './Import';
 
-export type Tab = 'overview' | 'files' | 'notes' | 'tasks' | 'timeline' | 'git';
+export type Tab = 'overview' | 'files' | 'notes' | 'tasks' | 'timeline' | 'backups' | 'git';
 const TABS: { id: Tab; label: string; icon: ReactElement }[] = [
   { id: 'overview', label: 'Overview', icon: <LuLayoutDashboard /> },
   { id: 'files', label: 'Files', icon: <LuFiles /> },
   { id: 'notes', label: 'Notes', icon: <LuNotebookPen /> },
   { id: 'tasks', label: 'Tasks & bugs', icon: <LuListTodo /> },
   { id: 'timeline', label: 'Timeline', icon: <LuHistory /> },
+  { id: 'backups', label: 'Backups', icon: <LuShieldCheck /> },
   { id: 'git', label: 'Git', icon: <LuGitBranch /> },
 ];
 
@@ -47,6 +50,7 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
   const [scanTick, setScanTick] = useState(0);
   const [dropping, setDropping] = useState(false);
   const [fileGroup, setFileGroup] = useState<string | undefined>(undefined);
+  const [dropImport, setDropImport] = useState<string[] | null>(null);
   const toast = useToast();
   const act = useAction();
   const confirm = useConfirm();
@@ -98,18 +102,15 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
     let off: (() => void) | undefined;
     onFileDrop(async (paths) => {
       if (!paths.length) return;
-      const ok = await confirm({ title: `Import ${paths.length} item(s)?`, confirm: 'Copy into project',
-        body: <>The files are <b>copied</b> into {project?.mode === 'linked' ? 'the linked folder' : 'managed storage'} (root of the project). Existing files are never overwritten; files whose content already exists in the project are skipped.</> });
-      if (!ok) return;
-      const r: any = await act(() => call('files.import', { projectId: id, paths, destDir: '' }));
-      if (r) { toast(`Imported ${r.imported.length}, skipped ${r.skipped.length}${r.errors.length ? `, ${r.errors.length} errors` : ''}`, r.errors.length ? 'error' : 'success'); setScanTick((t) => t + 1); reload(); }
+      // always confirm: shows the destination project/folder and what will happen
+      setDropImport(paths);
     }, setDropping).then((f) => { off = f; });
     return () => off?.();
   }, [id, project?.mode, act, confirm, toast, reload]);
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
-      if (e.altKey && /^[1-6]$/.test(e.key)) { e.preventDefault(); setTab(TABS[Number(e.key) - 1].id); }
+      if (e.altKey && /^[1-7]$/.test(e.key)) { e.preventDefault(); setTab(TABS[Number(e.key) - 1].id); }
       if (e.key === 'F5') { e.preventDefault(); scan(false); }
     };
     window.addEventListener('keydown', k);
@@ -167,9 +168,11 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
         {tab === 'notes' && <NotesTab ctx={ctx} />}
         {tab === 'tasks' && <TasksTab ctx={ctx} />}
         {tab === 'timeline' && <TimelineTab ctx={ctx} />}
+        {tab === 'backups' && <HistoryTab ctx={ctx} />}
         {tab === 'git' && <GitTab ctx={ctx} />}
       </div>
-      {dropping && <div className="dropzone"><div className="card pad"><LuCircleCheck /> Drop to import into “{project.name}”</div></div>}
+      {dropImport && <ImportDialog projectId={id} paths={dropImport} initialDir="" onClose={() => setDropImport(null)} onDone={() => { setScanTick((t) => t + 1); reload(); nav.refreshProjects(); }} />}
+      {dropping && <div className="dropzone"><div className="card pad"><LuCircleCheck /> Drop to import into “{project.name}” — you'll confirm the folder next</div></div>}
     </div>
   );
 }

@@ -9,16 +9,18 @@ import { cx } from '../format';
 
 // ---------------------------------------------------------------- toasts
 type ToastKind = 'info' | 'error' | 'success';
-interface ToastT { id: number; kind: ToastKind; text: string }
-const ToastCtx = createContext<(text: string, kind?: ToastKind) => void>(() => {});
+interface ToastAction { label: string; onClick: () => void }
+interface ToastT { id: number; kind: ToastKind; text: string; action?: ToastAction }
+const ToastCtx = createContext<(text: string, kind?: ToastKind, action?: ToastAction) => void>(() => {});
 export const useToast = () => useContext(ToastCtx);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastT[]>([]);
-  const push = useCallback((text: string, kind: ToastKind = 'info') => {
+  const push = useCallback((text: string, kind: ToastKind = 'info', action?: ToastAction) => {
     const id = Date.now() + Math.random();
-    setItems((x) => [...x.slice(-2), { id, kind, text }]);
-    setTimeout(() => setItems((x) => x.filter((t) => t.id !== id)), kind === 'error' ? 9000 : kind === 'success' ? 2500 : 4000);
+    setItems((x) => [...x.slice(-2), { id, kind, text, action }]);
+    // toasts with an action (e.g. Undo) stay long enough to use it
+    setTimeout(() => setItems((x) => x.filter((t) => t.id !== id)), action ? 15000 : kind === 'error' ? 9000 : kind === 'success' ? 2500 : 4000);
   }, []);
   return (
     <ToastCtx.Provider value={push}>
@@ -28,6 +30,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div key={t.id} className={cx('toast', t.kind)}>
             {t.kind === 'error' ? <LuCircleAlert color="var(--bad)" /> : t.kind === 'success' ? <LuCircleCheck color="var(--ok)" /> : <LuInfo color="var(--info)" />}
             <div className="grow" style={{ whiteSpace: 'pre-wrap' }}>{t.text}</div>
+            {t.action && <button className="btn sm" onClick={() => { setItems((x) => x.filter((y) => y.id !== t.id)); t.action!.onClick(); }}>{t.action.label}</button>}
             <button className="btn ghost sm icon" onClick={() => setItems((x) => x.filter((y) => y.id !== t.id))}><LuX /></button>
           </div>
         ))}
@@ -157,13 +160,28 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
   const openRef = useRef(false);
   openRef.current = !!menu;
   const isOpen = useCallback(() => openRef.current, []);
+  const menuEl = useRef<HTMLDivElement>(null);
+  const returnFocus = useRef<Element | null>(null);
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
+    const buttons = () => Array.from(menuEl.current?.querySelectorAll('button:not(:disabled)') || []) as HTMLButtonElement[];
+    // keyboard: arrows/Home/End move, Enter/Space activate, Escape/Tab close
+    const key = (e: KeyboardEvent) => {
+      const bs = buttons();
+      const i = bs.indexOf(document.activeElement as HTMLButtonElement);
+      if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); bs[(i + 1) % bs.length]?.focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); bs[(i - 1 + bs.length) % bs.length]?.focus(); }
+      else if (e.key === 'Home') { e.preventDefault(); bs[0]?.focus(); }
+      else if (e.key === 'End') { e.preventDefault(); bs[bs.length - 1]?.focus(); }
+      else if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); close(); (returnFocus.current as HTMLElement | null)?.focus?.(); }
+    };
+    returnFocus.current = document.activeElement;
+    requestAnimationFrame(() => buttons()[0]?.focus());
     window.addEventListener('mousedown', close);
     window.addEventListener('blur', close);
-    window.addEventListener('keydown', close);
-    return () => { window.removeEventListener('mousedown', close); window.removeEventListener('blur', close); window.removeEventListener('keydown', close); };
+    window.addEventListener('keydown', key, true);
+    return () => { window.removeEventListener('mousedown', close); window.removeEventListener('blur', close); window.removeEventListener('keydown', key, true); };
   }, [menu]);
   const open = useCallback((e: any, items: MenuItem[]) => {
     e.preventDefault();
@@ -178,9 +196,9 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
     <MenuCtx.Provider value={open}><MenuOpenCtx.Provider value={isOpen}>
       {children}
       {menu && (
-        <div className="ctx" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="ctx" role="menu" ref={menuEl} style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
           {menu.items.map((it, i) => it.sep ? <hr key={i} /> : (
-            <button key={i} disabled={it.disabled} style={it.danger ? { color: 'var(--bad)' } : undefined} onClick={() => { setMenu(null); it.onClick?.(); }}>
+            <button key={i} role="menuitem" disabled={it.disabled} style={it.danger ? { color: 'var(--bad)' } : undefined} onClick={() => { setMenu(null); it.onClick?.(); }}>
               {it.icon}{it.label}
             </button>
           ))}

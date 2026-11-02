@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { LuFolderOpen, LuShieldCheck, LuDatabaseBackup, LuRefreshCw, LuInfo, LuTriangleAlert } from 'react-icons/lu';
 import { call, pickFolder, revealPath, isTauri } from '../ipc';
-import { useAction, useLoad } from '../components/common';
+import { useAction, useConfirm, useLoad, useToast } from '../components/common';
+import { getSaveMode, setSaveMode, getLargeThreshold, setLargeThreshold, type SaveMode } from './SmartSave';
+import { bytes } from '../format';
 import type { Nav } from '../main';
 import { THEMES, applyTheme, getTheme, themeFromColor } from '../theme';
 
@@ -34,6 +36,65 @@ function Appearance() {
         <span className="prio p3">urgent</span>
         <div className="progress" style={{ width: 120 }}><div style={{ width: '60%' }} /></div>
       </div>
+    </div>
+  );
+}
+
+const SAVE_MODES: { id: SaveMode; label: string; hint: string }[] = [
+  { id: 'ask', label: 'Ask every time', hint: 'Ctrl+S opens the Smart Save dialog (name, description, backup).' },
+  { id: 'ask-large', label: 'Ask only for larger changes', hint: 'Small edits save straight away; the dialog appears when many lines changed.' },
+  { id: 'auto', label: 'Always back up before saving, without asking', hint: 'Ctrl+S saves immediately and keeps a copy of the previous state.' },
+  { id: 'manual', label: 'Just save', hint: 'Ctrl+S saves immediately. Use Ctrl+Shift+S or “Save with backup…” when you want a backup.' },
+];
+
+function EditorSaving() {
+  const [mode, setMode] = useState<SaveMode>(getSaveMode);
+  const [lines, setLines] = useState(getLargeThreshold);
+  return (
+    <div className="card pad" style={{ marginBottom: 16 }}>
+      <h2 style={{ marginBottom: 4 }}>Editor &amp; saving</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>What happens when you press Ctrl+S in Project Vault’s editor. Ctrl+Shift+S always opens the Smart Save dialog.</p>
+      {SAVE_MODES.map((m) => (
+        <label key={m.id} className="row" style={{ alignItems: 'flex-start', marginBottom: 6 }}>
+          <input type="radio" name="savemode" checked={mode === m.id} onChange={() => { setMode(m.id); setSaveMode(m.id); }} style={{ marginTop: 3 }} />
+          <span><b>{m.label}</b><div className="small dim">{m.hint}</div></span>
+        </label>
+      ))}
+      {mode === 'ask-large' && <div className="row small" style={{ marginLeft: 24 }}>“Larger” means at least <input className="input" type="number" min={1} style={{ width: 70, padding: '2px 6px' }} value={lines} onChange={(e) => { const n = Math.max(1, Number(e.target.value) || 1); setLines(n); setLargeThreshold(n); }} /> changed lines.</div>}
+      <p className="small dim" style={{ marginBottom: 0 }}>Separately, each project can keep automatic versions whenever a file changes on disk (project ⋯ → Edit → Files &amp; versions).</p>
+    </div>
+  );
+}
+
+function BackupStorage() {
+  const st = useLoad(() => call<any>('storage.get'), []);
+  const [busy, setBusy] = useState(false);
+  const confirm = useConfirm();
+  const act = useAction();
+  const toast = useToast();
+  const change = async () => {
+    const dir = await pickFolder('Choose where Project Vault keeps file backups and snapshots');
+    if (!dir) return;
+    if (!(await confirm({ title: 'Move backup storage?', confirm: 'Copy and switch', body: <>All stored backups and snapshots are <b>copied</b> to <span className="mono">{dir}</span> and verified. Project Vault then uses the new location. The old folder is left as it is — delete it yourself once you’re happy.</> }))) return;
+    setBusy(true);
+    const r: any = await act(() => call('storage.set', { path: dir }));
+    setBusy(false);
+    if (r) { toast(`Backup storage is now ${r.root} (${r.copied} object(s) copied)`, 'success'); st.reload(); }
+  };
+  return (
+    <div className="card pad" style={{ marginBottom: 16 }}>
+      <h2 style={{ marginBottom: 4 }}>Backup storage location</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>Where file backups, automatic versions and project snapshots are stored. Each backup also gets a readable <code>.json</code> description next to it, so the folder makes sense even without Project Vault.</p>
+      {st.error ? <div className="alert bad">{st.error}</div> : !st.data ? <div className="muted small">Loading…</div> : <>
+        <div className="row" style={{ flexWrap: 'wrap' }}>
+          <span className="mono small grow" style={{ wordBreak: 'break-all' }}>{st.data.root}</span>
+          {st.data.available ? <span className="badge ok">available</span> : <span className="badge bad">not reachable</span>}
+          {isTauri && st.data.available && <button className="btn sm icon" title="Show in Explorer" onClick={() => act(() => revealPath(st.data.root))}><LuFolderOpen /></button>}
+          <button className="btn sm" disabled={busy} onClick={change}>{busy ? 'Copying…' : 'Change…'}</button>
+        </div>
+        {!st.data.available && <div className="alert bad small" style={{ marginTop: 8 }}>The folder can’t be reached (unplugged drive?). Backups can’t be saved or restored until it’s available again — nothing is written anywhere else.</div>}
+        <p className="small" style={{ marginBottom: 0 }}>{st.data.stats.versions} stored versions of {st.data.stats.files} files · {bytes(st.data.stats.bytes)}</p>
+      </>}
     </div>
   );
 }
@@ -74,6 +135,8 @@ export function SettingsView({ nav }: { nav: Nav }) {
     <div className="page" style={{ maxWidth: 900 }}>
       <h1 style={{ marginBottom: 16 }}>Settings & backup</h1>
       <Appearance />
+      <EditorSaving />
+      <BackupStorage />
       <div className="card pad" style={{ marginBottom: 16 }}>
         <h2 className="row" style={{ marginBottom: 8 }}><LuDatabaseBackup /> Back up</h2>
         <p className="muted small" style={{ marginTop: 0 }}>

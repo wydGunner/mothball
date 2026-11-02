@@ -1,17 +1,23 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react';
-import { LuSearch, LuFile, LuNotebookPen, LuListTodo, LuBug, LuFolder, LuBookOpen } from 'react-icons/lu';
+import { LuSearch, LuFile, LuNotebookPen, LuListTodo, LuBug, LuFolder, LuBookOpen, LuShieldCheck, LuCamera } from 'react-icons/lu';
 import { call } from '../ipc';
 import { Empty } from '../components/common';
-import { cx } from '../format';
+import { cx, dateTime } from '../format';
 import type { Nav } from '../main';
 
-export interface Hit { type: string; id: string; projectId: string; projectName?: string; title: string; snippet: string; path?: string; state?: string; name?: string; ext?: string; kind?: string; absPath?: string }
+export interface Hit {
+  type: string; id: string; projectId: string; projectName?: string; title: string; snippet: string; path?: string; state?: string; name?: string; ext?: string; kind?: string; absPath?: string;
+  /** backup / snapshot results */
+  fileId?: string; fileName?: string; backupName?: string; description?: string; reason?: string; at?: number; fileState?: string; fileCount?: number;
+}
 
-export const HIT_ICON: Record<string, ReactElement> = { project: <LuFolder />, file: <LuFile />, note: <LuNotebookPen />, task: <LuListTodo />, bug: <LuBug color="var(--accent)" />, journal: <LuBookOpen /> };
-const TYPES = [['', 'Everything'], ['project', 'Projects'], ['file', 'Files'], ['note', 'Notes'], ['task', 'Tasks'], ['bug', 'Bugs'], ['journal', 'Journal']] as const;
+export const HIT_ICON: Record<string, ReactElement> = { project: <LuFolder />, file: <LuFile />, note: <LuNotebookPen />, task: <LuListTodo />, bug: <LuBug color="var(--accent)" />, journal: <LuBookOpen />, backup: <LuShieldCheck />, snapshot: <LuCamera /> };
+const TYPES = [['', 'Everything'], ['project', 'Projects'], ['file', 'Files'], ['note', 'Notes'], ['task', 'Tasks'], ['bug', 'Bugs'], ['journal', 'Journal'], ['backup', 'Backups'], ['snapshot', 'Snapshots']] as const;
 
 export function openHit(nav: Nav, h: Hit) {
   if (h.type === 'project') return nav.go({ view: 'project', id: h.id });
+  if (h.type === 'backup') return nav.go({ view: 'project', id: h.projectId, tab: 'files', focus: { type: 'file', id: h.fileId!, action: 'history', versionId: h.id, nonce: Date.now() } });
+  if (h.type === 'snapshot') return nav.go({ view: 'project', id: h.projectId, tab: 'backups' });
   const focusType = h.type === 'file' ? 'file' : h.type === 'note' ? 'note' : h.type === 'journal' ? undefined : 'task';
   const tab = h.type === 'file' ? 'files' : h.type === 'note' ? 'notes' : h.type === 'journal' ? 'timeline' : 'tasks';
   nav.go({ view: 'project', id: h.projectId, tab, focus: focusType ? { type: focusType, id: h.id } : undefined });
@@ -55,8 +61,10 @@ export function SearchView({ nav, initial }: { nav: Nav; initial?: string }) {
         : !hits.length ? <Empty title="No results" />
         : hits.map((h) => (
           <div key={h.type + h.id} className="card" style={{ padding: '10px 14px', marginBottom: 6, cursor: 'pointer' }} onClick={() => openHit(nav, h)}>
-            <div className="row">{HIT_ICON[h.type]}<b className={h.type === 'file' ? 'mono' : ''}>{h.title}</b>{h.state === 'missing' && <span className="badge bad">missing</span>}<span className="small dim right">{h.type} · {h.projectName}</span></div>
-            {h.path && <div className="small dim mono">{h.path}</div>}
+            <div className="row">{HIT_ICON[h.type]}{(h.type === 'backup' || h.type === 'snapshot') && <span className={`kindtag ${h.type}`}>{h.type === 'backup' ? 'backup copy' : 'snapshot'}</span>}<b className={h.type === 'file' || h.type === 'backup' ? 'mono' : ''}>{h.title}</b>{h.state === 'missing' && <span className="badge bad">missing</span>}<span className="small dim right">{h.type === 'backup' ? 'stored copy, not the live file' : h.type} · {h.projectName}</span></div>
+            {h.type === 'backup' && <div className="small dim">Backup of <span className="mono">{h.path}</span>{h.at ? ` · ${dateTime(h.at)}` : ''}</div>}
+            {h.type === 'snapshot' && <div className="small dim">Project snapshot{h.at ? ` · ${dateTime(h.at)}` : ''}{h.fileCount != null ? ` · ${h.fileCount} files` : ''}</div>}
+            {h.path && h.type !== 'backup' && <div className="small dim mono">{h.path}</div>}
             <Snippet text={h.snippet} />
           </div>
         ))}

@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CodeEditor } from '../components/CodeEditor';
+import type { EditorHandle } from '../../editor/api';
 import { useFileActions, TEXT_EDITABLE, type FileRef } from '../fileActions';
 import {
   LuFolder, LuFolderOpen, LuChevronRight, LuChevronDown, LuSearch, LuExternalLink, LuFolderSearch, LuCopy, LuTriangleAlert,
-  LuUpload, LuEye, LuFilter, LuCode, LuSave, LuArrowLeft, LuMaximize2, LuMinimize2, LuTrash2, LuArchiveRestore, LuEllipsis, LuPencil, LuLink2, LuX, LuHistory, LuGitCommitHorizontal, LuFileQuestion, LuCopyCheck, LuCircleCheck,
+  LuUpload, LuEye, LuFilter, LuCode, LuSave, LuArrowLeft, LuMaximize2, LuMinimize2, LuTrash2, LuArchiveRestore, LuEllipsis, LuShieldCheck, LuPencil, LuLink2, LuX, LuHistory, LuGitCommitHorizontal, LuFileQuestion, LuCopyCheck, LuCircleCheck,
 } from 'react-icons/lu';
 import { call, isTauri, openPath, pickFiles, revealPath, type FileDetail, type FileDocs, type VFile } from '../ipc';
 import { Dropdown, Empty, KindIcon, useConfirm, Markdown, SaveState, TagInput, useAction, useAutosave, useContextMenu, useLoad, useResizable, useToast } from '../components/common';
 import { ago, bytes, cx, dateTime } from '../format';
 import { LinkPicker, LinkList } from './Links';
 import { CustomFields } from './Overview';
-import { VersionsPanel } from './Versions';
+import { VersionsPanel, FileTimeline } from './Versions';
+import { ImportDialog } from './Import';
+import { SmartSaveDialog, changedLines, getLargeThreshold, getSaveMode, type SmartSaveChoice } from './SmartSave';
 import { DiffView } from './Git';
 import type { ProjectCtx } from './Project';
 
@@ -53,6 +56,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   }, [group, groups.data]);
   const [selected, setSelectedRaw] = useState<string | null>(ctx.focus?.type === 'file' ? ctx.focus.id : null);
   const [editing, setEditing] = useState<string | null>(null);
+  const [importing, setImporting] = useState<string[] | null>(null);
   const [wide, setWide] = useState(() => localStorage.getItem('pv.editorWide') === '1');
   const toggleWide = () => setWide((w) => { localStorage.setItem('pv.editorWide', w ? '0' : '1'); return !w; });
   const full = wide && !!editing;
@@ -77,8 +81,14 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   // Reveal/open requests (from search, links, Overview). Clears filters that could
   // hide the file, opens its folder, selects it, and scrolls it into view.
   const pendingReveal = useRef<string | null>(null);
+  const [highlightV, setHighlightV] = useState<string | undefined>(undefined);
   useEffect(() => {
     const fc = ctx.focus;
+    if (fc?.type === 'folder') {
+      if (editing && !confirmLeave()) return;
+      setQuery(''); setKind(''); setGroup('all'); setShow('all'); setDir(fc.id); setSelectedRaw(null); setEditing(null); setHighlightV(undefined);
+      return;
+    }
     if (fc?.type !== 'file' || !fc.id) return;
     if (editing && editing !== fc.id && !confirmLeave()) return;
     dirtyRef.current = false;
@@ -89,6 +99,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
       setDir(fc.action === 'reveal' ? parent : '');
       setSelectedRaw(f.id);
       setEditing(fc.action === 'edit' && f.state === 'present' ? f.id : null);
+      setHighlightV(fc.action === 'history' ? fc.versionId || '' : undefined);
       pendingReveal.current = f.id;
     }).catch(() => setSelectedRaw(fc.id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -128,9 +139,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
       { name: 'All files', extensions: ['*'] },
     ] : undefined;
     const paths = await pickFiles('Choose files to copy into this project', filters);
-    if (!paths.length) return;
-    const r: any = await act(() => call('files.import', { projectId: pid, paths, destDir: dir }));
-    if (r) { toast(`Imported ${r.imported.length}, skipped ${r.skipped.length}${r.skipped.length ? ` (${r.skipped.map((s: any) => s.reason).slice(0, 2).join('; ')})` : ''}`, 'success'); ctx.scan(true); }
+    if (paths.length) setImporting(paths);
   };
 
   const onRowClick = (e: React.MouseEvent, f: VFile, i: number) => {
@@ -147,7 +156,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   };
 
   const toRef = (f: VFile, abs?: string): FileRef => ({ id: f.id, name: f.name, path: f.path, absPath: abs, projectId: pid, projectName: ctx.project.name, state: f.state, editable: TEXT_EDITABLE(f.kind, f.ext, f.size) });
-  const fileMenu = async (e: React.MouseEvent, f: VFile) => {
+  const fileMenu = async (e: { clientX: number; clientY: number; preventDefault(): void }, f: VFile) => {
     e.preventDefault();
     const pos = { clientX: e.clientX, clientY: e.clientY, preventDefault() {} };
     const sel = multi.size > 1 && multi.has(f.id) ? (files.data || []).filter((x) => multi.has(x.id)) : [f];
@@ -156,6 +165,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
     menu(pos, fileActions.menuItems(toRef(f, abs), {
       selection: sel.map((x) => toRef(x)),
       onEdit: () => { setSelected(f.id); setEditing(f.id); },
+      onHistory: () => { setEditing(null); setSelected(f.id); setHighlightV(''); setTimeout(() => setHighlightV(undefined), 400); },
       onChanged: () => { files.reload(); dirs.reload(); ctx.reload(); },
       extra: [{ label: sel.length > 1 ? `Mark ${sel.length} files reviewed` : 'Mark reviewed', icon: <LuCircleCheck />, onClick: async () => { await act(() => call('files.markReviewed', { ids: sel.map((x) => x.id) })); files.reload(); ctx.reload(); } }],
     }));
@@ -167,6 +177,12 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
     const i = files.data.findIndex((x) => x.id === selected);
     if (e.key === 'ArrowDown') { e.preventDefault(); setSelected(files.data[Math.min(files.data.length - 1, i + 1)].id); }
     if (e.key === 'ArrowUp') { e.preventDefault(); setSelected(files.data[Math.max(0, i - 1)].id); }
+    if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && i >= 0) {
+      e.preventDefault();
+      const r = (document.querySelector('.filerow.sel') as HTMLElement | null)?.getBoundingClientRect();
+      fileMenu({ clientX: (r?.left ?? 200) + 60, clientY: r?.bottom ?? 200, preventDefault() {} }, files.data[i]);
+    }
+    if (e.key === 'Enter' && i >= 0 && canEdit(files.data[i]) && !editing) { e.preventDefault(); setEditing(files.data[i].id); }
   };
 
   const renderDir = (n: DirNode, depth: number): React.ReactNode => {
@@ -191,6 +207,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
         </div>
         <div className="tree">{renderDir(root, 0)}</div>
       </div>
+      {importing && <ImportDialog projectId={pid} paths={importing} initialDir={dir} onClose={() => setImporting(null)} onDone={() => { ctx.scan(true); }} />}
       {!full && tree.handle}
       <div className="pane" style={{ width: listW.width, flex: 'none', borderRight: '1px solid var(--line)', display: full ? 'none' : 'flex', flexDirection: 'column' }}>
         <div className="panehead" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6, background: 'var(--bg0)' }}>
@@ -237,7 +254,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
             onDirty={(d) => { dirtyRef.current = d; }} wide={full} onToggleWide={toggleWide}
             onClose={() => { if (confirmLeave()) { dirtyRef.current = false; setEditing(null); } }}
             onSaved={() => { files.reload(); ctx.reload(); }} />
-          : selected ? <FileDetailPanel key={selected} fileId={selected} ctx={ctx} onEdit={() => setEditing(selected)} onChanged={() => { files.reload(); ctx.reload(); }} />
+          : selected ? <FileDetailPanel key={selected} fileId={selected} ctx={ctx} highlightVersion={highlightV} onEdit={() => setEditing(selected)} onChanged={() => { files.reload(); ctx.reload(); }} />
           : <Empty icon={<LuPencil />} title="Select a file">Pick a file to see what it does, add notes and warnings, link related scripts, notes and bugs, and browse its history.</Empty>}
       </div>
     </div>
@@ -247,7 +264,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
 const EDITABLE_EXTS = new Set(['md', 'markdown', 'txt', 'csv', 'log', 'gcode', 'scad', 'meta', 'asmdef', 'gitignore', 'env', 'tscn', 'tres', 'kicad_sch', 'kicad_pro', 'svg', 'shader', 'hlsl', 'glsl']);
 const canEdit = (f: VFile) => f.state === 'present' && f.size <= 8 * 1024 * 1024 && (f.kind === 'code' || f.kind === 'config' || EDITABLE_EXTS.has(f.ext) || (f.ext === '' && f.size < 1024 * 1024));
 
-function FileDetailPanel({ fileId, ctx, onChanged, onEdit }: { fileId: string; ctx: ProjectCtx; onChanged: () => void; onEdit: () => void }) {
+function FileDetailPanel({ fileId, ctx, onChanged, onEdit, highlightVersion }: { fileId: string; ctx: ProjectCtx; onChanged: () => void; onEdit: () => void; highlightVersion?: string }) {
   const menu = useContextMenu();
   const fileActions = useFileActions();
   const d = useLoad(() => call<FileDetail>('files.get', { id: fileId }), [fileId, ctx.scanTick]);
@@ -355,7 +372,7 @@ function FileDetailPanel({ fileId, ctx, onChanged, onEdit }: { fileId: string; c
         </div>
       </div>
 
-      <FileHistory f={f} ctx={ctx} />
+      <FileHistory f={f} ctx={ctx} highlight={highlightVersion} />
       {linking && <LinkPicker ctx={ctx} from={{ type: 'file', id: f.id }} onClose={() => setLinking(false)} onLinked={d.reload} />}
     </div>
   );
@@ -405,29 +422,38 @@ function FilePreview({ f }: { f: FileDetail }) {
   );
 }
 
-function FileHistory({ f, ctx }: { f: FileDetail; ctx: ProjectCtx }) {
-  const [tab, setTab] = useState<'versions' | 'changes' | 'git' | 'revisions'>('versions');
+function FileHistory({ f, ctx, highlight }: { f: FileDetail; ctx: ProjectCtx; highlight?: string }) {
+  const [tab, setTab] = useState<'timeline' | 'versions' | 'changes' | 'git' | 'revisions'>(highlight ? 'versions' : 'timeline');
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (highlight === undefined) return;
+    if (highlight) setTab('versions');
+    setTimeout(() => box.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 150);
+  }, [highlight]);
   const git = useLoad(() => tab === 'git' ? call<any[]>('git.log', { projectId: ctx.project.id, path: f.path, limit: 50 }) : Promise.resolve([]), [tab, f.id]);
   const revs = useLoad(() => tab === 'revisions' ? call<any[]>('files.docRevisions', { id: f.id }) : Promise.resolve([]), [tab, f.id]);
   const [diff, setDiff] = useState<{ title: string; text: string } | null>(null);
   return (
-    <div className="docsec">
-      <div className="row" style={{ marginBottom: 8 }}>
-        <h3 className="grow"><LuHistory /> History</h3>
-        <div className="seg">
-          <button className={cx(tab === 'versions' && 'on')} onClick={() => setTab('versions')}>Versions{f.versions ? ` (${f.versions})` : ''}</button>
+    <div className="docsec" ref={box}>
+      <div className="row" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
+        <h3 className="grow" style={{ whiteSpace: 'nowrap' }}><LuHistory /> History</h3>
+        <div className="seg" style={{ flexWrap: 'wrap' }}>
+          <button className={cx(tab === 'timeline' && 'on')} onClick={() => setTab('timeline')}>Timeline</button>
+          <button className={cx(tab === 'versions' && 'on')} onClick={() => setTab('versions')}>Backups &amp; versions{f.versions ? ` (${f.versions})` : ''}</button>
           <button className={cx(tab === 'changes' && 'on')} onClick={() => setTab('changes')}>Activity</button>
           <button className={cx(tab === 'git' && 'on')} onClick={() => setTab('git')}>Git commits</button>
           <button className={cx(tab === 'revisions' && 'on')} onClick={() => setTab('revisions')}>Note revisions</button>
         </div>
       </div>
       <p className="small dim" style={{ marginTop: 0 }}>
+        {tab === 'timeline' && 'Everything known about this file, newest first. Each entry says where it came from; only entries with stored contents can be restored.'}
         {tab === 'versions' && 'Stored copies of this file. Compare any two, or roll back.'}
         {tab === 'changes' && 'When Project Vault noticed the file being added, edited, moved or deleted.'}
         {tab === 'git' && 'Commits from the Git repository that touched this file (follows renames).'}
         {tab === 'revisions' && 'Earlier versions of this file’s documentation.'}
       </p>
-      {tab === 'versions' && <VersionsPanel fileId={f.id} fileName={f.name} present={f.state === 'present'} refreshKey={`${f.sha256}-${f.versions}-${ctx.scanTick}`} onRestored={() => ctx.scan(true)} />}
+      {tab === 'timeline' && <FileTimeline fileId={f.id} fileName={f.name} absPath={f.absPath} path={f.path} projectId={ctx.project.id} present={f.state === 'present'} refreshKey={`${f.sha256}-${f.versions}-${ctx.scanTick}`} onRestored={() => ctx.scan(true)} />}
+      {tab === 'versions' && <VersionsPanel fileId={f.id} fileName={f.name} absPath={f.absPath} present={f.state === 'present'} highlight={highlight} refreshKey={`${f.sha256}-${f.versions}-${ctx.scanTick}`} onRestored={() => ctx.scan(true)} />}
       {tab === 'changes' && (f.events.length ? f.events.map((e, i) => (
         <div key={i} className="row small" style={{ padding: '3px 0' }}><span className="pill" style={{ minWidth: 72, justifyContent: 'center' }}>{e.kind}</span><span className="grow">{e.detail}</span><span className="dim" title={dateTime(e.at)}>{ago(e.at)}</span></div>
       )) : <div className="small muted">No changes since it was first indexed ({dateTime(f.firstSeen)}).</div>)}
@@ -463,22 +489,39 @@ function EditorPane({ fileId, ctx, onClose, onSaved, onDirty, wide, onToggleWide
     return () => window.removeEventListener('beforeunload', warn);
   }, []);
 
-  const save = async (overwriteSha?: string) => {
+  const [smart, setSmart] = useState(false);
+  const edHandle = useRef<EditorHandle | null>(null);
+  // keep typing after the Smart Save dialog closes
+  const refocus = () => setTimeout(() => edHandle.current?.focus(), 0);
+  // Ctrl+S: follows the Smart Save setting. Ctrl+Shift+S / button: always the dialog.
+  const requestSave = () => {
+    const { text: t, saved: s0 } = latest.current;
+    if (t === null || t === s0 || saving) return;
+    const mode = getSaveMode();
+    if (mode === 'ask' || (mode === 'ask-large' && changedLines(s0, t) >= getLargeThreshold())) setSmart(true);
+    else if (mode === 'auto') save(undefined, { backupBefore: true, backupAfter: false, name: '', description: '', tags: '' });
+    else save();
+  };
+  const save = async (overwriteSha?: string, backup?: SmartSaveChoice) => {
     const { text: t, sha: expected } = latest.current;
     if (t === null || saving) return;
     setSaving(true);
     try {
-      const r: any = await call('files.writeText', { id: fileId, text: t, expectedSha: overwriteSha || expected, eol: doc.data.eol, bom: doc.data.bom });
+      const args = { id: fileId, text: t, expectedSha: overwriteSha || expected, eol: doc.data.eol, bom: doc.data.bom };
+      const r: any = backup ? await call('versions.smartSave', { ...args, ...backup }) : await call('files.writeText', args);
       setSha(r.sha256);
       setSaved(t);
-      toast('Saved — previous version kept in History', 'success');
+      const kept = [r.beforeName && `“${r.beforeName}” (before your edits)`, r.afterName && `“${r.afterName}” (what you saved)`].filter(Boolean);
+      toast(backup && (backup.backupBefore || backup.backupAfter)
+        ? `Saved with backup${kept.length ? `: ${kept.join(' and ')}` : ''} — see the file’s History`
+        : 'Saved — previous version kept in History', 'success');
       onSaved();
     } catch (e: any) {
       const m = /^CONFLICT:([0-9a-f]{64}):(.*)$/s.exec(e.message);
       if (m) {
         const overwrite = await confirm({ title: 'File changed on disk', confirm: 'Overwrite with my version', danger: true,
           body: <>Another program changed <span className="mono">{doc.data.path}</span> after you opened it. Overwrite it with your version? The other program's version will be kept in History, so nothing is lost. Choose Cancel to keep editing (you can copy your changes, then close and reopen to see the new version).</> });
-        if (overwrite) { setSaving(false); return save(m[1]); }
+        if (overwrite) { setSaving(false); return save(m[1], backup); }
       } else toast(e.message, 'error');
     } finally {
       setSaving(false);
@@ -493,15 +536,19 @@ function EditorPane({ fileId, ctx, onClose, onSaved, onDirty, wide, onToggleWide
     <div className="editor-pane">
       <div className="panehead">
         <button className="btn ghost sm" onClick={onClose} title="Back to file notes"><LuArrowLeft /></button>
-        <div className="grow" style={{ minWidth: 0 }}>
+        <div className="grow" style={{ minWidth: 110 }}>
           <div className="row" style={{ gap: 6 }}><b>{info.data?.name || doc.data.path.split('/').pop()}</b>{dirty && <span className="dirty-dot" title="Unsaved changes" />}{doc.data.readonly && <span className="badge">read-only</span>}</div>
           <div className="small dim mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.data.path} · {doc.data.eol.toUpperCase()}{doc.data.bom ? ' · BOM' : ''}</div>
         </div>
-        <span className="small dim">{saving ? 'Saving…' : dirty ? 'Unsaved — Ctrl+S to save' : 'Saved'}</span>
+        <span className="small dim" style={{ minWidth: 0, flexShrink: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={dirty ? 'Unsaved — Ctrl+S to save, Ctrl+Shift+S to save with a backup' : undefined}>{saving ? 'Saving…' : dirty ? 'Unsaved — Ctrl+S to save' : 'Saved'}</span>
+        <button className="btn sm" disabled={!dirty || saving || doc.data.readonly} onClick={() => setSmart(true)} title="Describe the change and keep a named backup (Ctrl+Shift+S)"><LuShieldCheck /> Save with backup…</button>
         <button className="btn ghost sm icon" title={wide ? 'Show file list' : 'Full width'} onClick={onToggleWide}>{wide ? <LuMinimize2 /> : <LuMaximize2 />}</button>
-        <button className="btn primary sm" disabled={!dirty || saving || doc.data.readonly} onClick={() => save()}><LuSave /> Save</button>
+        <button className="btn primary sm" disabled={!dirty || saving || doc.data.readonly} onClick={requestSave}><LuSave /> Save</button>
       </div>
-      <CodeEditor value={text} ext={info.data?.ext || doc.data.path.split('.').pop() || ''} readOnly={doc.data.readonly} onChange={setText} onSave={() => save()} />
+      <CodeEditor value={text} ext={info.data?.ext || doc.data.path.split('.').pop() || ''} readOnly={doc.data.readonly} onChange={setText} onSave={requestSave} onReady={(h) => { edHandle.current = h; }} onSaveWithBackup={() => { if (latest.current.text !== latest.current.saved) setSmart(true); }} />
+      {smart && <SmartSaveDialog fileId={fileId} fileName={info.data?.name || doc.data.path.split('/').pop()} projectName={ctx.project.name} projectId={ctx.project.id}
+        relDir={doc.data.path.includes('/') ? doc.data.path.slice(0, doc.data.path.lastIndexOf('/')) : ''} linesChanged={changedLines(saved, text)}
+        onCancel={() => { setSmart(false); refocus(); }} onSaveNormally={() => { setSmart(false); save().then(refocus); }} onSaveWithBackup={(c) => { setSmart(false); save(undefined, c).then(refocus); }} />}
     </div>
   );
 }

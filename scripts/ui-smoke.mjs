@@ -135,7 +135,7 @@ await step('Detect external modification', async () => {
 });
 
 await step('Compare file versions (no Git needed)', async () => {
-  await page.getByRole('button', { name: /^Versions/ }).click();
+  await page.getByRole('button', { name: /^Backups & versions/ }).click();
   await page.locator('.verrow').nth(1).getByRole('button', { name: /vs now/ }).click();
   await page.locator('.modal .dl.add, .modal .half.add').first().waitFor();
   await page.locator('.modal').getByText('// tweak').first().waitFor();
@@ -206,20 +206,169 @@ await step('Edit a file in the built-in editor', async () => {
   await page.keyboard.type('// edited in Project Vault');
   await page.getByText('Unsaved — Ctrl+S to save').waitFor();
   if (shots) await page.screenshot({ path: join(shots, 'x-editor.png') });
+  const before = readFileSync(join(omen, 'scripts/mp/_util.gsc'), 'utf8');
+  // default save mode asks: Ctrl+S opens Smart Save; Cancel changes nothing
   await page.keyboard.press('Control+S');
-  await page.getByText('Saved — previous version kept in History').waitFor();
+  const dlg = page.locator('.modal').filter({ hasText: 'What changed in this version?' });
+  await dlg.waitFor();
+  await dlg.getByRole('button', { name: 'Cancel' }).click();
+  await dlg.waitFor({ state: 'detached' });
+  if (readFileSync(join(omen, 'scripts/mp/_util.gsc'), 'utf8') !== before) throw new Error('Cancel wrote the file');
+  await page.getByText('Unsaved — Ctrl+S to save').waitFor();
+  // neutral name with no description; descriptive once described
+  await page.waitForFunction(() => document.activeElement?.closest('.pv-editor') != null); // focus returns to the editor
+  await page.keyboard.press('Control+S');
+  await dlg.waitFor();
+  await dlg.locator('input.mono').first().evaluate((el) => new Promise((r) => { const t0 = Date.now(); const w = () => (el.value || Date.now() - t0 > 3000 ? r() : setTimeout(w, 50)); w(); }));
+  const neutral = await dlg.locator('input.mono').first().inputValue();
+  if (!/^_util_v\d+_\d{4}-\d{2}-\d{2}\.gsc$/.test(neutral)) throw new Error('unexpected neutral name: ' + neutral);
+  await dlg.locator('textarea').fill('Instashoot fix: moved timing check before animation');
+  await page.waitForFunction(() => /instashoot/i.test(document.querySelector('.modal input.mono')?.value || ''));
+  if (shots) await page.screenshot({ path: join(shots, 'x-smart-save.png') });
+  await dlg.getByRole('button', { name: 'Save with backup', exact: true }).click();
+  await page.getByText(/Saved with backup/).first().waitFor();
   const disk = readFileSync(join(omen, 'scripts/mp/_util.gsc'), 'utf8');
   if (!disk.includes('// edited in Project Vault')) throw new Error('editor save did not reach disk: ' + disk);
+  const fid = (await api('search', { query: '_util', types: ['file'] })).data[0].id;
+  const vs = (await api('versions.list', { fileId: fid })).data;
+  const pre = vs.find((v) => v.reason === 'pre-save');
+  if (!pre || !/instashoot.*_before\.gsc$/.test(pre.name) || !pre.note.includes('timing check')) throw new Error('pre-save backup missing: ' + JSON.stringify(vs));
   // external change while open -> conflict prompt, nothing overwritten silently
   writeFileSync(join(omen, 'scripts/mp/_util.gsc'), disk + '\n// external\n');
+  await page.locator('.pv-editor textarea').first().focus();
   await page.keyboard.type(' again');
   await page.keyboard.press('Control+S');
+  await dlg.waitFor();
+  await dlg.getByRole('button', { name: 'Save normally' }).click();
   await page.getByText('File changed on disk').waitFor();
   await page.locator('.modal').getByRole('button', { name: 'Cancel' }).click();
   if (!readFileSync(join(omen, 'scripts/mp/_util.gsc'), 'utf8').includes('// external')) throw new Error('external change was overwritten');
   page.once('dialog', (d) => d.accept());
   await page.getByTitle('Back to file notes').click();
-  await page.getByRole('button', { name: /^Versions/ }).waitFor();
+  await page.getByRole('button', { name: /^Backups & versions/ }).waitFor();
+});
+
+await step('Version history: search, compare, restore', async () => {
+  await page.getByRole('button', { name: /^Backups & versions/ }).click();
+  const row = page.locator('.verrow').filter({ hasText: '_before.gsc' });
+  await row.waitFor();
+  await page.getByPlaceholder('Search backups — name, description, tags…').fill('timing check');
+  if (await page.locator('.verrow').count() !== 1) throw new Error('backup search should leave one row');
+  await row.getByRole('button', { name: /vs now/ }).click();
+  const cmp = page.locator('.modal').filter({ hasText: 'Changes in' });
+  await cmp.getByText('// external').first().waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-compare.png') });
+  await cmp.locator('.modal-head button, button[aria-label="Close"]').first().click().catch(() => page.keyboard.press('Escape'));
+  await cmp.waitFor({ state: 'detached' });
+  await row.getByRole('button', { name: /Restore/ }).click();
+  const rd = page.locator('.modal').filter({ hasText: 'Restore this version?' });
+  await rd.getByText('_util.gsc', { exact: false }).first().waitFor();
+  await rd.getByText('Keep a backup of the current file first').waitFor();
+  await rd.getByRole('button', { name: 'Restore' }).click();
+  await rd.waitFor({ state: 'detached' });
+  const now = readFileSync(join(omen, 'scripts/mp/_util.gsc'), 'utf8');
+  if (now.includes('// edited in Project Vault')) throw new Error('restore did not bring back the pre-save state: ' + now);
+  const fid = (await api('search', { query: '_util', types: ['file'] })).data[0].id;
+  const vs = (await api('versions.list', { fileId: fid })).data;
+  if (!vs.some((v) => v.reason === 'before-restore' && v.sha256 && !v.isCurrent)) throw new Error('current file was not kept before restoring');
+  // the per-file timeline labels sources
+  await page.getByPlaceholder('Search backups — name, description, tags…').fill('');
+  await page.locator('.seg button').filter({ hasText: 'Timeline' }).click();
+  await page.locator('.srcbadge').filter({ hasText: 'Backup' }).first().waitFor();
+  await page.locator('.srcbadge').filter({ hasText: 'Git commit' }).first().waitFor();
+});
+
+await step('Global search finds backups (backup actions only)', async () => {
+  await page.keyboard.press('Control+K');
+  await page.locator('.palette input').fill('before animation');
+  const it = page.locator('.palette .item.backupitem').first();
+  await it.waitFor();
+  await it.getByText('backup copy').waitFor();
+  await it.click({ button: 'right' });
+  await page.locator('.ctx button').filter({ hasText: 'Compare with current file' }).waitFor();
+  await page.locator('.ctx button').filter({ hasText: 'Restore this backup…' }).waitFor();
+  for (const bad of ['Delete file from disk…', 'Rename…', 'Edit in Project Vault']) if (await page.locator('.ctx button').filter({ hasText: bad }).count()) throw new Error('live-file action on a backup: ' + bad);
+  await page.keyboard.press('Escape');
+  await page.locator('.ctx').waitFor({ state: 'detached' });
+  await page.keyboard.press('Enter'); // opens the file's history with the backup highlighted
+  await page.locator('.verrow.flashv, .verrow').filter({ hasText: '_before.gsc' }).first().waitFor();
+});
+
+await step('Project snapshots: create, preview, restore', async () => {
+  await page.getByRole('tab', { name: /Backups/ }).click();
+  await page.locator('[data-testid=backup-row]').first().waitFor();
+  await page.getByRole('button', { name: 'Create snapshot…' }).click();
+  await page.locator('.modal').getByPlaceholder('e.g. Working before animation rewrite').fill('Known good before tuning');
+  await page.locator('.modal').getByRole('button', { name: 'Create snapshot' }).click();
+  await page.locator('[data-testid=snapshot-row]').filter({ hasText: 'Known good before tuning' }).waitFor();
+  const good = readFileSync(join(omen, 'configs/weapons.json'), 'utf8');
+  writeFileSync(join(omen, 'configs/weapons.json'), '{"instashoot": false}\n');
+  writeFileSync(join(omen, 'configs/new_after_snapshot.cfg'), 'keep me\n');
+  await page.locator('[data-testid=snapshot-row]').filter({ hasText: 'Known good before tuning' }).getByRole('button', { name: /Restore/ }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Restore snapshot' });
+  await m.getByText('will be replaced with their snapshot content').waitFor();
+  await m.getByText(/added since the snapshot are/).waitFor();
+  await m.locator('li').filter({ hasText: 'added since the snapshot' }).getByText('1', { exact: true }).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-snapshot-restore.png') });
+  await m.getByRole('button', { name: /Restore \d+ file/ }).click();
+  await page.locator('.modal').filter({ hasText: 'Snapshot restored' }).getByRole('button', { name: 'Done' }).click();
+  if (readFileSync(join(omen, 'configs/weapons.json'), 'utf8') !== good) throw new Error('snapshot restore failed');
+  if (!existsSync(join(omen, 'configs/new_after_snapshot.cfg'))) throw new Error('snapshot restore deleted a newer file');
+  await page.locator('[data-testid=snapshot-row]').filter({ hasText: 'Before restoring' }).waitFor();
+});
+
+await step('Import with preview, then Undo import', async () => {
+  const src = join(tmp, 'incoming'); mkdirSync(src, { recursive: true });
+  writeFileSync(join(src, 'loot_table.json'), '{"a":1}\n');
+  writeFileSync(join(src, 'weapons.json'), 'conflicting name\n');
+  await page.getByRole('tab', { name: /Files/ }).click();
+  await page.locator('.tnode').filter({ hasText: 'configs' }).first().click();
+  page.once('dialog', (d) => d.accept([join(src, 'loot_table.json'), join(src, 'weapons.json')].join(';')));
+  await page.getByRole('button', { name: 'Import', exact: true }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Import files' });
+  await m.getByText('OMEN', { exact: false }).first().waitFor();
+  await m.getByText(/weapons.*\.json/).first().waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-import.png') });
+  await m.getByRole('button', { name: /Copy 2 files into/ }).click();
+  await m.waitFor({ state: 'detached' });
+  if (!existsSync(join(omen, 'configs/loot_table.json'))) throw new Error('import did not copy');
+  if (readFileSync(join(omen, 'configs/weapons.json'), 'utf8').includes('conflicting')) throw new Error('import overwrote an existing file');
+  if (!existsSync(join(src, 'loot_table.json'))) throw new Error('import moved the source');
+  const renamed = readdirSync(join(omen, 'configs')).find((f) => /^weapons.+\.json$/.test(f) && f !== 'weapons.json');
+  if (!renamed) throw new Error('conflict was not renamed');
+  // edit one imported file after import: Undo must keep it
+  writeFileSync(join(omen, 'configs', renamed), 'edited after import\n');
+  await page.locator('.toast').getByRole('button', { name: 'Undo import' }).click();
+  await page.getByText(/Removed 1 imported cop/).waitFor();
+  if (existsSync(join(omen, 'configs/loot_table.json'))) throw new Error('undo import left the copy');
+  if (!existsSync(join(omen, 'configs', renamed))) throw new Error('undo import removed a file changed after import');
+  if (!existsSync(join(omen, 'configs/weapons.json'))) throw new Error('undo import removed an unrelated file');
+  await toastGone();
+});
+
+await step('Remove from Project Vault keeps the file on disk', async () => {
+  await page.locator('.tnode').filter({ hasText: '(all files)' }).click();
+  await page.locator('.filerow').filter({ hasText: 'new_after_snapshot.cfg' }).click({ button: 'right' });
+  await page.locator('.ctx button').filter({ hasText: 'Remove from Project Vault…' }).click();
+  const m = page.locator('.modal').last();
+  await m.getByText('new_after_snapshot.cfg', { exact: false }).first().waitFor();
+  await m.getByRole('button', { name: /Remove/ }).last().click();
+  await page.locator('.filerow').filter({ hasText: 'new_after_snapshot.cfg' }).waitFor({ state: 'detached' });
+  if (!existsSync(join(omen, 'configs/new_after_snapshot.cfg'))) throw new Error('remove deleted the file from disk');
+  await page.keyboard.press('F5');
+  await page.waitForTimeout(800);
+  if (await page.locator('.filerow').filter({ hasText: 'new_after_snapshot.cfg' }).count()) throw new Error('removed file came back on rescan');
+});
+
+await step('Keyboard: context menu without the mouse', async () => {
+  await page.locator('.filerow').filter({ hasText: 'weapons.json' }).first().click();
+  await page.keyboard.press('Shift+F10');
+  await page.locator('.ctx').waitFor();
+  await page.keyboard.press('ArrowDown');
+  const focused = await page.evaluate(() => document.activeElement?.closest('.ctx') != null);
+  if (!focused) throw new Error('menu items are not keyboard-focusable');
+  await page.keyboard.press('Escape');
+  await page.locator('.ctx').waitFor({ state: 'detached' });
 });
 
 await step('Git tab: commit and push', async () => {
@@ -279,7 +428,7 @@ await step('Global search: right-click menu and copy paths', async () => {
   await item.click({ button: 'right' });
   await page.locator('.ctx').waitFor();
   if (!(await page.locator('.palette').isVisible())) throw new Error('right-click must not open/close anything');
-  for (const l of ['Reveal in project', 'Show in Windows Explorer', 'Copy full path', 'Copy relative path', 'Rename…', 'Delete…']) await page.locator('.ctx button').filter({ hasText: l }).waitFor();
+  for (const l of ['Reveal in project', 'Show in Windows Explorer', 'Copy full path', 'Copy relative path', 'Rename…', 'Remove from Project Vault…', 'Delete file from disk…']) await page.locator('.ctx button').filter({ hasText: l }).waitFor();
   await item.hover();
   if (shots) await page.screenshot({ path: join(shots, 'x-search-menu.png') });
   await page.locator('.ctx button').filter({ hasText: 'Copy relative path' }).click();
@@ -320,14 +469,14 @@ await step('Import Print Vault', async () => {
     await page.locator('.filerow').filter({ hasText: 'fixed cat.stl' }).click();
     await page.getByText('Mesh bounds').waitFor();
     if (await page.locator('.filerow').filter({ hasText: 'README.md' }).count()) throw new Error('type filter not applied');
-    await page.getByRole('button', { name: /^Versions/ }).click();
+    await page.getByRole('button', { name: /^Backups & versions/ }).click();
     await page.locator('.verrow').first().waitFor();
     if (shots) await page.screenshot({ path: join(shots, 'x-3d-files.png') });
   });
 }
 
 await step('Reveal in project from another project', async () => {
-  await page.locator('.crumbs .cur').filter({ hasText: 'Cat - Green And Yellow' }).waitFor();
+  if (pvDir) await page.locator('.crumbs .cur').filter({ hasText: 'Cat - Green And Yellow' }).waitFor();
   await page.keyboard.press('Control+K');
   await page.locator('.palette input').fill('createserver');
   const item = page.locator('.palette .item.fileitem').filter({ hasText: 'menus / createserver.menu' });
@@ -370,7 +519,7 @@ await step('Global search: rename', async () => {
 await step('Global search: safe delete', async () => {
   await page.locator('.palette input').fill('createserver');
   await page.locator('.palette .item.fileitem').filter({ hasText: 'menus / createserver.menu' }).click({ button: 'right' });
-  await page.locator('.ctx button').filter({ hasText: 'Delete…' }).click();
+  await page.locator('.ctx button').filter({ hasText: 'Delete file from disk…' }).click();
   await page.locator('.modal').getByText('Recycle Bin', { exact: false }).or(page.locator('.modal').getByText('trash', { exact: false })).first().waitFor();
   await page.locator('.modal').getByRole('button', { name: 'Delete' }).click();
   await page.locator('.palette .item.fileitem').filter({ hasText: 'menus / createserver.menu' }).waitFor({ state: 'detached' });
@@ -393,8 +542,37 @@ await step('Files tab context menu still works', async () => {
   await page.locator('.dd-item').filter({ hasText: 'All files' }).click();
   await page.keyboard.press('Escape');
   await page.locator('.filerow').filter({ hasText: 'weapons.json' }).click({ button: 'right' });
-  for (const l of ['Edit in Project Vault', 'Copy relative path', 'Rename…', 'Delete…', 'Mark reviewed']) await page.locator('.ctx button').filter({ hasText: l }).waitFor();
+  for (const l of ['Edit in Project Vault', 'Copy relative path', 'Rename…', 'Delete file from disk…', 'Mark reviewed']) await page.locator('.ctx button').filter({ hasText: l }).waitFor();
   await page.keyboard.press('Escape');
+});
+
+await step('Global search: clickable folder breadcrumbs', async () => {
+  await page.keyboard.press('Control+K');
+  await page.locator('.palette input').fill('createserver');
+  const item = page.locator('.palette .item.fileitem').filter({ hasText: 'menus / createserver.menu' });
+  await item.locator('.crumb').filter({ hasText: 'menus' }).click();
+  await page.locator('.palette').waitFor({ state: 'detached' });
+  await page.locator('.tnode.on').filter({ hasText: 'menus' }).waitFor();
+  await page.locator('.filerow').filter({ hasText: 'createserver.menu' }).waitFor();
+});
+
+await step('Settings: save behaviour and backup storage location', async () => {
+  await page.getByRole('button', { name: /Settings/ }).click();
+  await page.getByText('Editor & saving').waitFor();
+  await page.locator('label').filter({ hasText: 'Just save' }).locator('input').check();
+  if (await page.evaluate(() => localStorage.getItem('pv.saveMode')) !== 'manual') throw new Error('save mode not stored');
+  await page.locator('label').filter({ hasText: 'Ask every time' }).locator('input').check();
+  const card = page.locator('.card').filter({ hasText: 'Backup storage location' });
+  await card.getByText('available').waitFor();
+  const newRoot = join(tmp, 'ExternalDrive', 'PVBackups');
+  page.once('dialog', (d) => d.accept(newRoot));
+  await card.getByRole('button', { name: 'Change…' }).click();
+  await page.locator('.modal').getByRole('button', { name: 'Copy and switch' }).click();
+  await card.getByText(newRoot).waitFor();
+  if (!existsSync(join(newRoot, 'objects')) || !existsSync(join(newRoot, 'history'))) throw new Error('backups not copied to the new location');
+  const sidecars = readdirSync(join(newRoot, 'history'), { recursive: true }).filter((f) => String(f).endsWith('.json'));
+  if (!sidecars.length) throw new Error('no sidecar metadata');
+  await toastGone();
 });
 
 await step('Backup and verify', async () => {

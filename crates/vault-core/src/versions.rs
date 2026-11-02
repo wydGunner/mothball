@@ -415,6 +415,11 @@ pub fn prune(v: &Vault, project_id: &str, keep: i64) -> DbResult<Json> {
 }
 
 pub fn prune_opts(v: &Vault, project_id: &str, keep: i64, include_named: bool) -> DbResult<Json> {
+    prune_impl(v, project_id, keep, include_named, false)
+}
+
+/// With `dry_run`, only counts what would be deleted (for the confirmation).
+pub fn prune_impl(v: &Vault, project_id: &str, keep: i64, include_named: bool, dry_run: bool) -> DbResult<Json> {
     let keep = keep.max(1);
     // automatic versions only; anything you named or saved on purpose is kept
     let cond = if include_named { "1" } else { "name='' AND reason IN ('auto','baseline','before-edit','before-restore','before-delete')" };
@@ -430,6 +435,9 @@ pub fn prune_opts(v: &Vault, project_id: &str, keep: i64, include_named: bool) -
         .iter()
         .map(|r| r.s("id"))
         .collect();
+    if dry_run {
+        return Ok(Json::obj().with("wouldDelete", doomed.len() as i64));
+    }
     let mut n = 0;
     for id in &doomed {
         n += v.db.exec("DELETE FROM file_versions WHERE id=?", p![id.clone()])?;
@@ -556,6 +564,8 @@ pub fn smart_save(v: &Vault, file_id: &str, text: &str, expected_sha: &str, eol:
     let name = if o.name.trim().is_empty() { String::new() } else { o.name.trim().to_string() };
     let tags = norm_tags(o.tags);
     let mut before_id = None;
+    let mut before_name = String::new();
+    let mut after_name = String::new();
     if o.backup_before {
         let cur = sha256_file(&path).map_err(|e| format!("Cannot read the file before saving: {e}"))?;
         if cur != expected_sha {
@@ -569,6 +579,7 @@ pub fn smart_save(v: &Vault, file_id: &str, text: &str, expected_sha: &str, eol:
         let note = if o.description.trim().is_empty() { String::new() } else { format!("State before: {}", o.description.trim()) };
         let size = std::fs::metadata(&path).map(|m| m.len() as i64).unwrap_or(0);
         before_id = Some(insert_version(v, &f, &cur, size, "pre-save", &note, &bname, &tags)?);
+        before_name = bname;
     }
     let w = files::write_text(v, file_id, text, expected_sha, eol, bom)?;
     let new_sha = w.str_of("sha256").unwrap_or_default();
@@ -580,12 +591,24 @@ pub fn smart_save(v: &Vault, file_id: &str, text: &str, expected_sha: &str, eol:
         let bname = if name.is_empty() { String::new() } else { unique_backup_name(v, file_id, &name)? };
         let size = std::fs::metadata(&path2).map(|m| m.len() as i64).unwrap_or(0);
         after_id = Some(insert_version(v, &f2, &new_sha, size, "post-save", o.description.trim(), &bname, &tags)?);
+        after_name = bname;
     }
     if o.backup_before || o.backup_after {
-        let label = if name.is_empty() { f.s("rel_path") } else { name.clone() };
-        timeline::add(v, &f.s("project_id"), "version", &format!("Saved {} with backup “{label}”", f.s("name")), o.description.trim(), Some(("file", file_id)), false)?;
+        let mut kept = Vec::new();
+        if o.backup_before {
+            kept.push(if before_name.is_empty() { "the previous version".to_string() } else { format!("“{before_name}” (before)") });
+        }
+        if o.backup_after {
+            kept.push(if after_name.is_empty() { "the saved version".to_string() } else { format!("“{after_name}” (saved)") });
+        }
+        timeline::add(v, &f.s("project_id"), "version", &format!("Saved {} — backup kept: {}", f.s("name"), kept.join(", ")), o.description.trim(), Some(("file", file_id)), false)?;
     }
-    Ok(Json::obj().with("sha256", new_sha).with("beforeBackupId", before_id).with("afterBackupId", after_id))
+    Ok(Json::obj()
+        .with("sha256", new_sha)
+        .with("beforeBackupId", before_id)
+        .with("afterBackupId", after_id)
+        .with("beforeName", before_name)
+        .with("afterName", after_name))
 }
 
 pub fn update_backup(v: &Vault, version_id: &str, name: &str, note: &str, tags: &str) -> DbResult<()> {
@@ -891,7 +914,11 @@ mod tests {
         fs::write(d.join("scripts/b.cfg"), "changed").unwrap();
         restore_opts(&v, &vb.s("id"), false).unwrap();
         assert_eq!(fs::read_to_string(d.join("scripts/b.cfg")).unwrap(), "same content");
-        // prune never removes named backups unless asked
+        // prune never removes named backups unless asked; a dry run deletes nothing
+        let before = v.db.one("SELECT count(*) AS n FROM file_versions", p![]).unwrap().unwrap().i("n");
+        let dry = prune_impl(&v, &pid, 1, true, true).unwrap();
+        assert!(dry.get("wouldDelete").and_then(|x| x.as_i64()).unwrap() > 0);
+        assert_eq!(v.db.one("SELECT count(*) AS n FROM file_versions", p![]).unwrap().unwrap().i("n"), before, "dry run must not delete");
         let r = prune_opts(&v, &pid, 1, false).unwrap();
         assert!(v.db.one("SELECT id FROM file_versions WHERE name='b_named.cfg'", p![]).unwrap().is_some(), "{}", r.to_string());
         // move the store elsewhere, then make it unavailable -> clear error, nothing written

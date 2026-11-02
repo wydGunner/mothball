@@ -2,7 +2,7 @@
 // and loaded on first use. Workers are bundled next to it; nothing is fetched
 // from the internet.
 import * as monaco from 'monaco-editor';
-import type { EditorHandle, EditorOptions } from './api';
+import type { DiffHandle, DiffOptions, EditorHandle, EditorOptions } from './api';
 
 (self as any).MonacoEnvironment = {
   getWorkerUrl(_id: string, label: string) {
@@ -68,6 +68,11 @@ function defineTheme(p: { a1: string; a2: string; a3: string }) {
       'input.background': '#000000',
       'focusBorder': p.a1 + '88',
       'minimap.background': '#000000',
+      'diffEditor.insertedTextBackground': p.a1 + '33',
+      'diffEditor.insertedLineBackground': p.a1 + '1a',
+      'diffEditor.removedTextBackground': p.a3 + '33',
+      'diffEditor.removedLineBackground': p.a3 + '1a',
+      'diffEditor.diagonalFill': '#ffffff10',
     },
   });
 }
@@ -93,11 +98,28 @@ export function create(el: HTMLElement, o: EditorOptions): EditorHandle {
   });
   ed.onDidChangeModelContent(() => o.onChange(ed.getValue()));
   ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => o.onSave());
+  ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyS, () => o.onSaveWithBackup?.());
   return {
     getValue: () => ed.getValue(),
     setValue: (v) => ed.setValue(v),
     focus: () => ed.focus(),
     setPalette: (p) => { defineTheme(p); monaco.editor.setTheme('pv-black'); },
     dispose: () => { ed.getModel()?.dispose(); ed.dispose(); },
+  };
+}
+
+/** Read-only side-by-side (or inline) diff using Monaco's diff editor. */
+export function createDiff(el: HTMLElement, o: DiffOptions): DiffHandle {
+  defineTheme(o.palette);
+  const original = monaco.editor.createModel(o.original, o.language);
+  const modified = monaco.editor.createModel(o.modified, o.language);
+  const d = monaco.editor.createDiffEditor(el, {
+    theme: 'pv-black', readOnly: true, originalEditable: false, automaticLayout: true, renderSideBySide: o.sideBySide,
+    fontFamily: "'Cascadia Code', 'JetBrains Mono', Consolas, monospace", fontSize: 12.5, minimap: { enabled: false }, scrollBeyondLastLine: false,
+  });
+  d.setModel({ original, modified });
+  return {
+    setSideBySide: (v) => d.updateOptions({ renderSideBySide: v }),
+    dispose: () => { d.dispose(); original.dispose(); modified.dispose(); },
   };
 }

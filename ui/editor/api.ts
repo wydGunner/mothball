@@ -6,7 +6,17 @@ export interface EditorOptions {
   palette: { a1: string; a2: string; a3: string };
   onChange: (value: string) => void;
   onSave: () => void;
+  /** Ctrl+Shift+S: open the Smart Save (backup) dialog */
+  onSaveWithBackup?: () => void;
 }
+export interface DiffOptions {
+  original: string;
+  modified: string;
+  language: string;
+  sideBySide: boolean;
+  palette: { a1: string; a2: string; a3: string };
+}
+export interface DiffHandle { setSideBySide(v: boolean): void; dispose(): void }
 export interface EditorHandle {
   getValue(): string;
   setValue(v: string): void;

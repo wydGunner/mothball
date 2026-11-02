@@ -2,10 +2,12 @@ import { useEffect, useRef } from 'react';
 import type { EditorHandle } from '../../editor/api';
 import { getTheme } from '../theme';
 
-let loader: Promise<{ create: (el: HTMLElement, o: any) => EditorHandle }> | null = null;
+import type { DiffHandle } from '../../editor/api';
+type EditorModule = { create: (el: HTMLElement, o: any) => EditorHandle; createDiff?: (el: HTMLElement, o: any) => DiffHandle };
+let loader: Promise<EditorModule> | null = null;
 
 /** Loads the separately bundled editor (Monaco) once, plus its stylesheet. */
-function loadEditor() {
+export function loadEditor(): Promise<EditorModule> {
   if (!loader) {
     const css = document.createElement('link');
     css.rel = 'stylesheet';
@@ -27,13 +29,13 @@ const LANG: Record<string, string> = {
 };
 export const languageFor = (ext: string) => LANG[ext.toLowerCase()] || 'plaintext';
 
-export function CodeEditor({ value, ext, readOnly, onChange, onSave, onReady }: {
-  value: string; ext: string; readOnly?: boolean; onChange: (v: string) => void; onSave: () => void; onReady?: (h: EditorHandle) => void;
+export function CodeEditor({ value, ext, readOnly, onChange, onSave, onSaveWithBackup, onReady }: {
+  value: string; ext: string; readOnly?: boolean; onChange: (v: string) => void; onSave: () => void; onSaveWithBackup?: () => void; onReady?: (h: EditorHandle) => void;
 }) {
   const el = useRef<HTMLDivElement>(null);
   const handle = useRef<EditorHandle | null>(null);
-  const cb = useRef({ onChange, onSave });
-  cb.current = { onChange, onSave };
+  const cb = useRef({ onChange, onSave, onSaveWithBackup });
+  cb.current = { onChange, onSave, onSaveWithBackup };
 
   useEffect(() => {
     let disposed = false;
@@ -42,7 +44,7 @@ export function CodeEditor({ value, ext, readOnly, onChange, onSave, onReady }: 
       const t = getTheme();
       handle.current = m.create(el.current, {
         value, language: languageFor(ext), readOnly, palette: { a1: t.a1, a2: t.a2, a3: t.a3 },
-        onChange: (v: string) => cb.current.onChange(v), onSave: () => cb.current.onSave(),
+        onChange: (v: string) => cb.current.onChange(v), onSave: () => cb.current.onSave(), onSaveWithBackup: () => cb.current.onSaveWithBackup?.(),
       });
       handle.current.focus();
       onReady?.(handle.current);
@@ -55,4 +57,23 @@ export function CodeEditor({ value, ext, readOnly, onChange, onSave, onReady }: 
   }, []);
 
   return <div ref={el} className="pv-editor" />;
+}
+
+/** Monaco diff editor when available; returns false so callers can fall back. */
+export function MonacoDiff({ original, modified, ext, sideBySide, onUnavailable }: { original: string; modified: string; ext: string; sideBySide: boolean; onUnavailable: () => void }) {
+  const el = useRef<HTMLDivElement>(null);
+  const h = useRef<DiffHandle | null>(null);
+  useEffect(() => {
+    let gone = false;
+    loadEditor().then((m) => {
+      if (gone || !el.current) return;
+      if (!m.createDiff) { onUnavailable(); return; }
+      const t = getTheme();
+      h.current = m.createDiff(el.current, { original, modified, language: languageFor(ext), sideBySide, palette: { a1: t.a1, a2: t.a2, a3: t.a3 } });
+    }).catch(() => { if (!gone) onUnavailable(); });
+    return () => { gone = true; h.current?.dispose(); h.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [original, modified, ext]);
+  useEffect(() => { h.current?.setSideBySide(sideBySide); }, [sideBySide]);
+  return <div ref={el} className="pv-diff" />;
 }

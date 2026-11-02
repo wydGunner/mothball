@@ -113,6 +113,7 @@ pub fn list(v: &Vault, project_id: &str) -> DbResult<Json> {
 pub fn preview(v: &Vault, id: &str) -> DbResult<Json> {
     let s = v.db.one("SELECT * FROM snapshots WHERE id=?", p![id])?.ok_or("Snapshot not found")?;
     let root = projects::root_of(v, &s.s("project_id"))?;
+    files::scan(v, &s.s("project_id"))?; // so files added on disk since the last scan are reported as kept
     let mut change = Vec::new();
     let mut same = 0;
     for r in v.db.query("SELECT rel_path, sha256 FROM snapshot_files WHERE snapshot_id=?", p![id])? {
