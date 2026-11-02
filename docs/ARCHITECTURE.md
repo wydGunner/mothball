@@ -31,8 +31,13 @@
 │   diff.rs       Myers line diff → hunks                        │
 │   profiles.rs   file-type groups per project type              │
 │   backup.rs     verified metadata backups + Markdown export    │
+│   printers.rs   Bambu printer status (MQTT), print logging     │
 └───────────────────────────────────────────────────────────────┘
 ```
+
+The TLS layer for printers lives in `crates/bambu-tls` (rustls, certificate
+pinned on first use) so the core stays dependency-free; the dev server and tests
+use plain TCP against a fake printer.
 
 Every UI action is a named command. The same `api::call` is used by the
 desktop app and the dev server, so the automated UI test (`scripts/ui-smoke.mjs`)

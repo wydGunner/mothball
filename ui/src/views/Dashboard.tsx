@@ -5,6 +5,8 @@ import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextM
 import { ago, bytes, CATEGORY_LABELS, cx, hiddenTypes, typeChoices } from '../format';
 import type { Nav } from '../main';
 import { Welcome } from './Welcome';
+import { PrinterButton, PrinterPanel, usePrinters, usePrintHistory } from './Printers';
+import { LuPrinter } from 'react-icons/lu';
 
 type Sort = 'custom' | 'recent' | 'name' | 'updated' | 'created' | 'size' | 'progress';
 const SORTS: [Sort, string][] = [['custom', 'My order (drag cards)'], ['recent', 'Recently opened'], ['updated', 'Latest activity'], ['name', 'Name'], ['created', 'Newest'], ['size', 'Storage used'], ['progress', 'Progress']];
@@ -37,7 +39,11 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   const allTags = useMemo(() => [...new Set(nav.projects.flatMap((p) => p.tags))].sort(), [nav.projects]);
   const dashStamp = nav.projects.map((p) => `${p.id}:${p.lastScanAt}:${p.fileCount}`).join('|');
   const dash = useLoad(() => call<DashData>('projects.dashboard', { limit: 15 }), [dashStamp]);
-  const [drawer, setDrawer] = useState<null | 'attention' | 'recent'>(null);
+  const [drawer, setDrawer] = useState<null | 'attention' | 'recent' | 'printers'>(null);
+  const printers = usePrinters();
+  // reload history when a scan lands or a printer's job changes (a print just ended)
+  const [printHistory, reloadHistory] = usePrintHistory(`${dashStamp}|${(printers || []).map((p) => `${p.stage}:${p.job}`).join(',')}`);
+  const unassigned = printHistory.filter((h) => !h.projectId).length;
   const attCount = dash.data?.attention.length || 0;
 
   const list = useMemo(() => {
@@ -169,10 +175,12 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
         <button className={cx('btn icon dash-pop', drawer === 'attention' && 'on', attCount > 0 && 'alert')} title={attCount ? `Needs attention (${attCount})` : 'Needs attention: all clear'} aria-label="Needs attention" onClick={() => setDrawer(drawer === 'attention' ? null : 'attention')}>
           <LuTriangleAlert />{attCount > 0 && <span className="dash-badge">{attCount}</span>}
         </button>
+        <PrinterButton printers={printers} unassigned={unassigned} on={drawer === 'printers'} onClick={() => setDrawer(drawer === 'printers' ? null : 'printers')} />
         <button className={cx('btn icon dash-pop', drawer === 'recent' && 'on')} title="Recently changed files" aria-label="Recently changed" onClick={() => setDrawer(drawer === 'recent' ? null : 'recent')}><LuHistory /></button>
         <button className="btn newbtn" onClick={onNew}><LuPlus /> New project</button>
       </div>
-      {drawer && <DashDrawer which={drawer} data={dash.data} nav={nav} onClose={() => setDrawer(null)} onShowOnly={() => { setAttention(true); setDrawer(null); }} />}
+      {drawer && <DashDrawer which={drawer} data={dash.data} nav={nav} onClose={() => setDrawer(null)} onShowOnly={() => { setAttention(true); setDrawer(null); }}
+        printers={<PrinterPanel printers={printers} history={printHistory} onChanged={() => { reloadHistory(); nav.refreshProjects(); }} nav={nav} />} />}
 
       {sections.map((sec) => {
         const isCollapsed = !!sec.label && collapsed.includes(sec.key || '\u0000');
@@ -374,7 +382,8 @@ interface DashData {
 const CHANGE_WORD: Record<string, string> = { added: 'added', modified: 'changed', moved: 'moved', restored: 'back', 'restored-version': 'restored', renamed: 'renamed', imported: 'imported' };
 
 /** Slide-out panel on the right for Needs attention / Recently changed. */
-function DashDrawer({ which, data, nav, onClose, onShowOnly }: { which: 'attention' | 'recent'; data?: DashData; nav: Nav; onClose: () => void; onShowOnly: () => void }) {
+function DashDrawer({ which, data, nav, onClose, onShowOnly, printers }: { which: 'attention' | 'recent' | 'printers'; data?: DashData; nav: Nav; onClose: () => void; onShowOnly: () => void; printers: React.ReactNode }) {
+  const title = which === 'attention' ? 'Needs attention' : which === 'recent' ? 'Recently changed' : 'Printers';
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', k);
@@ -383,15 +392,15 @@ function DashDrawer({ which, data, nav, onClose, onShowOnly }: { which: 'attenti
   return (
     <>
       <div className="drawer-scrim" onClick={onClose} />
-      <aside className="drawer" role="dialog" aria-label={which === 'attention' ? 'Needs attention' : 'Recently changed'}>
+      <aside className="drawer" role="dialog" aria-label={title}>
         <div className="drawer-h">
-          {which === 'attention' ? <LuTriangleAlert /> : <LuHistory />}
-          <h2>{which === 'attention' ? 'Needs attention' : 'Recently changed'}</h2>
+          {which === 'attention' ? <LuTriangleAlert /> : which === 'recent' ? <LuHistory /> : <LuPrinter />}
+          <h2>{title}</h2>
           {which === 'attention' && (data?.attention.length || 0) > 1 && <button className="btn ghost sm" onClick={onShowOnly}>Show only these projects</button>}
           <button className="btn ghost sm icon" onClick={onClose} title="Close (Esc)" aria-label="Close"><LuX /></button>
         </div>
         <div className="drawer-b" onClick={(e) => { if ((e.target as HTMLElement).closest('.ds-row')) setTimeout(onClose, 0); }}>
-          {which === 'attention' ? <AttentionList data={data} nav={nav} /> : <RecentList data={data} nav={nav} />}
+          {which === 'attention' ? <AttentionList data={data} nav={nav} /> : which === 'recent' ? <RecentList data={data} nav={nav} /> : printers}
         </div>
       </aside>
     </>

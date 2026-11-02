@@ -212,7 +212,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
               <div style={{ marginTop: 14 }}>
                 <h3>Print history <span className="dim small" style={{ fontWeight: 400 }}>{printLog.filter((e) => e.result === 'success').length} succeeded, {printLog.filter((e) => e.result !== 'success').length} failed</span></h3>
                 {printLog.slice(-4).reverse().map((e, i) => (
-                  <div key={i} className="row small" style={{ padding: '3px 0' }}>{e.result === 'success' ? <LuCircleCheck color="var(--ok)" /> : <LuCircleX color="var(--bad)" />}<span style={{ width: 90 }}>{e.date}</span><span className="grow muted">{e.notes}</span></div>
+                  <div key={i} className="row small" style={{ padding: '3px 0' }}>{e.result === 'success' ? <LuCircleCheck color="var(--ok)" /> : <LuCircleX color="var(--bad)" />}<span style={{ width: 90 }} title={e.source === 'printer' ? 'Logged automatically from the printer' : undefined}>{e.at ? new Date(e.at).toLocaleDateString() : e.date}</span><span className="grow muted">{e.notes}</span></div>
                 ))}
               </div>
             )}
@@ -364,7 +364,7 @@ function PrintLog({ log, onChange }: { log: any[]; onChange: (l: any[]) => void 
       {log.map((e, i) => (
         <div key={i} className="row small" style={{ padding: '3px 0' }}>
           {e.result === 'success' ? <LuCircleCheck color="var(--ok)" /> : <LuCircleX color="var(--bad)" />}
-          <span style={{ width: 90 }}>{e.date}</span><span className="grow">{e.notes}</span><span className="dim">{[e.grams && `${e.grams} g`, e.time].filter(Boolean).join(' · ')}</span>
+          <span style={{ width: 90 }} title={e.source === 'printer' ? 'Logged automatically from the printer' : undefined}>{e.at ? new Date(e.at).toLocaleDateString() : e.date}</span><span className="grow">{e.notes}</span><span className="dim">{[e.grams && `${e.grams} g`, e.time].filter(Boolean).join(' · ')}</span>
           <button className="btn ghost sm icon" title="Remove" onClick={() => onChange(log.filter((_, j) => j !== i))}><LuTrash2 /></button>
         </div>
       ))}

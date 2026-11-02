@@ -753,3 +753,21 @@ input[type=checkbox] { accent-color: var(--accent); }
 .drawer-h h2 { flex: 1; font-size: 15px; margin: 0; }
 .drawer-b { flex: 1; overflow: auto; padding: 8px 10px; }
 .drawer-b .ds-name { max-width: 55%; }
+
+/* printers (read-only Bambu status) */
+.pdot { width: 9px; height: 9px; border-radius: 50%; flex: none; display: inline-block; background: var(--fg3); }
+.pdot.on { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.pdot.idle { background: color-mix(in srgb, var(--accent) 45%, var(--bg4)); }
+.pdot.bad { background: var(--bad); }
+.bad-text { color: var(--bad); }
+.printer-pop { position: relative; gap: 7px; padding-right: 10px; }
+.pp-prog { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.pp-bar { display: inline-block; width: 38px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--fg1) 22%, transparent); overflow: hidden; }
+.pp-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .6s ease; }
+.pp-bar.big { display: block; width: 100%; height: 7px; margin: 8px 0 4px; }
+.pcard-live { padding: 10px 12px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--bg2); margin-bottom: 8px; }
+.print-row { padding: 7px 4px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.print-row b { font-weight: 500; }
+.printer-set-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line2); }
+.printer-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line2); }
+.printer-form .field { margin: 0; }

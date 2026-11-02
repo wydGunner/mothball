@@ -13,6 +13,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { deflateSync } from 'node:zlib';
+import { createServer } from 'node:net';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : undefined; };
@@ -864,6 +865,97 @@ await step('Dashboard: change a project picture', async () => {
   await toastGone();
 });
 
+// ---- a pretend Bambu printer (plain MQTT; the desktop app uses TLS, tested in crates/bambu-tls)
+const fakePrinter = await new Promise((resolve) => {
+  const clients = new Set();
+  let last = null;
+  const pkt = (kind, body) => { const len = []; let n = body.length; do { let b = n % 128; n = Math.floor(n / 128); if (n) b |= 0x80; len.push(b); } while (n); return Buffer.concat([Buffer.from([kind, ...len]), body]); };
+  const str = (x) => { const b = Buffer.from(x); return Buffer.concat([Buffer.from([b.length >> 8, b.length & 255]), b]); };
+  const send = (sock, obj) => sock.write(pkt(0x30, Buffer.concat([str('device/FAKESERIAL01/report'), Buffer.from(JSON.stringify({ print: obj }))])));
+  const srv = createServer((sock) => {
+    let buf = Buffer.alloc(0);
+    sock.on('error', () => {});
+    sock.on('close', () => clients.delete(sock));
+    sock.on('data', (d) => {
+      buf = Buffer.concat([buf, d]);
+      while (buf.length >= 2) {
+        let len = 0, mul = 1, i = 1;
+        for (;;) { const b = buf[i++]; len += (b & 127) * mul; if (!(b & 128)) break; mul *= 128; }
+        if (buf.length < i + len) break;
+        const kind = buf[0] >> 4; buf = buf.subarray(i + len);
+        if (kind === 1) sock.write(Buffer.from([0x20, 2, 0, 0]));
+        else if (kind === 8) { sock.write(Buffer.from([0x90, 3, 0, 1, 0])); clients.add(sock); if (last) send(sock, last); }
+        else if (kind === 12) sock.write(Buffer.from([0xd0, 0]));
+      }
+    });
+  });
+  srv.listen(0, '127.0.0.1', () => resolve({
+    port: srv.address().port,
+    report(obj) { last = { ...(last || {}), ...obj }; for (const c of clients) send(c, obj); },
+    close() { for (const c of clients) c.destroy(); srv.close(); },
+  }));
+});
+const started = Math.floor(Date.now() / 1000) - 5400;
+const job = (o) => ({ command: 'push_status', gcode_file: '/data/Metadata/plate_1.gcode', nozzle_temper: 220.1, bed_temper: 60, print_error: 0, ...o });
+
+await step('Printers: add a printer, live status, prints logged to the matching project', async () => {
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.locator('.set-link').filter({ hasText: 'Printers' }).click();
+  await page.getByRole('button', { name: 'Add printer' }).click();
+  const f = page.locator('.printer-form');
+  await f.getByPlaceholder('X2D').fill('X2D');
+  await f.getByPlaceholder('192.168.1.50').fill(`127.0.0.1:${fakePrinter.port}`);
+  await f.getByPlaceholder('Printer serial number').fill('fakeserial01');
+  await f.getByPlaceholder(/8 characters/).fill('12345678');
+  await f.getByRole('button', { name: 'Add printer' }).click();
+  const row = page.locator('.printer-set-row').filter({ hasText: 'X2D' });
+  await row.getByText('FAKESERIAL01').waitFor(); // serial is normalised
+  await row.getByText('Idle').waitFor({ timeout: 20000 }); // connected
+  if (shots) await page.screenshot({ path: join(shots, 'x-printer-settings.png') });
+
+  // a print starts: the dashboard shows its progress
+  fakePrinter.report(job({ gcode_state: 'RUNNING', subtask_name: 'Desk Cat', mc_percent: 45, mc_remaining_time: 72, layer_num: 90, total_layer_num: 200, gcode_start_time: String(started) }));
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  const btn = page.getByRole('button', { name: 'Printers' });
+  await btn.getByText(/45%/).waitFor({ timeout: 15000 });
+  await btn.click();
+  const drawer = page.locator('.drawer');
+  await drawer.getByText('Printing Desk Cat · 45% · 1h 12m left').waitFor();
+  await drawer.getByText('Layer 90 of 200').waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-printer-drawer.png') });
+
+  // it finishes: logged to the Desk Cat project (its model file has the same name)
+  fakePrinter.report({ gcode_state: 'FINISH', mc_percent: 100, mc_remaining_time: 0 });
+  const done = drawer.locator('.print-row').filter({ hasText: 'Desk Cat' });
+  await done.getByText(/Printed · 1h 3\dm/).waitFor({ timeout: 15000 });
+  await done.getByRole('link', { name: 'Desk Cat' }).waitFor();
+
+  // a print with no matching file fails: unassigned, badge on the button, then assigned
+  fakePrinter.report(job({ gcode_state: 'RUNNING', subtask_name: 'Benchy', mc_percent: 3, gcode_start_time: String(started + 6000) }));
+  await drawer.getByText(/Printing Benchy/).waitFor({ timeout: 15000 });
+  fakePrinter.report({ gcode_state: 'FAILED', print_error: 0x03004000 });
+  const bad = drawer.locator('.print-row').filter({ hasText: 'Benchy' });
+  await bad.getByText('Failed · error 0300-4000').waitFor({ timeout: 15000 });
+  await btn.locator('.dash-badge').filter({ hasText: '1' }).waitFor();
+  await bad.getByRole('button', { name: 'Assign…' }).click();
+  await bad.getByRole('combobox', { name: 'Project' }).selectOption({ label: 'Desk Cat' });
+  await bad.getByRole('button', { name: 'Assign', exact: true }).click();
+  await bad.getByRole('link', { name: 'Desk Cat' }).waitFor();
+  await btn.locator('.dash-badge').waitFor({ state: 'detached' });
+  if (shots) await page.screenshot({ path: join(shots, 'x-printer-history.png') });
+  await page.keyboard.press('Escape');
+
+  // both are in the project's print history and timeline
+  await page.locator('.pcard').filter({ hasText: 'Desk Cat' }).click();
+  await page.getByText('2 succeeded').or(page.getByText('1 succeeded, 1 failed')).first().waitFor();
+  await page.getByText('Desk Cat on X2D').first().waitFor();
+  await page.getByText('Benchy on X2D (error 0300-4000)').first().waitFor();
+  await page.getByRole('tab', { name: /Timeline/ }).click();
+  await page.getByText('Printed Desk Cat').first().waitFor();
+  await page.getByText('Print failed: Benchy').first().waitFor();
+  await page.getByRole('tab', { name: /Overview/ }).click();
+});
+
 await step('Dashboard: project groups', async () => {
   await page.getByRole('button', { name: 'Dashboard' }).click();
   await page.locator('.pcard').first().waitFor();
@@ -1066,5 +1158,6 @@ await step('Dashboard overview screenshot', async () => {
 
 await browser.close();
 srv.kill();
+fakePrinter.close();
 if (errors.length) { console.error('Browser errors:\n' + errors.join('\n')); process.exit(1); }
 console.log('All UI steps passed.');

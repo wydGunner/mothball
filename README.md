@@ -45,13 +45,30 @@ npm run dev        # builds the UI and starts the desktop app
 Build the installer:
 
 ```powershell
-npm run build      # → src-tauri\target\release\bundle\nsis\Mothball_0.2.0_x64-setup.exe
-                   #   src-tauri\target\release\bundle\msi\Mothball_0.2.0_x64_en-US.msi
+npm run build      # → src-tauri\target\release\bundle\nsis\Mothball_<version>_x64-setup.exe
+                   #   src-tauri\target\release\bundle\msi\Mothball_<version>_x64_en-US.msi
 ```
 
 Your data is kept in `%APPDATA%\com.projectvault.desktop\` (the folder keeps its
 original name so data from before the rename to Mothball carries over). To use another
 folder (portable or test install), set `MOTHBALL_DATA` first.
+
+## Bambu Lab printer status
+
+Settings → **Printers** → *Add printer*: the printer's IP address, serial number
+and LAN access code (all shown on the printer; the serial is also in Bambu
+Studio under the device). Mothball then shows what's printing, progress and time
+left on the dashboard, and when a print finishes, fails or is stopped it is added
+to the print history and timeline of the project whose model or plate file has
+the same name. Prints that match no project wait in the dashboard's printer panel
+to be assigned (optionally remembered for next time).
+
+It is **read-only**: Mothball never starts, stops or changes anything on the
+printer. It connects directly over your network (MQTT over TLS, port 8883), not
+through Bambu's cloud. Reading status works on current firmware without
+Developer Mode. The printer's certificate is remembered on first connection and
+a different one is refused, so another device can't pose as the printer to
+collect the access code.
 
 ## Development
 

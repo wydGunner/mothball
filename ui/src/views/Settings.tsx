@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import { LuFolderOpen, LuShieldCheck, LuDatabaseBackup, LuRefreshCw, LuInfo, LuTriangleAlert, LuArchiveRestore, LuPalette, LuFileCode, LuHardDrive, LuRadar, LuShapes } from 'react-icons/lu';
+import { LuFolderOpen, LuShieldCheck, LuDatabaseBackup, LuRefreshCw, LuInfo, LuTriangleAlert, LuArchiveRestore, LuPalette, LuFileCode, LuHardDrive, LuRadar, LuShapes, LuPrinter } from 'react-icons/lu';
+import { PrinterSettings } from './Printers';
 import { call, pickFolder, pickFiles, revealPath, isTauri } from '../ipc';
 import { Modal, ProjectIcon, useAction, useConfirm, useLoad, useToast } from '../components/common';
 import { getSaveMode, setSaveMode, getLargeThreshold, setLargeThreshold, type SaveMode } from './SmartSave';
@@ -373,12 +374,13 @@ function WatchCard() {
   );
 }
 
-type Section = 'appearance' | 'types' | 'editor' | 'tracking' | 'backups' | 'restore' | 'storage' | 'about';
+type Section = 'appearance' | 'types' | 'editor' | 'tracking' | 'printers' | 'backups' | 'restore' | 'storage' | 'about';
 const SECTIONS: { id: Section; label: string; icon: ReactElement; hint: string }[] = [
   { id: 'appearance', label: 'Appearance', icon: <LuPalette />, hint: 'Accent colors' },
   { id: 'types', label: 'Project types', icon: <LuShapes />, hint: 'Which project types you can pick' },
   { id: 'editor', label: 'Editor & saving', icon: <LuFileCode />, hint: 'What Ctrl+S does' },
   { id: 'tracking', label: 'Change tracking', icon: <LuRadar />, hint: 'Notice changes to project folders as they happen' },
+  { id: 'printers', label: 'Printers', icon: <LuPrinter />, hint: 'Watch a Bambu Lab printer and log prints to projects' },
   { id: 'backups', label: 'Backups', icon: <LuDatabaseBackup />, hint: 'Back up now, or on a schedule' },
   { id: 'restore', label: 'Restore', icon: <LuArchiveRestore />, hint: 'Check a backup and bring things back' },
   { id: 'storage', label: 'Version storage', icon: <LuHardDrive />, hint: 'Where file backups and snapshots live' },
@@ -405,6 +407,7 @@ export function SettingsView({ nav }: { nav: Nav }) {
         {sec === 'types' && <ProjectTypes nav={nav} />}
         {sec === 'editor' && <EditorSaving />}
         {sec === 'tracking' && <><WatchCard /><TimeSettings /></>}
+        {sec === 'printers' && <PrinterSettings />}
         {sec === 'backups' && <><BackupCard nav={nav} dataDir={info.data?.dataDir} /><ScheduleCard /></>}
         {sec === 'restore' && <RestoreCard nav={nav} />}
         {sec === 'storage' && <BackupStorage />}
