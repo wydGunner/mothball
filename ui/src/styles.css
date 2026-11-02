@@ -36,7 +36,7 @@ code, pre, .mono { font-family: var(--mono); font-size: 12px; }
 .sidebar.collapsed { width: 52px; }
 .sidebar .brand { display: flex; align-items: center; gap: 10px; padding: 14px 14px 10px; font-weight: 700; letter-spacing: .2px; }
 .sidebar .brand { font-family: var(--display); font-size: 15px; }
-.sidebar .brand .logo { width: 22px; height: 22px; flex: none; color: var(--accent); }
+.sidebar .brand .logo { width: 24px; height: 24px; flex: none; color: var(--fg0); }
 .sidebar nav { padding: 4px 8px; display: flex; flex-direction: column; gap: 1px; }
 .sidebar .section { padding: 14px 16px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--fg3); }
 .sidebar .scroll { overflow-y: auto; flex: 1; padding-bottom: 8px; }

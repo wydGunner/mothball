@@ -38,6 +38,7 @@ const out = join(here, 'dist');
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 copyFileSync(join(here, 'index.html'), join(out, 'index.html'));
+copyFileSync(join(here, 'favicon.svg'), join(out, 'favicon.svg'));
 
 const opts = {
   entryPoints: { app: join(here, 'src/main.tsx'), styles: join(here, 'src/styles.css') },

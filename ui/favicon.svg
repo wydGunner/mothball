@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="1" y="1" width="62" height="62" rx="14" fill="#14101D"/><g transform="translate(32 33) scale(0.88) translate(-32 -34)"><defs><g id="half"><g transform="translate(-1.5 0)">
+      <path d="M30 30.5 L19 33.6 Q14.6 35.6 15.6 40.4 Q17 45.2 22.2 43.6 Q27 41.8 30 37.2 Z" fill="#9466FF"/>
+      <path d="M30 24.2 L7.4 19.6 Q4.6 19.2 5.6 21.9 L13 34.6 Q14.2 36.6 16.6 36.1 L30 33.4 Z" fill="#ECE9F4"/></g>
+      <path d="M31.2 21 Q29.6 15.6 24 13.2" fill="none" stroke="#ECE9F4" stroke-width="1.9" stroke-linecap="round"/>
+    </g></defs><use href="#half"/><use href="#half" transform="matrix(-1 0 0 1 64 0)"/><path transform="translate(32 0) scale(1.0 1) translate(-32 0)" d="M32 18.6C34.8 21.6 35.7 27.8 35.3 35.6 34.9 42 33.5 47.6 32 51.4 30.5 47.6 29.1 42 28.7 35.6 28.3 27.8 29.2 21.6 32 18.6z" fill="#ECE9F4"/></g></svg>

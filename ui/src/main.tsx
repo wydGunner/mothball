@@ -162,7 +162,7 @@ function App() {
   return (
     <div className="app">
       <aside className={cx('sidebar', collapsed && 'collapsed')}>
-        <div className="brand" data-tauri-drag-region><svg className="logo" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="15" width="18" height="4" rx="1" fill="currentColor" /><rect x="5" y="9.5" width="14" height="4" rx="1" fill="currentColor" opacity=".7" /><rect x="7" y="4" width="10" height="4" rx="1" fill="currentColor" opacity=".45" /></svg><span>Mothball</span></div>
+        <div className="brand" data-tauri-drag-region><svg className="logo" viewBox="0 0 64 64" aria-hidden="true"><g fill="currentColor"><path d="M28.5 30.5 17.5 33.6Q13.1 35.6 14.1 40.4 15.5 45.2 20.7 43.6 25.5 41.8 28.5 37.2Z" fill="var(--accent)" /><path d="M35.5 30.5 46.5 33.6Q50.9 35.6 49.9 40.4 48.5 45.2 43.3 43.6 38.5 41.8 35.5 37.2Z" fill="var(--accent)" /><path d="M28.5 24.2 5.9 19.6Q3.1 19.2 4.1 21.9L11.5 34.6Q12.7 36.6 15.1 36.1L28.5 33.4Z" /><path d="M35.5 24.2 58.1 19.6Q60.9 19.2 59.9 21.9L52.5 34.6Q51.3 36.6 48.9 36.1L35.5 33.4Z" /><path d="M32 18.6C34.8 21.6 35.7 27.8 35.3 35.6 34.9 42 33.5 47.6 32 51.4 30.5 47.6 29.1 42 28.7 35.6 28.3 27.8 29.2 21.6 32 18.6Z" /></g><path d="M31.2 21Q29.6 15.6 24 13.2M32.8 21Q34.4 15.6 40 13.2" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" /></svg><span>Mothball</span></div>
         <nav>
           <button className={cx('navitem', route.view === 'dashboard' && 'active')} onClick={() => go({ view: 'dashboard' })} title="Dashboard"><LuLayoutDashboard /><span className="label">Dashboard</span></button>
           <button className="navitem" onClick={() => setNewProject(true)} title="New project (Ctrl+N)"><LuPlus /><span className="label">New project</span></button>
