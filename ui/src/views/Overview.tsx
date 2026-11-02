@@ -173,7 +173,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
                   <span className="mono name">{f.name}</span>
                   <span className="mono dim dir">{d}</span>
                   <span className="dim small when">{ago(f.lastChanged)}</span>
-                  {canEdit && <button className="btn ghost sm" title="Edit in Project Vault" onClick={(e) => { e.stopPropagation(); ctx.nav.go({ view: 'project', id: p.id, tab: 'files', focus: { type: 'file', id: f.id, action: 'edit', nonce: Date.now() } }); }}><LuCode /></button>}
+                  {canEdit && <button className="btn ghost sm" title="Edit in Mothball" onClick={(e) => { e.stopPropagation(); ctx.nav.go({ view: 'project', id: p.id, tab: 'files', focus: { type: 'file', id: f.id, action: 'edit', nonce: Date.now() } }); }}><LuCode /></button>}
                 </div>
               );
             })}
@@ -336,7 +336,7 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
 
       {tab === 'files' && <>
         <h3 style={{ marginBottom: 6 }}>Keep earlier versions of files</h3>
-        <p className="small muted" style={{ marginTop: 0 }}>Project Vault stores a copy whenever a file changes, so you can compare versions and roll back — even without Git. Identical content is only stored once.</p>
+        <p className="small muted" style={{ marginTop: 0 }}>Mothball stores a copy whenever a file changes, so you can compare versions and roll back — even without Git. Identical content is only stored once.</p>
         {pol && <>
           <label className="row small" style={{ marginBottom: 6 }}><input type="checkbox" checked={pol.text} onChange={(e) => setPol({ ...pol, text: e.target.checked })} /> Code, config and text files up to <input className="input" type="number" min={0.1} step={0.5} style={{ width: 70, padding: '2px 6px' }} value={pol.textMaxMb} onChange={(e) => setPol({ ...pol, textMaxMb: Number(e.target.value) })} /> MB</label>
           {pol.keyExts.length > 0 && <label className="row small" style={{ marginBottom: 6 }}><input type="checkbox" checked={pol.keyFiles} onChange={(e) => setPol({ ...pol, keyFiles: e.target.checked })} /> Project files ({pol.keyExts.map((x: string) => '.' + x).join(', ')}) up to <input className="input" type="number" min={1} step={10} style={{ width: 80, padding: '2px 6px' }} value={pol.keyMaxMb} onChange={(e) => setPol({ ...pol, keyMaxMb: Number(e.target.value) })} /> MB</label>}

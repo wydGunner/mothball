@@ -221,7 +221,7 @@ await step('Edit a file in the built-in editor', async () => {
   await ed.waitFor();
   await ed.focus();
   await page.keyboard.press('Control+End');
-  await page.keyboard.type('// edited in Project Vault');
+  await page.keyboard.type('// edited in Mothball');
   await page.getByText('Unsaved — Ctrl+S to save').waitFor();
   if (shots) await page.screenshot({ path: join(shots, 'x-editor.png') });
   const before = readFileSync(join(omen, 'scripts/mp/_util.gsc'), 'utf8');
@@ -246,7 +246,7 @@ await step('Edit a file in the built-in editor', async () => {
   await dlg.getByRole('button', { name: 'Save with backup', exact: true }).click();
   await page.getByText(/Saved with backup/).first().waitFor();
   const disk = readFileSync(join(omen, 'scripts/mp/_util.gsc'), 'utf8');
-  if (!disk.includes('// edited in Project Vault')) throw new Error('editor save did not reach disk: ' + disk);
+  if (!disk.includes('// edited in Mothball')) throw new Error('editor save did not reach disk: ' + disk);
   const fid = (await api('search', { query: '_util', types: ['file'] })).data[0].id;
   const vs = (await api('versions.list', { fileId: fid })).data;
   const pre = vs.find((v) => v.reason === 'pre-save');
@@ -305,7 +305,7 @@ await step('Timeline: expand an edit to see what changed', async () => {
   await page.getByRole('tab', { name: /Timeline/ }).click();
   const item = page.locator('.tlitem').filter({ hasText: 'Edited scripts/mp/_util.gsc' }).first();
   await item.locator('.tl-toggle').click();
-  await item.locator('.tl-diff .dl.add').filter({ hasText: 'edited in Project Vault' }).waitFor();
+  await item.locator('.tl-diff .dl.add').filter({ hasText: 'edited in Mothball' }).waitFor();
   if (shots) await page.screenshot({ path: join(shots, 'x-timeline-diff.png') });
   await item.getByRole('button', { name: 'Side by side…' }).click();
   await page.locator('.modal').filter({ hasText: 'Changes in' }).waitFor();
@@ -335,7 +335,7 @@ await step('Version history: search, compare, restore', async () => {
   await rd.getByRole('button', { name: 'Restore' }).click();
   await rd.waitFor({ state: 'detached' });
   const now = readFileSync(join(omen, 'scripts/mp/_util.gsc'), 'utf8');
-  if (now.includes('// edited in Project Vault')) throw new Error('restore did not bring back the pre-save state: ' + now);
+  if (now.includes('// edited in Mothball')) throw new Error('restore did not bring back the pre-save state: ' + now);
   const fid = (await api('search', { query: '_util', types: ['file'] })).data[0].id;
   const vs = (await api('versions.list', { fileId: fid })).data;
   if (!vs.some((v) => v.reason === 'before-restore' && v.sha256 && !v.isCurrent)) throw new Error('current file was not kept before restoring');
@@ -355,7 +355,7 @@ await step('Global search finds backups (backup actions only)', async () => {
   await it.click({ button: 'right' });
   await page.locator('.ctx button').filter({ hasText: 'Compare with current file' }).waitFor();
   await page.locator('.ctx button').filter({ hasText: 'Restore this backup…' }).waitFor();
-  for (const bad of ['Delete file from disk…', 'Rename…', 'Edit in Project Vault']) if (await page.locator('.ctx button').filter({ hasText: bad }).count()) throw new Error('live-file action on a backup: ' + bad);
+  for (const bad of ['Delete file from disk…', 'Rename…', 'Edit in Mothball']) if (await page.locator('.ctx button').filter({ hasText: bad }).count()) throw new Error('live-file action on a backup: ' + bad);
   await page.keyboard.press('Escape');
   await page.locator('.ctx').waitFor({ state: 'detached' });
   await page.keyboard.press('Enter'); // opens the file's history with the backup highlighted
@@ -453,10 +453,10 @@ await step('Import: edit files where they are (managed → your folder)', async 
   await page.getByRole('tab', { name: /Files/ }).click();
 });
 
-await step('Remove from Project Vault keeps the file on disk', async () => {
+await step('Remove from Mothball keeps the file on disk', async () => {
   await page.locator('.tnode').filter({ hasText: '(all files)' }).click();
   await page.locator('.filerow').filter({ hasText: 'new_after_snapshot.cfg' }).click({ button: 'right' });
-  await page.locator('.ctx button').filter({ hasText: 'Remove from Project Vault…' }).click();
+  await page.locator('.ctx button').filter({ hasText: 'Remove from Mothball…' }).click();
   const m = page.locator('.modal').last();
   await m.getByText('new_after_snapshot.cfg', { exact: false }).first().waitFor();
   await m.getByRole('button', { name: /Remove/ }).last().click();
@@ -539,7 +539,7 @@ await step('Global search: right-click menu and copy paths', async () => {
   await item.click({ button: 'right' });
   await page.locator('.ctx').waitFor();
   if (!(await page.locator('.palette').isVisible())) throw new Error('right-click must not open/close anything');
-  for (const l of ['Reveal in project', 'Show in Windows Explorer', 'Copy full path', 'Copy relative path', 'Rename…', 'Remove from Project Vault…', 'Delete file from disk…']) await page.locator('.ctx button').filter({ hasText: l }).waitFor();
+  for (const l of ['Reveal in project', 'Show in Windows Explorer', 'Copy full path', 'Copy relative path', 'Rename…', 'Remove from Mothball…', 'Delete file from disk…']) await page.locator('.ctx button').filter({ hasText: l }).waitFor();
   await item.hover();
   if (shots) await page.screenshot({ path: join(shots, 'x-search-menu.png') });
   await page.locator('.ctx button').filter({ hasText: 'Copy relative path' }).click();
@@ -669,7 +669,7 @@ await step('Files tab context menu still works', async () => {
   await page.locator('.dd-item').filter({ hasText: 'All files' }).click();
   await page.keyboard.press('Escape');
   await page.locator('.filerow').filter({ hasText: 'weapons.json' }).click({ button: 'right' });
-  for (const l of ['Edit in Project Vault', 'Copy relative path', 'Rename…', 'Delete file from disk…', 'Mark reviewed']) await page.locator('.ctx button').filter({ hasText: l }).waitFor();
+  for (const l of ['Edit in Mothball', 'Copy relative path', 'Rename…', 'Delete file from disk…', 'Mark reviewed']) await page.locator('.ctx button').filter({ hasText: l }).waitFor();
   await page.keyboard.press('Escape');
 });
 
@@ -709,7 +709,7 @@ await step('Backup with project files as .zip, verify', async () => {
   await page.getByRole('button', { name: /Settings/ }).click();
   await page.locator('.set-link').filter({ hasText: 'Backups' }).click();
   const card = page.locator('.card').filter({ hasText: 'Create backup now' });
-  await card.getByPlaceholder('E:\\Backups\\ProjectVault', { exact: true }).fill(backups);
+  await card.getByPlaceholder('E:\\Backups\\Mothball', { exact: true }).fill(backups);
   await card.locator('select').nth(1).selectOption('zip');
   await card.locator('label').filter({ hasText: 'Include the project files themselves' }).locator('input[type=checkbox]').check();
   await card.getByRole('button', { name: 'Create backup now' }).click();
@@ -727,7 +727,7 @@ await step('Restore: check a backup, restore a deleted project file', async () =
   rmSync(target);
   await page.locator('.set-link').filter({ hasText: 'Restore' }).click();
   const card = page.locator('.card').filter({ hasText: 'Check or restore a backup' });
-  await card.getByPlaceholder(/ProjectVault-backup-/).fill(zip);
+  await card.getByPlaceholder(/Mothball-backup-/).fill(zip);
   await card.getByRole('button', { name: 'Check', exact: true }).click();
   await card.getByText(/Verified — \d+ files match/).waitFor({ timeout: 60000 });
   await card.locator('tr').filter({ hasText: 'OMEN v2' }).getByRole('button', { name: /Restore files/ }).click();
@@ -750,7 +750,7 @@ await step('Scheduled backups', async () => {
   await page.locator('.set-link').filter({ hasText: 'Backups' }).click();
   const card = page.locator('.card').filter({ hasText: 'Scheduled backups' });
   const sched = join(tmp, 'scheduled'); mkdirSync(sched);
-  await card.getByPlaceholder('E:\\Backups\\ProjectVault', { exact: true }).fill(sched);
+  await card.getByPlaceholder('E:\\Backups\\Mothball', { exact: true }).fill(sched);
   await card.getByRole('button', { name: 'Save schedule' }).click();
   await card.locator('label').filter({ hasText: 'Back up automatically' }).locator('input').check();
   await page.getByText('Backup schedule saved').first().waitFor();

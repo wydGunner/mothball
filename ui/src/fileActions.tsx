@@ -92,11 +92,11 @@ export function useFileActions() {
       confirm: 'Delete', danger: true,
       body: <>
         <p style={{ marginTop: 0 }}><b>This deletes the actual file{one ? '' : 's'} from your disk</b> (moved to the {isTauri ? 'Windows Recycle Bin' : 'trash'}).
-          {' '}To only stop tracking a file in Project Vault, use “Remove from Project Vault” instead.</p>
+          {' '}To only stop tracking a file in Mothball, use “Remove from Mothball” instead.</p>
         <div className="delete-list">
           {live.map((f) => <div key={f.id}><b>{f.name}</b><div className="mono small dim" style={{ wordBreak: 'break-all' }}>{f.absPath || f.path}</div></div>)}
         </div>
-        <p className="small" style={{ marginBottom: 0 }}>Project Vault keeps a verified copy and the notes, so you can restore {one ? 'it' : 'them'} from Files → Filter → Deleted.</p>
+        <p className="small" style={{ marginBottom: 0 }}>Mothball keeps a verified copy and the notes, so you can restore {one ? 'it' : 'them'} from Files → Filter → Deleted.</p>
       </>,
     });
     if (!ok) return false;
@@ -113,10 +113,10 @@ export function useFileActions() {
   const untrack = useCallback(async (files: FileRef[]): Promise<boolean> => {
     const one = files.length === 1;
     const ok = await confirm({
-      title: one ? `Remove “${files[0].name}” from Project Vault?` : `Remove ${files.length} files from Project Vault?`,
-      confirm: 'Remove from Project Vault',
+      title: one ? `Remove “${files[0].name}” from Mothball?` : `Remove ${files.length} files from Mothball?`,
+      confirm: 'Remove from Mothball',
       body: <>
-        <p style={{ marginTop: 0 }}><b>The file{one ? ' stays' : 's stay'} on your disk, untouched.</b> Project Vault stops tracking {one ? 'it' : 'them'}: {one ? 'its' : 'their'} notes, tags, links and stored versions in Project Vault are removed, and a rule is added so future scans skip {one ? 'it' : 'them'} (you can remove the rule under Edit → Files &amp; versions).</p>
+        <p style={{ marginTop: 0 }}><b>The file{one ? ' stays' : 's stay'} on your disk, untouched.</b> Mothball stops tracking {one ? 'it' : 'them'}: {one ? 'its' : 'their'} notes, tags, links and stored versions in Mothball are removed, and a rule is added so future scans skip {one ? 'it' : 'them'} (you can remove the rule under Edit → Files &amp; versions).</p>
         <div className="delete-list">{files.map((f) => <div key={f.id} className="mono small">{f.path}</div>)}</div>
       </>,
     });
@@ -142,7 +142,7 @@ export function useFileActions() {
    */
   const menuItems = useCallback((f: FileRef, o: {
     selection?: FileRef[];
-    onOpen?: () => void;      // show the file in Project Vault
+    onOpen?: () => void;      // show the file in Mothball
     onEdit?: () => void;      // open in the built-in editor
     onReveal?: () => void;    // go to project → Files → select
     onHistory?: () => void;   // open the file's version history
@@ -152,7 +152,7 @@ export function useFileActions() {
     const sel = o.selection && o.selection.length > 1 ? o.selection : [f];
     const present = f.state === 'present';
     const items: MenuItem[] = [];
-    if (o.onEdit && f.editable && present) items.push({ label: 'Edit in Project Vault', icon: <LuCode />, onClick: o.onEdit });
+    if (o.onEdit && f.editable && present) items.push({ label: 'Edit in Mothball', icon: <LuCode />, onClick: o.onEdit });
     if (o.onOpen) items.push({ label: 'Open file details', icon: <LuFileText />, onClick: o.onOpen });
     if (o.onReveal) items.push({ label: 'Reveal in project', icon: <LuLocateFixed />, onClick: o.onReveal });
     if (o.onHistory) items.push({ label: 'Version history', icon: <LuHistory />, onClick: o.onHistory });
@@ -172,7 +172,7 @@ export function useFileActions() {
         { label: 'Rename…', icon: <LuPencilLine />, disabled: !present || sel.length > 1, onClick: async () => { if (await rename(f)) o.onChanged('renamed'); } },
         { label: 'Move to another project…', icon: <LuFolderInput />, disabled: !sel.some((x) => x.state === 'present'), onClick: async () => { if (await move(sel)) o.onChanged('deleted'); } },
         { sep: true, label: '' },
-        { label: sel.length > 1 ? `Remove ${sel.length} from Project Vault…` : 'Remove from Project Vault…', icon: <LuEyeOff />, onClick: async () => { if (await untrack(sel)) o.onChanged('deleted'); } },
+        { label: sel.length > 1 ? `Remove ${sel.length} from Mothball…` : 'Remove from Mothball…', icon: <LuEyeOff />, onClick: async () => { if (await untrack(sel)) o.onChanged('deleted'); } },
         { label: sel.length > 1 ? `Delete ${sel.filter((x) => x.state === 'present').length} files from disk…` : 'Delete file from disk…', icon: <LuTrash2 />, danger: true, disabled: !sel.some((x) => x.state === 'present'), onClick: async () => { if (await remove(sel)) o.onChanged('deleted'); } },
       );
     }

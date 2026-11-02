@@ -513,7 +513,7 @@ pub fn use_folder(v: &Vault, id: &str, folder: &Path) -> DbResult<Json> {
     let old = PathBuf::from(r.s("root_path"));
     let new_root = dunce(folder);
     if new_root.starts_with(v.managed_root()) {
-        return Err("Choose a folder outside Project Vault's own storage".into());
+        return Err("Choose a folder outside Mothball's own storage".into());
     }
     let mut copied = 0i64;
     let mut renamed = Vec::new();

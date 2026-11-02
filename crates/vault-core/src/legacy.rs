@@ -1,6 +1,6 @@
 //! Importer for the previous Print Vault (Python) database.
 //!
-//! Each Print Vault project becomes a *linked* Project Vault project in the
+//! Each Print Vault project becomes a *linked* Mothball project in the
 //! 3D-printing category, pointing at the same folder — nothing is copied or
 //! moved. Print metadata goes into the 3D-printing module fields, notes go
 //! into a project note. The Print Vault database is opened read-only.

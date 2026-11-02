@@ -293,7 +293,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
               onContextMenu={(e) => fileMenu(e, f)}>
               <KindIcon kind={f.kind} />
               <div style={{ minWidth: 0 }}>
-                <div className="fname" title={f.path}>{f.name} {f.versions > 1 && <span className="badge" title={`${f.versions} stored versions`}>v{f.versions}</span>} {f.changedSinceReview && <span className="badge warn" title="Changed outside Project Vault since last reviewed">changed</span>} {f.state === 'missing' && <span className="badge bad">missing</span>}</div>
+                <div className="fname" title={f.path}>{f.name} {f.versions > 1 && <span className="badge" title={`${f.versions} stored versions`}>v{f.versions}</span>} {f.changedSinceReview && <span className="badge warn" title="Changed outside Mothball since last reviewed">changed</span>} {f.state === 'missing' && <span className="badge bad">missing</span>}</div>
                 <div className="fpurpose">{f.purpose || (() => { const rel = dir ? f.path.slice(dir.length + 1) : f.path; return rel !== f.name && groupBy !== 'folder' ? rel : ''; })()}</div>
               </div>
               <span className="small dim" style={{ textAlign: 'right' }}>{bytes(f.size)}</span>
@@ -391,7 +391,7 @@ function FileDetailPanel({ fileId, ctx, onChanged, onEdit, highlightVersion }: {
           <div className="small dim mono" style={{ wordBreak: 'break-all' }}>{f.path.includes('/') ? f.path : 'in the project root'}</div>
         </div>
         <SaveState state={save.state} />
-        {canEdit(f) && <button className="btn primary sm" onClick={onEdit} title="Edit this file in Project Vault"><LuCode /> Edit file</button>}
+        {canEdit(f) && <button className="btn primary sm" onClick={onEdit} title="Edit this file in Mothball"><LuCode /> Edit file</button>}
         {isTauri && f.state === 'present' && <>
           <button className="btn sm" onClick={() => act(() => openPath(f.absPath))}><LuExternalLink /> Open</button>
           <button className="btn sm icon" title="Show in Explorer" onClick={() => act(() => revealPath(f.absPath))}><LuFolderSearch /></button>
@@ -404,7 +404,7 @@ function FileDetailPanel({ fileId, ctx, onChanged, onEdit, highlightVersion }: {
         }}><LuEllipsis /></button>
       </div>
 
-      {f.state === 'deleted' && <div className="alert bad"><LuTrash2 /><div className="grow">You deleted this file in Project Vault (it went to the Recycle Bin). Its notes and history are kept.</div>
+      {f.state === 'deleted' && <div className="alert bad"><LuTrash2 /><div className="grow">You deleted this file in Mothball (it went to the Recycle Bin). Its notes and history are kept.</div>
         <button className="btn sm" onClick={async () => { if (await fileActions.restore({ id: f.id, name: f.name, path: f.path, projectId: f.projectId, state: f.state })) { d.reload(); onChanged(); } }}><LuArchiveRestore /> Restore</button></div>}
       {f.state === 'missing' && <div className="alert bad"><LuTriangleAlert /><div>This file is no longer on disk. Its documentation is kept; if the file returns (same path, or identical content elsewhere), it is re-attached.</div></div>}
       {f.docs.fileChangedSinceDoc && f.state === 'present' && (
@@ -701,7 +701,7 @@ function FileHistory({ f, ctx, highlight }: { f: FileDetail; ctx: ProjectCtx; hi
       <p className="small dim" style={{ marginTop: 0 }}>
         {tab === 'timeline' && 'Everything known about this file, newest first. Each entry says where it came from; only entries with stored contents can be restored.'}
         {tab === 'versions' && 'Stored copies of this file. Compare any two, or roll back.'}
-        {tab === 'changes' && 'When Project Vault noticed the file being added, edited, moved or deleted.'}
+        {tab === 'changes' && 'When Mothball noticed the file being added, edited, moved or deleted.'}
         {tab === 'git' && 'Commits from the Git repository that touched this file (follows renames).'}
         {tab === 'revisions' && 'Earlier versions of this file’s documentation.'}
       </p>

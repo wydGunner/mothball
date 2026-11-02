@@ -1,4 +1,4 @@
-# Project Vault
+# Mothball
 
 A local, offline Windows app for all your projects: find any project, understand
 every important file, see what changed, know what to do next.
@@ -28,7 +28,7 @@ Prerequisites (one time):
 4. **Git for Windows** (optional, for the Git features).
 
 ```powershell
-cd project-vault
+cd mothball
 npm install
 npm run dev        # builds the UI and starts the desktop app
 ```
@@ -36,12 +36,13 @@ npm run dev        # builds the UI and starts the desktop app
 Build the installer:
 
 ```powershell
-npm run build      # → src-tauri\target\release\bundle\nsis\Project Vault_0.1.0_x64-setup.exe
-                   #   src-tauri\target\release\bundle\msi\Project Vault_0.1.0_x64_en-US.msi
+npm run build      # → src-tauri\target\release\bundle\nsis\Mothball_0.2.0_x64-setup.exe
+                   #   src-tauri\target\release\bundle\msi\Mothball_0.2.0_x64_en-US.msi
 ```
 
-Your data is kept in `%APPDATA%\com.projectvault.desktop\`. To use another
-folder (portable or test install), set `PROJECT_VAULT_DATA` first.
+Your data is kept in `%APPDATA%\com.projectvault.desktop\` (the folder keeps its
+original name so data from before the rename to Mothball carries over). To use another
+folder (portable or test install), set `MOTHBALL_DATA` first.
 
 ### Bringing over Print Vault
 

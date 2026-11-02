@@ -1,4 +1,4 @@
-//! Project Vault core library.
+//! Mothball core library.
 //!
 //! Everything that touches data lives here so it can be unit-tested without a
 //! UI. The desktop shell (src-tauri) and the dev server both talk to it through

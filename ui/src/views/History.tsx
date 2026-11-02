@@ -20,7 +20,7 @@ export function HistoryTab({ ctx }: { ctx: ProjectCtx }) {
     <div className="page">
       <p className="small muted" style={{ marginTop: 0 }}>
         <b>File backups</b> are stored copies of single files. <b>Snapshots</b> capture the whole project at a moment.
-        Both live in Project Vault’s backup storage, separate from your project folder and from Git commits. The <b>Timeline</b> tab is only an activity log — it records what happened but holds no file contents.
+        Both live in Mothball’s backup storage, separate from your project folder and from Git commits. The <b>Timeline</b> tab is only an activity log — it records what happened but holds no file contents.
       </p>
       <div className="histsplit">
         <BackupBrowser ctx={ctx} />

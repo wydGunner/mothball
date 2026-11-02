@@ -41,8 +41,9 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            // PROJECT_VAULT_DATA overrides the location (portable installs, tests).
-            let dir = match std::env::var_os("PROJECT_VAULT_DATA") {
+            // MOTHBALL_DATA overrides the location (portable installs, tests);
+            // PROJECT_VAULT_DATA is the name from before the rename.
+            let dir = match std::env::var_os("MOTHBALL_DATA").or_else(|| std::env::var_os("PROJECT_VAULT_DATA")) {
                 Some(d) => std::path::PathBuf::from(d),
                 None => app.path().app_data_dir()?,
             };
@@ -70,5 +71,5 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![vault_call])
         .run(tauri::generate_context!())
-        .expect("error while running Project Vault");
+        .expect("error while running Mothball");
 }

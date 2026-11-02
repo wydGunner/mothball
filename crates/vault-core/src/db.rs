@@ -1,6 +1,6 @@
 //! Thin, safe wrapper over the SQLite C API.
 //!
-//! Only what Project Vault needs: prepared statements with positional
+//! Only what Mothball needs: prepared statements with positional
 //! parameters, typed values, transactions, and busy handling. Every statement
 //! is finalized on drop; every error carries SQLite's message.
 

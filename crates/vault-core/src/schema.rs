@@ -338,7 +338,7 @@ pub fn migrate(db: &Db) -> DbResult<i64> {
     let cur = current_version(db)?;
     if cur > latest_version() {
         return Err(format!(
-            "This vault was created by a newer Project Vault (schema v{cur}); this build supports up to v{}. Refusing to open it to avoid damage.",
+            "This vault was created by a newer Mothball (schema v{cur}); this build supports up to v{}. Refusing to open it to avoid damage.",
             latest_version()
         ));
     }

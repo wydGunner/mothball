@@ -60,12 +60,12 @@ pub fn add_coalesced(v: &Vault, project_id: &str, kind: &str, summary: &str, rt:
     Ok(())
 }
 
-/// An edit made in Project Vault's editor. Saves of the same file within 30
+/// An edit made in Mothball's editor. Saves of the same file within 30
 /// minutes are folded into one entry that spans from the content before the
 /// first save to the content after the last one — but only while nothing
 /// else changed the file in between; otherwise a new entry starts.
 pub fn add_file_edit(v: &Vault, project_id: &str, file_id: &str, rel_path: &str, before_sha: &str, after_sha: &str) -> DbResult<()> {
-    let summary = format!("Edited {rel_path} in Project Vault");
+    let summary = format!("Edited {rel_path} in Mothball");
     let recent = v.db.one(
         "SELECT id, data FROM timeline WHERE project_id=? AND kind='edit' AND ref_type='file' AND ref_id=? AND at>? ORDER BY at DESC LIMIT 1",
         p![project_id, file_id, now_ms() - 30 * 60 * 1000],

@@ -312,7 +312,7 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
             }
             if content_changed {
                 rep.modified += 1;
-                event_m(v, project_id, &fid, "modified", "Content changed outside Project Vault", h.as_deref(), Some(seen.mtime))?;
+                event_m(v, project_id, &fid, "modified", "Content changed outside Mothball", h.as_deref(), Some(seen.mtime))?;
                 let mut c = change("modified", &fid, rel).with("to", h.clone().unwrap_or_default());
                 if let Some(old) = r.os("sha256") { c.set("from", old); }
                 changes.push(c);
@@ -321,7 +321,7 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
 
         // 2. vanished (present in index, absent on disk) + previously missing
         let disk: HashSet<&String> = w.files.keys().collect();
-        // files deleted through Project Vault stay deleted; they don't take part in matching
+        // files deleted through Mothball stay deleted; they don't take part in matching
         let gone: Vec<&Row> = existing.iter().filter(|r| !disk.contains(&r.s("rel_path")) && r.s("state") != "deleted").collect();
         // 3. brand-new paths
         let mut new_files: Vec<(String, i64, i64, Option<String>)> = Vec::new();
@@ -1323,7 +1323,7 @@ pub fn rename(v: &Vault, file_id: &str, new_name: &str) -> DbResult<Json> {
     if let Some(o) = v.db.one("SELECT id, state FROM files WHERE project_id=? AND rel_path=? AND id!=?", p![pid.clone(), new_rel.clone(), file_id])? {
         let has_docs = v.db.scalar_i64("SELECT count(*) FROM file_docs WHERE file_id=? AND (purpose!='' OR notes_md!='')", p![o.s("id")])? > 0;
         if o.s("state") == "present" || has_docs {
-            return Err(format!("Project Vault still has notes for an earlier “{name}” in this folder. Forget that record first (it's listed under Filter → Missing/Deleted)."));
+            return Err(format!("Mothball still has notes for an earlier “{name}” in this folder. Forget that record first (it's listed under Filter → Missing/Deleted)."));
         }
         v.db.exec("DELETE FROM files WHERE id=?", p![o.s("id")])?;
         search::unindex(v, "file", &o.s("id"))?;
@@ -1334,7 +1334,7 @@ pub fn rename(v: &Vault, file_id: &str, new_name: &str) -> DbResult<Json> {
         "UPDATE files SET rel_path=?, name=?, ext=?, kind=? WHERE id=?",
         p![new_rel.clone(), name.clone(), ext.clone(), classify(&ext), file_id],
     )?;
-    event(v, &pid, file_id, "renamed", &format!("{old_rel} → {new_rel} (in Project Vault)"), f.os("sha256").as_deref())?;
+    event(v, &pid, file_id, "renamed", &format!("{old_rel} → {new_rel} (in Mothball)"), f.os("sha256").as_deref())?;
     timeline::add(v, &pid, "files", &format!("Renamed {old_rel} → {name}"), "", Some(("file", file_id)), false)?;
     search::index_file(v, file_id)?;
     get(v, file_id)
@@ -1366,7 +1366,7 @@ pub(crate) fn to_recycle_bin(path: &Path) -> Result<(), String> {
 
 /// Deletes files: keeps a verified copy in the version store, then moves the
 /// file to the Recycle Bin. The record stays (state `deleted`) so notes and
-/// history survive and the file can be restored from Project Vault.
+/// history survive and the file can be restored from Mothball.
 pub fn delete(v: &Vault, file_ids: &[String]) -> DbResult<Json> {
     let mut deleted = Vec::new();
     let mut errors = Vec::new();
@@ -1385,7 +1385,7 @@ pub fn delete(v: &Vault, file_ids: &[String]) -> DbResult<Json> {
             to_recycle_bin(&path).map_err(|e| format!("{}: could not move to the Recycle Bin ({e}). Nothing was deleted.", f.s("rel_path")))?;
             v.db.exec("UPDATE files SET state='deleted', changed_since_review=0, sha256=? WHERE id=?", p![sha.clone(), fid.clone()])?;
             v.db.exec("DELETE FROM reconcile_reviews WHERE missing_file_id=? OR candidate_file_id=?", p![fid.clone(), fid.clone()])?;
-            event(v, &pid, fid, "deleted", "Deleted in Project Vault (moved to the Recycle Bin; a copy is kept in History)", Some(&sha))?;
+            event(v, &pid, fid, "deleted", "Deleted in Mothball (moved to the Recycle Bin; a copy is kept in History)", Some(&sha))?;
             search::unindex(v, "file", fid)?;
             projects_touched.insert(pid);
             Ok(f.s("rel_path"))
@@ -1402,7 +1402,7 @@ pub fn delete(v: &Vault, file_ids: &[String]) -> DbResult<Json> {
     Ok(Json::obj().with("deleted", Json::Arr(deleted)).with("errors", Json::Arr(errors)))
 }
 
-/// "Remove from Project Vault": stops tracking a file without touching it on
+/// "Remove from Mothball": stops tracking a file without touching it on
 /// disk. Adds an exact-path ignore rule (so the next scan doesn't re-add it)
 /// and removes its record, notes, links and tags. Stored versions are removed
 /// too unless `keep_versions`.
@@ -1439,7 +1439,7 @@ pub fn stop_tracking(v: &Vault, file_ids: &[String], keep_versions: bool) -> DbR
     Ok(Json::obj().with("removed", Json::Arr(removed)))
 }
 
-/// Brings back a file deleted through Project Vault from its stored copy.
+/// Brings back a file deleted through Mothball from its stored copy.
 pub fn restore_deleted(v: &Vault, file_id: &str) -> DbResult<Json> {
     let f = v.db.one("SELECT * FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
     if f.s("state") == "present" {
@@ -1530,7 +1530,7 @@ pub fn write_text(v: &Vault, file_id: &str, text: &str, expected_sha: &str, eol:
             p![m.len() as i64, mtime, new_sha.clone(), now, now, file_id],
         )?;
         if current != new_sha {
-            event(v, &pid, file_id, "modified", "Edited in Project Vault", Some(&new_sha))?;
+            event(v, &pid, file_id, "modified", "Edited in Mothball", Some(&new_sha))?;
         }
     }
     if current != new_sha {

@@ -20,7 +20,7 @@ or not yet verified on Windows · ⛔ not implemented yet
   prompt), version search/compare/restore with keep-current, backups in
   global search with backup-only actions, snapshots (preview, restore, newer
   files kept, automatic undo snapshot), import preview + Undo import (changed
-  and unrelated files kept), Remove from Project Vault, keyboard context
+  and unrelated files kept), Remove from Mothball, keyboard context
   menus, clickable breadcrumbs, the save-mode setting and moving backup
   storage, .zip backups with project files, restoring a deleted file from a
   backup, staging/cancelling a database restore, scheduled backups, the 3D
@@ -45,8 +45,8 @@ or not yet verified on Windows · ⛔ not implemented yet
 | 3 | Browse all project files | ✅ folder tree, filters, sort, search, multi-select |
 | 4 | Document what a script does | ✅ purpose, Markdown notes, warnings, tags, custom fields, autosave |
 | 5 | Link the script to related scripts, notes, bugs | ✅ link graph + `[[wiki links]]` |
-| 6 | Detect modification outside Project Vault | ✅ polling rescans (open, focus, 60 s, F5) |
-| 7 | Git history when available | ✅ per-file (follows renames) and project log, diffs, status; plus Project Vault's own version history without Git |
+| 6 | Detect modification outside Mothball | ✅ polling rescans (open, focus, 60 s, F5) |
+| 7 | Git history when available | ✅ per-file (follows renames) and project log, diffs, status; plus Mothball's own version history without Git |
 | 8 | Return months later and understand it | ✅ docs follow renames/moves, timeline, revisions |
 | 9 | Separate 3D printing project with models, materials, assembly notes | ✅ 3D module fields, print log, STL bounds, Print Vault import |
 | 10 | Back up and restore metadata and files reliably | ✅ verified backups (folder or .zip), optionally with the project files; scheduled backups; in-app restore of files (with preview) and of the database (staged, previous kept) |
@@ -69,7 +69,7 @@ or not yet verified on Windows · ⛔ not implemented yet
 | Open with default app / reveal in Explorer | 🟡 | via Tauri opener plugin; untested on Windows |
 | Knowledge base | ✅ | tree, drag to nest, categories, Markdown, split view, autosave, revisions, trash |
 | Search | ✅ | FTS5 across projects, files, docs, notes, tasks, bugs, journal + substring matching on file names/paths |
-| Global search (Ctrl+K) | ✅ | file name + `Project / folder / file` path with clickable project/folder segments, real absolute path on hover, highlights, right-click menu (edit, details, reveal, version history, open, Explorer, copy paths, rename, move to project, remove from Project Vault, delete to Recycle Bin), keyboard (↑↓ Enter Esc Shift+F10); backup copies and snapshots appear as clearly labelled results with backup-only actions (history, compare, restore, save a copy) |
+| Global search (Ctrl+K) | ✅ | file name + `Project / folder / file` path with clickable project/folder segments, real absolute path on hover, highlights, right-click menu (edit, details, reveal, version history, open, Explorer, copy paths, rename, move to project, remove from Mothball, delete to Recycle Bin), keyboard (↑↓ Enter Esc Shift+F10); backup copies and snapshots appear as clearly labelled results with backup-only actions (history, compare, restore, save a copy) |
 | File rename / delete | ✅ | shared by Files tab and global search; Windows name validation; delete keeps a verified copy, sends to the Recycle Bin (🟡 untested on Windows), and is restorable from Filter → Deleted |
 | Tasks & bugs | ✅ | list / Kanban (drag) / calendar, checklists, milestones, bug fields |
 | Timeline | ✅ | grouped scan entries, coalesced edits, manual journal |
@@ -78,7 +78,7 @@ or not yet verified on Windows · ⛔ not implemented yet
 | File versions (works without Git) | ✅ | automatic for code/text and the project type's key files (3MF/STL/Blend… for 3D printing), side-by-side / unified diff, binary compare (size, STL bounds, SHA-256). Content-addressed store deduplicated by SHA-256 |
 | Smart Save | ✅ | Ctrl+S follows Settings → Editor & saving (ask / ask for larger changes / always back up / just save); Ctrl+Shift+S always asks. Description, offline name suggestion (neutral `<file>_vN_<date>` when there's nothing to go on), related task, tags, “back up before saving” vs “keep a copy of what you save” |
 | File backups | ✅ | name, description, tags, reason, hash, timestamp; sidecar `.json` per backup; edit details; export a copy; restore dialog shows source → destination and keeps the current file first; verified after writing |
-| Version History | ✅ | per-file list with search, “backups only”, compare any two or vs now (Monaco diff 🟡 on Windows, built-in diff here); per-file Timeline with labelled sources (backup / auto version / detected on disk / Project Vault action / Git commit / notes) — only entries with stored contents are restorable |
+| Version History | ✅ | per-file list with search, “backups only”, compare any two or vs now (Monaco diff 🟡 on Windows, built-in diff here); per-file Timeline with labelled sources (backup / auto version / detected on disk / Mothball action / Git commit / notes) — only entries with stored contents are restorable |
 | Project Backups tab | ✅ | browse every backup in a project by text, date range or quick range; project snapshots (create, details, preview, restore that never deletes newer files and snapshots the current state first, delete) |
 | Retention | ✅ | nothing is deleted automatically; “Clean up…” previews the count and asks first; named backups only with an explicit tick |
 | Backup storage location | ✅ | Settings: shows path and availability; change copies + verifies, keeps the old folder; clear error when the drive is missing (🟡 folder picker untested on Windows) |

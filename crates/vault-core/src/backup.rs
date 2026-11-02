@@ -102,7 +102,7 @@ pub fn create_opts(v: &Vault, dest: &Path, project_id: Option<&str>, o: Opts) ->
     }
     let stamp = now_ms();
     let readable = crate::util::iso_utc(stamp).replace([' ', ':'], "-").replace("-UTC", "");
-    let mut name = format!("ProjectVault-backup-{readable}{}", if o.auto { "-auto" } else { "" });
+    let mut name = format!("Mothball-backup-{readable}{}", if o.auto { "-auto" } else { "" });
     while dest.join(&name).exists() || dest.join(format!("{name}.zip")).exists() {
         name.push('_');
     }
@@ -251,7 +251,7 @@ impl Src {
         let m = String::from_utf8(self.read("manifest.json").map_err(|e| format!("manifest.json unreadable: {e}"))?).map_err(|_| "manifest.json is not text".to_string())?;
         let m = Json::parse(&m)?;
         if m.str_of("format").as_deref() != Some("project-vault-backup") {
-            return Err("Not a Project Vault backup".into());
+            return Err("Not a Mothball backup".into());
         }
         Ok(m)
     }
@@ -459,7 +459,7 @@ pub fn stage_database_restore(v: &Vault, path: &Path) -> DbResult<Json> {
     let mut src = Src::open(path)?;
     let m = src.manifest()?;
     if m.get("schemaVersion").and_then(|x| x.as_i64()).unwrap_or(0) > schema::latest_version() {
-        return Err("This backup was made by a newer version of Project Vault. Update the app first.".into());
+        return Err("This backup was made by a newer version of Mothball. Update the app first.".into());
     }
     let data = src.read("vault.db")?;
     let pending = v.data_dir.join(PENDING_DB);
@@ -616,7 +616,8 @@ pub fn run_due(v: &Vault, force: bool) -> DbResult<Json> {
 }
 
 /// Deletes the oldest automatic backups beyond `keep`. Only touches entries
-/// named ProjectVault-backup-…-auto whose manifest says they're automatic.
+/// named Mothball-backup-…-auto (or ProjectVault-backup-…-auto, made before
+/// the rename) whose manifest says they're automatic.
 fn prune_auto(dest: &Path, keep: usize) -> Vec<String> {
     let Ok(rd) = std::fs::read_dir(dest) else { return vec![] };
     let mut autos: Vec<(String, PathBuf)> = rd
@@ -624,7 +625,7 @@ fn prune_auto(dest: &Path, keep: usize) -> Vec<String> {
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
             let stem = name.trim_end_matches(".zip");
-            (name.starts_with("ProjectVault-backup-") && stem.trim_end_matches('_').ends_with("-auto")).then(|| (name, e.path()))
+            ((name.starts_with("Mothball-backup-") || name.starts_with("ProjectVault-backup-")) && stem.trim_end_matches('_').ends_with("-auto")).then(|| (name, e.path()))
         })
         .filter(|(_, p)| Src::open(p).and_then(|mut s| s.manifest()).map(|m| m.get("automatic").and_then(|x| x.as_bool()).unwrap_or(false)).unwrap_or(false))
         .collect();

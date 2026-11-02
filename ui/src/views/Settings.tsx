@@ -73,9 +73,9 @@ function BackupStorage() {
   const act = useAction();
   const toast = useToast();
   const change = async () => {
-    const dir = await pickFolder('Choose where Project Vault keeps file backups and snapshots');
+    const dir = await pickFolder('Choose where Mothball keeps file backups and snapshots');
     if (!dir) return;
-    if (!(await confirm({ title: 'Move backup storage?', confirm: 'Copy and switch', body: <>All stored backups and snapshots are <b>copied</b> to <span className="mono">{dir}</span> and verified. Project Vault then uses the new location. The old folder is left as it is — delete it yourself once you’re happy.</> }))) return;
+    if (!(await confirm({ title: 'Move backup storage?', confirm: 'Copy and switch', body: <>All stored backups and snapshots are <b>copied</b> to <span className="mono">{dir}</span> and verified. Mothball then uses the new location. The old folder is left as it is — delete it yourself once you’re happy.</> }))) return;
     setBusy(true);
     const r: any = await act(() => call('storage.set', { path: dir }));
     setBusy(false);
@@ -84,7 +84,7 @@ function BackupStorage() {
   return (
     <div className="card pad" style={{ marginBottom: 16 }}>
       <h2>Backup storage location</h2>
-      <p className="muted small" style={{ marginTop: 0 }}>Where file backups, automatic versions and project snapshots are stored. Each backup also gets a readable <code>.json</code> description next to it, so the folder makes sense even without Project Vault.</p>
+      <p className="muted small" style={{ marginTop: 0 }}>Where file backups, automatic versions and project snapshots are stored. Each backup also gets a readable <code>.json</code> description next to it, so the folder makes sense even without Mothball.</p>
       {st.error ? <div className="alert bad">{st.error}</div> : !st.data ? <div className="muted small">Loading…</div> : <>
         <div className="row" style={{ flexWrap: 'wrap' }}>
           <span className="mono small grow" style={{ wordBreak: 'break-all' }}>{st.data.root}</span>
@@ -100,7 +100,7 @@ function BackupStorage() {
 }
 
 const BackupDest = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
-  <div className="row"><input className="input mono" value={value} onChange={(e) => onChange(e.target.value)} placeholder="E:\Backups\ProjectVault" /><button className="btn" onClick={async () => { const p = await pickFolder('Backup destination'); if (p) onChange(p); }}><LuFolderOpen /> Browse…</button></div>
+  <div className="row"><input className="input mono" value={value} onChange={(e) => onChange(e.target.value)} placeholder="E:\Backups\Mothball" /><button className="btn" onClick={async () => { const p = await pickFolder('Backup destination'); if (p) onChange(p); }}><LuFolderOpen /> Browse…</button></div>
 );
 
 function BackupCard({ nav, dataDir }: { nav: Nav; dataDir?: string }) {
@@ -122,7 +122,7 @@ function BackupCard({ nav, dataDir }: { nav: Nav; dataDir?: string }) {
   return (
     <div className="card pad" style={{ marginBottom: 16 }}>
       <h2>Back up now</h2>
-      <p className="muted small" style={{ marginTop: 0 }}>A consistent copy of the vault database, a readable export of every project (notes as Markdown, file documentation, tasks, timeline) and a manifest with checksums. Verified right after it's written, and readable without Project Vault.</p>
+      <p className="muted small" style={{ marginTop: 0 }}>A consistent copy of the vault database, a readable export of every project (notes as Markdown, file documentation, tasks, timeline) and a manifest with checksums. Verified right after it's written, and readable without Mothball.</p>
       <div className="field"><label>Destination folder (e.g. an external drive)</label><BackupDest value={dest} onChange={setDest} /></div>
       <div className="grid2">
         <div className="field"><label>Scope</label>
@@ -168,7 +168,7 @@ function ScheduleCard() {
   return (
     <div className="card pad" style={{ marginBottom: 16 }}>
       <h2>Scheduled backups</h2>
-      <p className="muted small" style={{ marginTop: 0 }}>Runs automatically while Project Vault is open (checked at start-up and every 30 minutes). If the app was closed when one was due, it runs the next time you open it.</p>
+      <p className="muted small" style={{ marginTop: 0 }}>Runs automatically while Mothball is open (checked at start-up and every 30 minutes). If the app was closed when one was due, it runs the next time you open it.</p>
       <label className="row" style={{ marginBottom: 10 }}><input type="checkbox" checked={!!s.enabled} onChange={(e) => save({ enabled: e.target.checked })} /> <b>Back up automatically</b></label>
       <div className="field"><label>Destination folder</label><BackupDest value={s.dest} onChange={(dest) => setS({ ...s, dest })} /></div>
       <div className="grid2">
@@ -209,7 +209,7 @@ function RestoreCard({ nav }: { nav: Nav }) {
   };
   const restoreDb = async () => {
     if (!(await confirm({ title: 'Restore the vault database from this backup?', confirm: 'Restore on next start', danger: true,
-      body: <>Every project, note, task, file description and setting goes back to how it was on <b>{dateTime(info.createdAt)}</b>. Changes made since then are not lost: the current database is kept in the data folder's <span className="mono">backups</span> folder as <span className="mono">before-restore-….db</span>. Your project files aren't touched. The restore happens when Project Vault restarts.</> }))) return;
+      body: <>Every project, note, task, file description and setting goes back to how it was on <b>{dateTime(info.createdAt)}</b>. Changes made since then are not lost: the current database is kept in the data folder's <span className="mono">backups</span> folder as <span className="mono">before-restore-….db</span>. Your project files aren't touched. The restore happens when Mothball restarts.</> }))) return;
     const r = await act(() => call('backup.restoreDatabase', { path }));
     if (r) {
       pending.reload();
@@ -218,17 +218,17 @@ function RestoreCard({ nav }: { nav: Nav }) {
           const { relaunch } = await import('@tauri-apps/plugin-process');
           await relaunch();
         }
-      } else toast('Staged. Restart Project Vault to finish the restore.', 'success');
+      } else toast('Staged. Restart Mothball to finish the restore.', 'success');
     }
   };
   return (
     <div className="card pad" style={{ marginBottom: 16 }}>
       <h2>Check or restore a backup</h2>
-      {pending.data?.pending && <div className="alert warn" style={{ marginBottom: 10 }}><LuTriangleAlert /><div className="grow">A database restore is waiting and will be applied the next time Project Vault starts.</div><button className="btn sm" onClick={async () => { await act(() => call('backup.cancelDatabaseRestore')); pending.reload(); }}>Cancel it</button></div>}
+      {pending.data?.pending && <div className="alert warn" style={{ marginBottom: 10 }}><LuTriangleAlert /><div className="grow">A database restore is waiting and will be applied the next time Mothball starts.</div><button className="btn sm" onClick={async () => { await act(() => call('backup.cancelDatabaseRestore')); pending.reload(); }}>Cancel it</button></div>}
       <p className="muted small" style={{ marginTop: 0 }}>Choose a backup folder or .zip. It's verified (every checksum plus a database integrity check) before anything is offered.</p>
-      <div className="row"><input className="input mono" value={path} onChange={(e) => setPath(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && path && open(path)} placeholder="E:\Backups\ProjectVault\ProjectVault-backup-…" />
+      <div className="row"><input className="input mono" value={path} onChange={(e) => setPath(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && path && open(path)} placeholder="E:\Backups\Mothball\Mothball-backup-…" />
         <button className="btn" title="Choose a backup folder" onClick={async () => { const p = await pickFolder('Backup folder'); if (p) open(p); }}><LuFolderOpen /> Folder…</button>
-        <button className="btn" title="Choose a .zip backup" onClick={async () => { const p = await pickFiles('Backup .zip', [{ name: 'Project Vault backup', extensions: ['zip'] }]); if (p[0]) open(p[0]); }}>.zip…</button>
+        <button className="btn" title="Choose a .zip backup" onClick={async () => { const p = await pickFiles('Backup .zip', [{ name: 'Mothball backup', extensions: ['zip'] }]); if (p[0]) open(p[0]); }}>.zip…</button>
         <button className="btn primary" title="Verify every checksum and the database before showing what can be restored" disabled={!path || loading} onClick={() => open(path)}>{loading ? 'Checking…' : 'Check'}</button></div>
       {info && <div style={{ marginTop: 12 }}>
         {info.verification.ok

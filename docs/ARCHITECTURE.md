@@ -1,4 +1,4 @@
-# Project Vault — architecture
+# Mothball — architecture
 
 ## Layers
 
@@ -41,7 +41,7 @@ exercises the real backend code.
 
 ## Data location
 
-`%APPDATA%\com.projectvault.desktop\` (override with `PROJECT_VAULT_DATA`):
+`%APPDATA%\com.projectvault.desktop\` (override with `MOTHBALL_DATA`):
 
 | Path | Content |
 |---|---|
@@ -50,7 +50,7 @@ exercises the real backend code.
 | `objects/ab/cdef…` | stored file versions, named by SHA-256 (each distinct content stored once) |
 | `backups/pre-migration-*.db` | automatic copy taken before any schema upgrade |
 
-Linked projects stay where they are. Project Vault never renames, moves or
+Linked projects stay where they are. Mothball never renames, moves or
 reorganizes their files; it only reads them (and writes into them when you
 explicitly import/drop files, never overwriting).
 

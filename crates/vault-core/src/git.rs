@@ -66,7 +66,7 @@ pub fn init(root: &Path) -> DbResult<Json> {
     git_write(root, &["init", "-b", "main"]).or_else(|_| git_write(root, &["init"]))?;
     let gi = root.join(".gitignore");
     if !gi.exists() {
-        let _ = crate::util::atomic_write(&gi, b"# Added by Project Vault\nnode_modules/\ntarget/\ndist/\nbuild/\n.vs/\n*.tmp\nThumbs.db\ndesktop.ini\n");
+        let _ = crate::util::atomic_write(&gi, b"# Added by Mothball\nnode_modules/\ntarget/\ndist/\nbuild/\n.vs/\n*.tmp\nThumbs.db\ndesktop.ini\n");
     }
     info(root)
 }
@@ -141,7 +141,7 @@ pub fn pull(root: &Path) -> DbResult<Json> {
     current_branch(root)?;
     let out = git_write(root, &["pull", "--ff-only"]).map_err(|e| {
         if e.contains("Not possible to fast-forward") || e.contains("diverge") {
-            format!("Your local branch and GitHub both have new commits. Resolve this in your Git tool (merge or rebase); Project Vault only does fast-forward pulls.\n\n{e}")
+            format!("Your local branch and GitHub both have new commits. Resolve this in your Git tool (merge or rebase); Mothball only does fast-forward pulls.\n\n{e}")
         } else {
             e
         }

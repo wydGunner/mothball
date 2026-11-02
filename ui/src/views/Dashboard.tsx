@@ -112,8 +112,8 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
     const ok = await confirm({
       title: `Remove “${p.name}”?`, danger: true, confirm: 'Remove project',
       body: managed
-        ? <>The project, its notes, file documentation and tasks are removed from Project Vault. Its files are stored by the app at <span className="mono">{p.rootPath}</span>.</>
-        : <>The project, its notes, file documentation and tasks are removed from Project Vault. <b>Your folder {p.rootPath} is not touched.</b> Make a backup first if you may want this metadata back.</>,
+        ? <>The project, its notes, file documentation and tasks are removed from Mothball. Its files are stored by the app at <span className="mono">{p.rootPath}</span>.</>
+        : <>The project, its notes, file documentation and tasks are removed from Mothball. <b>Your folder {p.rootPath} is not touched.</b> Make a backup first if you may want this metadata back.</>,
       checkbox: managed ? {
         label: 'Also delete the project’s files',
         hint: 'The folder goes to the Recycle Bin. Leave this off to keep the files on disk.',
@@ -508,8 +508,8 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
       </div>
       <p className="muted small" style={{ marginTop: 0 }}>
         {mode === 'linked'
-          ? 'Project Vault indexes the folder in place. Your files are never moved, renamed or reorganized.'
-          : 'Project Vault creates a storage folder for this project. Import or drop files into it.'}
+          ? 'Mothball indexes the folder in place. Your files are never moved, renamed or reorganized.'
+          : 'Mothball creates a storage folder for this project. Import or drop files into it.'}
       </p>
       {mode === 'linked' && (
         <div className="field"><label>Folder</label>

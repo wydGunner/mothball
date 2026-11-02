@@ -91,7 +91,7 @@ fn main() {
     let ui = PathBuf::from(&args[2]);
     let port = args.get(3).cloned().unwrap_or_else(|| "1420".into());
     let l = TcpListener::bind(format!("127.0.0.1:{port}")).expect("bind");
-    eprintln!("Project Vault dev server on http://127.0.0.1:{port}");
+    eprintln!("Mothball dev server on http://127.0.0.1:{port}");
     let vault = Arc::new(Mutex::new(vault));
     {
         // background change watching, same as the desktop app

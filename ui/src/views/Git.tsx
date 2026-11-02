@@ -45,9 +45,9 @@ export function GitTab({ ctx }: { ctx: ProjectCtx }) {
   if (!isRepo) return (
     <div className="page"><Empty icon={<LuGitBranch />} title={info.data?.gitAvailable === false ? 'Git is not installed' : 'This project isn’t using Git yet'}>
       {info.data?.gitAvailable === false
-        ? <p style={{ maxWidth: 560 }}>Install <b>Git for Windows</b> (git-scm.com), restart Project Vault, and come back here to see history and push to GitHub.</p>
+        ? <p style={{ maxWidth: 560 }}>Install <b>Git for Windows</b> (git-scm.com), restart Mothball, and come back here to see history and push to GitHub.</p>
         : <>
-          <p style={{ maxWidth: 560 }}>Git keeps a full history of your project and lets you back it up to GitHub. Project Vault already keeps its own file versions (see each file’s History), so this is optional — but it’s the way to put the project on GitHub.</p>
+          <p style={{ maxWidth: 560 }}>Git keeps a full history of your project and lets you back it up to GitHub. Mothball already keeps its own file versions (see each file’s History), so this is optional — but it’s the way to put the project on GitHub.</p>
           <InitButton ctx={ctx} onDone={info.reload} />
         </>}
     </Empty></div>
@@ -56,7 +56,7 @@ export function GitTab({ ctx }: { ctx: ProjectCtx }) {
   return (
     <div className="page" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 380px', gap: 18, alignItems: 'start', maxWidth: 'none' }}>
       <div>
-        <div className="alert info" style={{ marginBottom: 12 }}><LuInfo /><div>History of your Git repository. Project Vault only changes it when you commit, push or pull from the panel on the right — it never resets, rebases or force-pushes.</div></div>
+        <div className="alert info" style={{ marginBottom: 12 }}><LuInfo /><div>History of your Git repository. Mothball only changes it when you commit, push or pull from the panel on the right — it never resets, rebases or force-pushes.</div></div>
         <h2 style={{ marginBottom: 10 }}>History</h2>
         {(log.data || []).map((c) => (
           <div key={c.hash} className="card" style={{ marginBottom: 6 }}>
@@ -208,8 +208,8 @@ function SyncPanel({ ctx, info, status, onChanged }: { ctx: ProjectCtx; info: an
             <h3 style={{ margin: '14px 0 6px' }}>…or connect an existing repository</h3>
           </> : <p className="small dim">
             Create an empty repository on <a href="#" onClick={(e) => { e.preventDefault(); const u = 'https://github.com/new'; if (isTauri) import('@tauri-apps/plugin-opener').then((o: any) => o.openUrl(u)); else window.open(u, '_blank', 'noopener'); }}>github.com/new</a> (don’t add a README), then paste its URL here.
-            {gh.data && !gh.data.installed && <> With the GitHub CLI (<code>winget install GitHub.cli</code>, then <code>gh auth login</code>) Project Vault can create the repository for you.</>}
-            {gh.data?.installed && !gh.data.loggedIn && <> Run <code>gh auth login</code> once and Project Vault can create repositories for you.</>}
+            {gh.data && !gh.data.installed && <> With the GitHub CLI (<code>winget install GitHub.cli</code>, then <code>gh auth login</code>) Mothball can create the repository for you.</>}
+            {gh.data?.installed && !gh.data.loggedIn && <> Run <code>gh auth login</code> once and Mothball can create repositories for you.</>}
           </p>}
           <div className="row"><input className="input mono" placeholder="https://github.com/you/repo.git" value={url} onChange={(e) => setUrl(e.target.value)} />
             <button className="btn" disabled={!url.trim() || !!busy} onClick={async () => { if (await run('remote', () => call('git.setRemote', { projectId: pid, url }), 'Connected — now press Push')) setUrl(''); }}>Connect</button></div>

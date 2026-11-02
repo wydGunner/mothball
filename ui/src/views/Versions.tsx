@@ -8,7 +8,7 @@ import { ago, bytes, cx, dateTime } from '../format';
 export interface Version { id: string; sha256: string; size: number; path: string; reason: string; note: string; name: string; tags: string[]; at: number; isCurrent: boolean }
 
 export const REASON: Record<string, string> = {
-  baseline: 'first seen', auto: 'auto · changed on disk', manual: 'backup', 'before-restore': 'kept before a restore', 'before-edit': 'before an edit in Project Vault',
+  baseline: 'first seen', auto: 'auto · changed on disk', manual: 'backup', 'before-restore': 'kept before a restore', 'before-edit': 'before an edit in Mothball',
   'before-delete': 'kept before delete', 'pre-save': 'backup · before saving', 'post-save': 'backup · saved version',
 };
 export const isNamed = (v: { name: string; note: string; reason: string }) => !!v.name || !!v.note || ['manual', 'pre-save', 'post-save'].includes(v.reason);
@@ -68,7 +68,7 @@ export function VersionsPanel({ fileId, fileName, absPath, present, refreshKey, 
               {!v.isCurrent && <button className="btn ghost sm" title="Restore this version…" onClick={() => setRestoreV(v)}><LuUndo2 /> Restore</button>}
               <button className="btn ghost sm icon" title="Save a copy as a normal file…" onClick={() => exportCopy(v)}><LuDownload /></button>
               <button className="btn ghost sm icon" title="Edit name, description and tags" onClick={() => setEditV(v)}><LuPencilLine /></button>
-              <button className="btn ghost sm icon" title="Delete this stored version" onClick={async () => { if (await confirm({ title: 'Delete this stored version?', danger: true, confirm: 'Delete version', body: <>Only Project Vault's stored copy{v.name ? <> “<b>{v.name}</b>”</> : ''} is deleted. The file on disk is not touched.</> })) { await act(() => call('versions.delete', { id: v.id })); versions.reload(); } }}><LuTrash2 /></button>
+              <button className="btn ghost sm icon" title="Delete this stored version" onClick={async () => { if (await confirm({ title: 'Delete this stored version?', danger: true, confirm: 'Delete version', body: <>Only Mothball's stored copy{v.name ? <> “<b>{v.name}</b>”</> : ''} is deleted. The file on disk is not touched.</> })) { await act(() => call('versions.delete', { id: v.id })); versions.reload(); } }}><LuTrash2 /></button>
             </div>
           </div>
         ))}
@@ -233,10 +233,10 @@ export function StructuredDiff({ hunks, mode }: { hunks: { lines: DLine[] }[]; m
 interface HistEntry { source: string; kind: string; title: string; description?: string; versionId?: string; at: number; sha256?: string; restorable: boolean; commit?: string }
 
 export const SOURCE_LABEL: Record<string, string> = {
-  backup: 'Backup', 'auto-version': 'Auto version', filesystem: 'Detected on disk', 'project-vault': 'Project Vault action', git: 'Git commit', notes: 'Notes',
+  backup: 'Backup', 'auto-version': 'Auto version', filesystem: 'Detected on disk', 'project-vault': 'Mothball action', git: 'Git commit', notes: 'Notes',
 };
 const EVENT_LABEL: Record<string, string> = {
-  added: 'Added', modified: 'Changed on disk', moved: 'Moved / renamed', missing: 'Went missing', restored: 'Reappeared', renamed: 'Renamed in Project Vault',
+  added: 'Added', modified: 'Changed on disk', moved: 'Moved / renamed', missing: 'Went missing', restored: 'Reappeared', renamed: 'Renamed in Mothball',
   deleted: 'Deleted (Recycle Bin)', 'restored-version': 'Restored from a stored version', imported: 'Imported',
 };
 

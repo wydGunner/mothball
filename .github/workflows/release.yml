@@ -1,7 +1,7 @@
 name: Release
 
 # Pushing a tag like v0.2.0 builds the signed Windows installer and publishes
-# a GitHub Release with latest.json, which installed copies of Project Vault
+# a GitHub Release with latest.json, which installed copies of Mothball
 # check to update themselves.
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: Project Vault ${{ github.ref_name }}
+          releaseName: Mothball ${{ github.ref_name }}
           releaseBody: See the commit history for what changed. Installed copies update themselves.
           releaseDraft: false
           prerelease: false

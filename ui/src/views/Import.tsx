@@ -94,7 +94,7 @@ export function ImportDialog({ projectId, paths, initialDir, onClose, onDone }: 
         </div>
         <div className="opchoice" role="radiogroup" aria-label="What to do with the files">
           <label className={cx('opcard', op === 'copy' && 'on')}><input type="radio" name="importop" checked={op === 'copy'} onChange={() => setOp('copy')} />
-            <div><b><LuCopy /> Copy into the project</b><div className="small dim">Your originals stay where they are, unchanged. Edits in Project Vault change the copy.</div></div></label>
+            <div><b><LuCopy /> Copy into the project</b><div className="small dim">Your originals stay where they are, unchanged. Edits in Mothball change the copy.</div></div></label>
           <label className={cx('opcard', op === 'move' && 'on')}><input type="radio" name="importop" checked={op === 'move'} onChange={() => setOp('move')} />
             <div><b><LuMoveRight /> Move into the project</b><div className="small dim">The files leave their current folder, so there's only one copy. Undo moves them back.</div></div></label>
           <label className={cx('opcard', op === 'inplace' && 'on', pv.mode !== 'managed' && 'disabled')}><input type="radio" name="importop" checked={op === 'inplace'} disabled={pv.mode !== 'managed'} onChange={() => setOp('inplace')} />
@@ -109,7 +109,7 @@ export function ImportDialog({ projectId, paths, initialDir, onClose, onDone }: 
               <button className="btn sm" onClick={async () => { const f = await pickFolder('Folder this project should work on'); if (f) setInplaceDir(f); }}>Choose…</button>
             </div></div>
           <div><span className="dim small">What happens</span><span className="small">
-            {pv.projectName} becomes a <b>linked</b> project on this folder: every file in it shows up in Project Vault and is edited in place.
+            {pv.projectName} becomes a <b>linked</b> project on this folder: every file in it shows up in Mothball and is edited in place.
             {pv.fileCount > 0 && <> The {pv.fileCount} file(s) already in the project are copied there first (never overwriting — a different file with the same name gets a new name). The old copy in app storage is left alone.</>}
             {' '}Make sure the folder contains only this project.
           </span></div>
