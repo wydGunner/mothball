@@ -212,6 +212,32 @@ pub fn capture(v: &Vault, project_id: &str) -> DbResult<(usize, Vec<String>)> {
            AND NOT EXISTS (SELECT 1 FROM file_versions x WHERE x.file_id=f.id AND x.sha256=f.sha256)",
         p![project_id, pl.text, pl.text_max, pl.text, pl.text_max, key_exts, pl.key_max],
     )?;
+    let mut rows = rows;
+    if pl.text {
+        // Files of unknown type that turn out to be text (a mod's own formats,
+        // extensionless notes) are versioned like text, so outside edits diff.
+        let unknown = v.db.query(
+            "SELECT f.*, EXISTS(SELECT 1 FROM file_versions x WHERE x.file_id=f.id) AS has_any, s.is_text AS sniffed FROM files f
+             LEFT JOIN text_sniff s ON s.sha256=f.sha256
+             WHERE f.project_id=? AND f.state='present' AND f.sha256 IS NOT NULL AND f.kind='other' AND f.size>0 AND f.size<=?
+               AND (s.is_text IS NULL OR s.is_text=1)
+               AND NOT EXISTS (SELECT 1 FROM file_versions x WHERE x.file_id=f.id AND x.sha256=f.sha256)",
+            p![project_id, pl.text_max],
+        )?;
+        for f in unknown {
+            let text = match f.oi("sniffed") {
+                Some(t) => t == 1,
+                None => {
+                    let t = safe_join(&root, &f.s("rel_path")).map(|ap| files::sniff_text(&ap)).unwrap_or(false);
+                    v.db.exec("INSERT OR REPLACE INTO text_sniff(sha256,is_text) VALUES (?,?)", p![f.s("sha256"), t as i64])?;
+                    t
+                }
+            };
+            if text {
+                rows.push(f);
+            }
+        }
+    }
     let mut n = 0;
     let mut errs = Vec::new();
     for f in &rows {
@@ -333,7 +359,8 @@ pub fn compare(v: &Vault, file_id: &str, old: &str, new: &str) -> DbResult<Json>
     let mut out = Json::obj()
         .with("old", Json::obj().with("label", la).with("sha256", sa.clone()).with("size", za))
         .with("new", Json::obj().with("label", lb).with("sha256", sb.clone()).with("size", zb));
-    let text_like = files::is_text_ext(&ext) || matches!(files::classify(&ext), "code" | "config" | "document") && ext != "pdf";
+    let text_like = files::is_text_ext(&ext) || matches!(files::classify(&ext), "code" | "config" | "document") && ext != "pdf"
+        || (files::classify(&ext) == "other" && files::sniff_text(&pa) && files::sniff_text(&pb));
     let max = 8 * 1024 * 1024;
     if text_like && za <= max && zb <= max {
         if let (Some(ta), Some(tb)) = (read_text(&pa), read_text(&pb)) {
@@ -702,12 +729,23 @@ pub fn browse(v: &Vault, project_id: Option<&str>, query: &str, named_only: bool
 /// backed by stored contents are marked restorable.
 pub fn history(v: &Vault, file_id: &str) -> DbResult<Json> {
     let mut out: Vec<Json> = Vec::new();
-    for r in v.db.query("SELECT * FROM file_events WHERE file_id=?", p![file_id])? {
-        let source = match r.s("kind").as_str() {
-            "renamed" | "deleted" | "restored-version" => "project-vault",
-            _ => "filesystem",
-        };
-        out.push(Json::obj().with("source", source).with("kind", r.s("kind")).with("title", r.s("detail")).with("at", r.i("at")).with("sha256", r.os("sha256")).with("restorable", false));
+    // events() works out before/after for each content change, so the
+    // timeline can show what an outside edit changed.
+    if let Json::Arr(evs) = files::events(v, file_id, i64::MAX)? {
+        for e in evs {
+            let kind = e.str_of("kind").unwrap_or_default();
+            let source = match kind.as_str() {
+                "renamed" | "deleted" | "restored-version" => "project-vault",
+                _ => "filesystem",
+            };
+            let mut j = Json::obj().with("source", source).with("kind", kind.clone()).with("title", e.str_of("detail").unwrap_or_default())
+                .with("at", e.get("at").and_then(|x| x.as_i64()).unwrap_or(0)).with("sha256", e.str_of("sha256")).with("restorable", false);
+            if let (Some(a), Some(b)) = (e.str_of("from"), e.str_of("to")) {
+                j.set("from", a);
+                j.set("to", b);
+            }
+            out.push(j);
+        }
     }
     for r in v.db.query("SELECT * FROM file_versions WHERE file_id=?", p![file_id])? {
         let named = !r.s("name").is_empty() || !r.s("note").is_empty() || matches!(r.s("reason").as_str(), "manual" | "pre-save" | "post-save");

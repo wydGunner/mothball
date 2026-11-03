@@ -323,6 +323,16 @@ CREATE TABLE time_entries (
 CREATE INDEX time_project ON time_entries(project_id, start_at);
 ALTER TABLE file_events ADD COLUMN mtime INTEGER;
 "#,
+), (
+    8,
+    r#"
+-- Text formats that used to be filed as "other" (IW4X .menu/.inc/.str and
+-- friends) are config now, so they get versions and diffs like any config.
+UPDATE files SET kind='config' WHERE kind='other' AND ext IN ('menu','inc','str','arena','vision','sun','shock','rumble','graph','def','properties','editorconfig','gitignore','gitattributes');
+-- Content sniffing for files of unknown type: remembers which content was
+-- checked (by hash), so a binary file isn't re-read on every scan.
+CREATE TABLE text_sniff (sha256 TEXT PRIMARY KEY, is_text INTEGER NOT NULL);
+"#,
 )];
 
 pub fn current_version(db: &Db) -> DbResult<i64> {

@@ -2,7 +2,7 @@
   "name": "mothball",
   "license": "GPL-3.0-or-later",
   "private": true,
-  "version": "0.8.1",
+  "version": "0.8.2",
   "type": "module",
   "scripts": {
     "build:ui": "node ui/build.mjs",

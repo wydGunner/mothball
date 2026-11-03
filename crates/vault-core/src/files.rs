@@ -36,7 +36,8 @@ pub fn classify(ext: &str) -> &'static str {
         | "java" | "kt" | "lua" | "gsc" | "csc" | "gsh" | "gd" | "shader" | "hlsl" | "glsl" | "sh" | "bat" | "ps1" | "cmd"
         | "rb" | "php" | "swift" | "sql" | "css" | "scss" | "html" | "vue" | "svelte" | "ino" => "code",
         "md" | "markdown" | "txt" | "rtf" | "pdf" | "doc" | "docx" | "odt" | "xls" | "xlsx" | "csv" | "ppt" | "pptx" | "srt" | "vtt" => "document",
-        "json" | "yaml" | "yml" | "toml" | "xml" | "ini" | "cfg" | "conf" | "env" | "lock" | "toc" => "config",
+        "json" | "yaml" | "yml" | "toml" | "xml" | "ini" | "cfg" | "conf" | "env" | "lock" | "toc" | "menu" | "inc" | "str" | "arena" | "vision"
+        | "sun" | "shock" | "rumble" | "graph" | "def" | "properties" | "editorconfig" | "gitignore" | "gitattributes" => "config",
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "ico" | "tga" | "psd" | "psb" | "tif" | "tiff" | "exr" | "hdr" | "ai" | "afdesign"
         | "afphoto" | "afpub" | "kra" | "xcf" | "clip" | "indd" | "sketch" | "fig" | "xd" | "procreate" | "blp" | "dds" => "image",
         "stl" | "obj" | "3mf" | "ply" | "amf" => "mesh",
@@ -54,6 +55,46 @@ pub fn classify(ext: &str) -> &'static str {
         "otf" | "ttf" | "woff" | "woff2" => "font",
         _ => "other",
     }
+}
+
+/// The extensions `classify` calls "config" that older builds called "other".
+/// A migration re-labels files already indexed with these.
+pub const NEWLY_CONFIG_EXTS: &[&str] = &["menu", "inc", "str", "arena", "vision", "sun", "shock", "rumble", "graph", "def", "properties", "editorconfig", "gitignore", "gitattributes"];
+
+/// Whether these bytes (the start of a file) read as text: no NUL bytes, and
+/// valid UTF-8 apart from a character cut off at the end of the sample, or
+/// almost entirely printable single-byte text (Windows-1252 configs).
+pub fn looks_text(sample: &[u8]) -> bool {
+    if sample.is_empty() || sample.contains(&0) {
+        return false;
+    }
+    // control characters other than whitespace: rare in text, common in binaries
+    let odd = sample.iter().filter(|&&b| b < 0x20 && !matches!(b, b'\n' | b'\r' | b'\t' | 0x0c | 0x1b)).count();
+    if odd * 100 > sample.len() {
+        return false;
+    }
+    match std::str::from_utf8(sample) {
+        Ok(_) => true,
+        Err(e) if e.error_len().is_none() && sample.len() - e.valid_up_to() < 4 => true,
+        // not UTF-8: accept single-byte text (Windows-1252) that is mostly ASCII
+        Err(_) => sample.iter().filter(|&&b| b >= 0x80).count() * 10 <= sample.len(),
+    }
+}
+
+/// Reads the first 8 KB of a file and checks it with `looks_text`.
+pub fn sniff_text(path: &Path) -> bool {
+    use std::io::Read;
+    let mut buf = vec![0u8; 8192];
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let mut n = 0;
+    while n < buf.len() {
+        match f.read(&mut buf[n..]) {
+            Ok(0) => break,
+            Ok(k) => n += k,
+            Err(_) => return false,
+        }
+    }
+    looks_text(&buf[..n])
 }
 
 pub fn is_text_ext(ext: &str) -> bool {
@@ -1666,6 +1707,53 @@ mod tests {
         // and the two contents can be compared (both are kept)
         let d = crate::api::dispatch(&v, "versions.compare", &Json::obj().with("fileId", fid.as_str()).with("old", format!("sha:{before}")).with("new", format!("sha:{to}"))).unwrap();
         assert_eq!(d.get("diff").unwrap().get("added").and_then(|x| x.as_i64()), Some(1));
+    }
+
+    /// User report: editing an IW4X .menu file outside Mothball only said
+    /// "changed on disk" — .menu was filed as "other", so nothing was kept to
+    /// diff against. Mod text formats and unknown-extension text are versioned
+    /// now; binaries of unknown type are not (and aren't re-read every scan).
+    #[test]
+    fn outside_edits_to_mod_text_formats_can_be_diffed() {
+        let (t, v) = crate::testutil::vault();
+        let dir = t.0.join("P");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("connect.menu"), "menuDef\n{\n  name connect\n}\n").unwrap();
+        std::fs::write(dir.join("notes.zzz"), "plain text with an odd extension\n").unwrap();
+        std::fs::write(dir.join("blob.zzz"), [0u8, 1, 2, 3, 0, 9]).unwrap();
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "P").with("category", "addon").with("linkPath", dir.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        scan(&v, &pid).unwrap();
+        let id = |n: &str| v.db.one("SELECT id FROM files WHERE project_id=? AND name=?", p![pid.as_str(), n]).unwrap().unwrap().s("id");
+        let nver = |n: &str| v.db.scalar_i64("SELECT COUNT(*) FROM file_versions WHERE file_id=?", p![id(n)]).unwrap();
+        assert_eq!(nver("connect.menu"), 1, "a baseline of the menu is kept");
+        assert_eq!(nver("notes.zzz"), 1, "unknown extension, but it's text");
+        assert_eq!(nver("blob.zzz"), 0, "binary of unknown type isn't versioned");
+        assert_eq!(v.db.scalar_i64("SELECT COUNT(*) FROM text_sniff WHERE is_text=0", p![]).unwrap(), 1, "the binary's verdict is remembered");
+
+        std::fs::write(dir.join("connect.menu"), "menuDef\n{\n  name connect\n  rect 0 0 640 480\n}\n").unwrap();
+        std::fs::write(dir.join("notes.zzz"), "plain text with an odd extension\nsecond line\n").unwrap();
+        scan(&v, &pid).unwrap();
+        for n in ["connect.menu", "notes.zzz"] {
+            let fid = id(n);
+            let h = crate::versions::history(&v, &fid).unwrap();
+            let m = h.as_arr().unwrap().iter().find(|e| e.str_of("kind").as_deref() == Some("modified")).cloned().expect("a modified entry in the timeline");
+            let (a, b) = (m.str_of("from").expect("timeline entry has before"), m.str_of("to").expect("and after"));
+            let d = crate::api::dispatch(&v, "versions.compare", &Json::obj().with("fileId", fid.as_str()).with("old", format!("sha:{a}")).with("new", format!("sha:{b}"))).unwrap();
+            assert_eq!(d.str_of("kind").as_deref(), Some("text"), "{n}");
+            assert_eq!(d.get("diff").unwrap().get("added").and_then(|x| x.as_i64()), Some(1), "{n}");
+        }
+        assert_eq!(nver("connect.menu"), 2);
+    }
+
+    #[test]
+    fn text_sniffing() {
+        assert!(looks_text(b"hello\r\nworld\t"));
+        assert!(looks_text("caf\u{e9} \u{2014} ok".as_bytes()));
+        assert!(looks_text(&"ab\u{e9}".as_bytes()[..3]), "a character cut off at the end of the sample");
+        assert!(looks_text(b"Windows-1252 caf\xe9 text"));
+        assert!(!looks_text(b"PK\x03\x04\x00\x00"));
+        assert!(!looks_text(b""));
+        assert!(!looks_text(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, b'a']));
     }
 
     /// Found by the stress test: deleting relied on an existing automatic

@@ -294,7 +294,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
               onContextMenu={(e) => fileMenu(e, f)}>
               <KindIcon kind={f.kind} />
               <div style={{ minWidth: 0 }}>
-                <div className="fname" title={f.path}>{f.name} {f.versions > 1 && <span className="badge" title={`${f.versions} stored versions`}>v{f.versions}</span>} {f.changedSinceReview && <span className="badge warn" title="Changed outside Mothball since last reviewed">changed</span>} {f.state === 'missing' && <span className="badge bad">missing</span>}</div>
+                <div className="fname" title={f.path}>{f.name} {f.versions > 0 && <span className="badge" title={`${f.versions} stored version${f.versions === 1 ? '' : 's'}`}>v{f.versions}</span>} {f.changedSinceReview && <span className="badge warn" title="Changed outside Mothball since last reviewed">changed</span>} {f.state === 'missing' && <span className="badge bad">missing</span>}</div>
                 <div className="fpurpose">{f.purpose || (() => { const rel = dir ? f.path.slice(dir.length + 1) : f.path; return rel !== f.name && groupBy !== 'folder' ? rel : ''; })()}</div>
               </div>
               <span className="small dim" style={{ textAlign: 'right' }}>{bytes(f.size)}</span>
@@ -706,7 +706,7 @@ function FileHistory({ f, ctx, highlight }: { f: FileDetail; ctx: ProjectCtx; hi
         {tab === 'git' && 'Commits from the Git repository that touched this file (follows renames).'}
         {tab === 'revisions' && 'Earlier versions of this file’s documentation.'}
       </p>
-      {tab === 'timeline' && <FileTimeline fileId={f.id} fileName={f.name} absPath={f.absPath} path={f.path} projectId={ctx.project.id} present={f.state === 'present'} refreshKey={`${f.sha256}-${f.versions}-${ctx.scanTick}`} onRestored={() => ctx.scan(true)} />}
+      {tab === 'timeline' && <FileTimeline fileId={f.id} fileName={f.name} absPath={f.absPath} path={f.path} projectId={ctx.project.id} present={f.state === 'present'} refreshKey={`${f.sha256}-${f.versions}-${ctx.scanTick}`} onRestored={() => ctx.scan(true)} openFile={ctx.openFile} />}
       {tab === 'versions' && <VersionsPanel fileId={f.id} fileName={f.name} absPath={f.absPath} present={f.state === 'present'} highlight={highlight} refreshKey={`${f.sha256}-${f.versions}-${ctx.scanTick}`} onRestored={() => ctx.scan(true)} />}
       {tab === 'changes' && (f.events.length ? <ActivityList events={f.events} fileId={f.id} title={f.path} openFile={ctx.openFile} />
         : <div className="small muted">No changes since it was first indexed ({dateTime(f.firstSeen)}).</div>)}

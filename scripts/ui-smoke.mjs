@@ -192,6 +192,26 @@ await step('Detect external modification', async () => {
   if (shots) await page.screenshot({ path: join(shots, 'x-outside-change-diff.png') });
 });
 
+await step('Outside edit to a .menu file shows its diff in the Timeline, and vN in the list', async () => {
+  // .menu used to be filed as "other": nothing was kept, so it only said "changed on disk"
+  const f = join(omen, 'scripts/mp/createserver.menu');
+  writeFileSync(f, 'menu "createserver" { itemDef server }\nitemDef password\n');
+  execFileSync(process.execPath, ['-e', `require('fs').utimesSync(${JSON.stringify(f)}, new Date(), new Date(Date.now()+5000))`]);
+  await toastGone();
+  await page.getByRole('button', { name: 'Rescan' }).click();
+  await page.locator('.toast').filter({ hasText: '1 modified' }).waitFor();
+  const row = page.locator('.filerow').filter({ hasText: 'createserver.menu' }).filter({ has: page.locator('.badge', { hasText: /^v2$/ }) });
+  await row.waitFor();
+  await row.locator('.badge.warn').filter({ hasText: 'changed' }).waitFor(); // both, side by side
+  await row.click();
+  await page.getByRole('button', { name: 'Timeline', exact: true }).click();
+  await page.locator('.tline').getByRole('button', { name: 'Hide changes' }).first().waitFor(); // newest change starts open
+  await page.locator('.tline .tl-diff').getByText('itemDef password').first().waitFor();
+  await page.locator('.tline .tl-diff .tl-add').filter({ hasText: '+1' }).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-menu-timeline-diff.png') });
+  await page.locator('.filerow').filter({ hasText: 'weapon_tuner.gsc' }).click();
+});
+
 await step('Compare file versions (no Git needed)', async () => {
   await page.getByRole('button', { name: /^Backups & versions/ }).click();
   await page.locator('.verrow').nth(1).getByRole('button', { name: /vs now/ }).click();
