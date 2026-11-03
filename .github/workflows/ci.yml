@@ -20,6 +20,12 @@ jobs:
         run: cargo test --manifest-path crates/vault-core/Cargo.toml
       - name: Printer TLS tests
         run: cargo test --manifest-path crates/bambu-tls/Cargo.toml
+      - name: Save/restore stress test
+        run: |
+          cargo build --release --manifest-path crates/vault-core/Cargo.toml --bin vault-stress
+          crates/vault-core/target/release/vault-stress --rounds 1500 --seed 1
+          crates/vault-core/target/release/vault-stress --rounds 1500 --seed 2
+          crates/vault-core/target/release/vault-stress --crash 15 --seed 3
       - name: Build dev server
         run: cargo build --manifest-path crates/vault-core/Cargo.toml --bin vault-devserver
       - run: npm install
@@ -33,3 +39,19 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: ui-screenshots, path: ui-shots }
+
+  # Windows file-system behaviour (case-insensitive names, replace-on-rename,
+  # the Recycle Bin, long paths) — the platform Mothball ships on.
+  windows-stress:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Save/restore stress test on Windows
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path crates/vault-stress/Cargo.toml
+          $exe = "crates/vault-stress/target/release/vault-stress.exe"
+          & $exe --rounds 600 --seed 1; if ($LASTEXITCODE) { exit 1 }
+          & $exe --rounds 600 --seed 2 --long-paths; if ($LASTEXITCODE) { exit 1 }
+          & $exe --crash 10 --seed 3; if ($LASTEXITCODE) { exit 1 }

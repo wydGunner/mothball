@@ -21,7 +21,7 @@ export type Route =
   | { view: 'dashboard' }
   | { view: 'search'; query?: string }
   | { view: 'settings' }
-  | { view: 'project'; id: string; tab?: Tab; focus?: Focus };
+  | { view: 'project'; id: string; tab?: Tab; focus?: Focus; /** open in a new tab instead of the current one (Ctrl/middle-click) */ newTab?: boolean };
 
 /** What to show in a project. `action` + `nonce` let the same file be revealed/opened again. */
 /** What a project view should bring into view. type 'folder': id is the folder's relative path ('' = project root). action 'history': open the file's history, highlighting versionId when given. */
@@ -87,15 +87,28 @@ function App() {
 
   const routeRef = useRef(route);
   routeRef.current = route;
+  // the project tab you were last in (reused when you open a project from the dashboard)
+  const lastTab = useRef<string | null>(null);
+  if (route.view === 'project') lastTab.current = route.id;
+  else if (lastTab.current && !openTabs.includes(lastTab.current)) lastTab.current = null;
   const go = useCallback((r: Route) => {
     const cur = routeRef.current;
     if (r.view === 'project') {
       tabRoutes.current[r.id] = { tab: r.tab, focus: r.focus };
       setOpenTabs((t) => {
-        if (t.includes(r.id)) return t;
+        if (t.includes(r.id)) return t; // already open: just switch to it
+        // like a browser: the project replaces the one in the current tab (or the
+        // last one you were in, coming from the dashboard), unless a new tab was
+        // asked for or that tab has unsaved edits
+        const reuse = cur.view === 'project' ? cur.id : lastTab.current;
+        if (!r.newTab && reuse && t.includes(reuse) && !unsavedNames(reuse).length) {
+          delete tabRoutes.current[reuse];
+          tabRoutes.current[r.id] = { tab: r.tab, focus: r.focus };
+          return t.map((id) => (id === reuse ? r.id : id));
+        }
         let n = [...t, r.id];
-        // too many open: close the oldest tab without unsaved edits (never the one being opened)
         const max = (() => { try { return Number(localStorage.getItem('pv.maxTabs')) || 10; } catch { return 10; } })();
+        // too many open: close the oldest tab without unsaved edits (never the one being opened)
         while (n.length > max) {
           const drop = n.find((id) => id !== r.id && !unsavedNames(id).length);
           if (!drop) break;
@@ -120,6 +133,7 @@ function App() {
   }, []);
   const openTabsRef = useRef(openTabs);
   openTabsRef.current = openTabs;
+
   /** Closes a project tab (asking about unsaved edits); shows its neighbour if it was in front. */
   const closeTab = useCallback((id: string) => {
     if (!confirmDiscardProject(id)) return;
@@ -205,7 +219,9 @@ function App() {
   const toggleSide = (g: string) => setSideClosed((c) => { const n = c.includes(g) ? c.filter((x) => x !== g) : [...c, g]; try { localStorage.setItem('pv.sideCollapsed', JSON.stringify(n)); } catch { /* ignore */ } return n; });
 
   const projLink = (p: Project) => (
-    <button key={p.id} className={cx('navitem', route.view === 'project' && route.id === p.id && 'active')} onClick={() => go({ view: 'project', id: p.id })} title={p.name}>
+    <button key={p.id} className={cx('navitem', route.view === 'project' && route.id === p.id && 'active')} title={`${p.name}\nCtrl+click or middle-click: open in a new tab`}
+      onClick={(e) => go({ view: 'project', id: p.id, newTab: e.ctrlKey || e.metaKey })}
+      onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); go({ view: 'project', id: p.id, newTab: true }); } }} onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}>
       <ProjectIcon category={p.category} icon={p.icon} color={p.color} size={18} /><span className="label">{p.name}</span>
     </button>
   );

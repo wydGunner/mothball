@@ -1,6 +1,6 @@
 [package]
 name = "bambu-tls"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 description = "TLS connection to a Bambu Lab printer's local MQTT broker, for Mothball."
 license = "GPL-3.0-or-later"

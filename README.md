@@ -79,6 +79,26 @@ Developer Mode. The printer's certificate is remembered on first connection and
 a different one is refused, so another device can't pose as the printer to
 collect the access code.
 
+## Stress-testing saving and restoring
+
+`vault-stress` runs thousands of random operations — creating, editing,
+renaming, deleting and restoring files; backing up single files, taking and
+restoring snapshots, making and restoring full backups, pruning old versions,
+reopening the database — against a real folder, and checks after every step
+that every file and every saved version has exactly the bytes it should. A
+damaged backup must be caught by verification. Crash mode kills it at random
+moments and checks the vault still opens, passes SQLite's integrity check, and
+that every listed version is intact.
+
+```powershell
+cargo run --release --manifest-path crates/vault-stress/Cargo.toml -- --rounds 2000
+cargo run --release --manifest-path crates/vault-stress/Cargo.toml -- --dir D:\MothballStress --rounds 2000
+cargo run --release --manifest-path crates/vault-stress/Cargo.toml -- --crash 25
+```
+
+Add `--long-paths` to include paths over 260 characters, `--seed N` to replay a
+run exactly (a failure prints its seed and round). CI runs it on Linux and Windows.
+
 ## Development
 
 | Command | What it does |

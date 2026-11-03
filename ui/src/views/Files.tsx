@@ -13,7 +13,8 @@ import { Dropdown, Empty, KindIcon, useConfirm, Markdown, SaveState, TagInput, u
 import { ago, bytes, cx, dateTime } from '../format';
 import { LinkPicker, LinkList } from './Links';
 import { CustomFields } from './Overview';
-import { VersionsPanel, FileTimeline } from './Versions';
+import { VersionsPanel, FileTimeline, CompareDialog } from './Versions';
+import { ChangeDiff, type CompareReq } from './Timeline';
 import { ImportDialog } from './Import';
 import { SmartSaveDialog, changedLines, getLargeThreshold, getSaveMode, type SmartSaveChoice } from './SmartSave';
 import { DiffView } from './Git';
@@ -707,9 +708,8 @@ function FileHistory({ f, ctx, highlight }: { f: FileDetail; ctx: ProjectCtx; hi
       </p>
       {tab === 'timeline' && <FileTimeline fileId={f.id} fileName={f.name} absPath={f.absPath} path={f.path} projectId={ctx.project.id} present={f.state === 'present'} refreshKey={`${f.sha256}-${f.versions}-${ctx.scanTick}`} onRestored={() => ctx.scan(true)} />}
       {tab === 'versions' && <VersionsPanel fileId={f.id} fileName={f.name} absPath={f.absPath} present={f.state === 'present'} highlight={highlight} refreshKey={`${f.sha256}-${f.versions}-${ctx.scanTick}`} onRestored={() => ctx.scan(true)} />}
-      {tab === 'changes' && (f.events.length ? f.events.map((e, i) => (
-        <div key={i} className="row small" style={{ padding: '3px 0' }}><span className="pill" style={{ minWidth: 72, justifyContent: 'center' }}>{e.kind}</span><span className="grow">{e.detail}</span><span className="dim" title={dateTime(e.at)}>{ago(e.at)}</span></div>
-      )) : <div className="small muted">No changes since it was first indexed ({dateTime(f.firstSeen)}).</div>)}
+      {tab === 'changes' && (f.events.length ? <ActivityList events={f.events} fileId={f.id} title={f.path} openFile={ctx.openFile} />
+        : <div className="small muted">No changes since it was first indexed ({dateTime(f.firstSeen)}).</div>)}
       {tab === 'git' && (git.error ? <div className="small muted">{git.error}</div> : !git.data ? <div className="small muted">Loading…</div> : git.data.length === 0 ? <div className="small muted">No commits for this file (or the project is not a Git repository).</div> :
         git.data.map((c) => (
           <div key={c.hash} className="row small" style={{ padding: '4px 0', cursor: 'pointer' }} onClick={async () => { try { const r: any = await call('git.diff', { projectId: ctx.project.id, rev: c.hash, path: c.files.find((x: any) => x.path)?.path || f.path }); setDiff({ title: `${c.short} — ${c.subject}`, text: r.diff }); } catch (e: any) { setDiff({ title: 'Error', text: e.message }); } }}>
@@ -719,6 +719,28 @@ function FileHistory({ f, ctx, highlight }: { f: FileDetail; ctx: ProjectCtx; hi
         revs.data.map((r) => <details key={r.id} style={{ padding: '4px 0' }}><summary className="small">{dateTime(r.at)} — {r.purpose || <i>no purpose</i>}</summary><Markdown text={r.notes} /></details>))}
       {diff && <div style={{ marginTop: 8 }}><div className="row"><b className="small grow">{diff.title}</b><button className="btn ghost sm icon" onClick={() => setDiff(null)}><LuX /></button></div><DiffView text={diff.text} /></div>}
     </div>
+  );
+}
+
+/** A file's activity; content changes (in Mothball or outside it) expand to their diff. */
+function ActivityList({ events, fileId, title, openFile }: { events: FileDetail['events']; fileId: string; title: string; openFile: (id: string) => void }) {
+  const [open, setOpen] = useState<number | null>(() => (events[0]?.from ? 0 : null)); // the latest change starts open
+  const [compare, setCompare] = useState<CompareReq | null>(null);
+  return (
+    <>
+      {events.map((e, i) => (
+        <div key={i}>
+          <div className="row small" style={{ padding: '3px 0' }}>
+            <span className="pill" style={{ minWidth: 72, justifyContent: 'center' }}>{e.kind}</span>
+            <span className="grow">{e.detail}</span>
+            {e.from && e.to && <button className="btn ghost sm" onClick={() => setOpen(open === i ? null : i)}>{open === i ? 'Hide changes' : 'Show changes'}</button>}
+            <span className="dim" title={dateTime(e.at)}>{ago(e.at)}</span>
+          </div>
+          {e.from && e.to && open === i && <ChangeDiff fileId={fileId} from={e.from} to={e.to} title={title} openFile={openFile} onCompare={setCompare} />}
+        </div>
+      ))}
+      {compare && <CompareDialog fileId={compare.fileId} title={compare.title} old={compare.old} new={compare.new} onClose={() => setCompare(null)} />}
+    </>
   );
 }
 

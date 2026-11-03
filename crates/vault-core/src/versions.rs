@@ -442,8 +442,10 @@ pub fn prune_impl(v: &Vault, project_id: &str, keep: i64, include_named: bool, d
         .db
         .query(
             &format!(
+                // never the copy of a file that's deleted or missing: it may be the only one left
                 "SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY file_id ORDER BY created_at DESC) AS rn
-                 FROM file_versions WHERE project_id=? AND {cond}) WHERE rn>?"
+                 FROM file_versions fv WHERE project_id=? AND {cond}
+                   AND NOT EXISTS (SELECT 1 FROM files f WHERE f.id=fv.file_id AND f.state IN ('deleted','missing') AND f.sha256=fv.sha256)) WHERE rn>?"
             ),
             p![project_id, keep],
         )?

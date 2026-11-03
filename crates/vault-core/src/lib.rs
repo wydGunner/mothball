@@ -23,6 +23,7 @@ pub mod schema;
 pub mod search;
 pub mod snapshots;
 pub mod storage;
+pub mod stress;
 pub mod symbols;
 pub mod tasks;
 pub mod time;

@@ -182,6 +182,13 @@ await step('Detect external modification', async () => {
   await page.getByRole('button', { name: 'Rescan' }).click();
   await page.locator('.toast').filter({ hasText: '1 modified' }).waitFor();
   await page.getByText("content changed after this documentation was last written").waitFor();
+  // the outside change shows what changed, like an edit made in Mothball
+  await page.getByRole('button', { name: 'Activity', exact: true }).click();
+  const act = page.locator('.doc .row').filter({ hasText: 'Content changed outside Mothball' }).first();
+  await act.getByRole('button', { name: 'Hide changes' }).waitFor(); // the latest change starts open
+  await page.locator('.doc .tl-diff').getByText('// tweak').first().waitFor();
+  await page.locator('.doc .tl-diff .tl-add').filter({ hasText: '+2' }).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-outside-change-diff.png') });
 });
 
 await step('Compare file versions (no Git needed)', async () => {
@@ -1157,8 +1164,19 @@ await step('Project tabs: several projects open, each keeps its place', async ()
   await page.locator('.ptab.on').filter({ hasText: 'OMEN v2' }).waitFor();
   await page.getByRole('tab', { name: /Files/ }).first().click();
   await page.getByRole('button', { name: 'Dashboard' }).click();
+  // a plain click replaces the project in the tab you were in (like a browser)…
   await page.locator('.pcard').filter({ hasText: 'Desk Cat' }).click();
   await page.locator('.ptab.on').filter({ hasText: 'Desk Cat' }).waitFor();
+  if ((await page.locator('.ptab').count()) !== 1) throw new Error('a plain click opened another tab: ' + (await page.locator('.ptab').allTextContents()).join(', '));
+  await page.locator('.sidebar .navitem').filter({ hasText: 'Prints In Place' }).first().click();
+  await page.locator('.ptab.on').filter({ hasText: 'Prints In Place' }).waitFor();
+  if ((await page.locator('.ptab').count()) !== 1) throw new Error('the sidebar opened another tab');
+  await page.locator('.sidebar .navitem').filter({ hasText: 'Desk Cat' }).first().click();
+  // …Ctrl+click opens a new one
+  await page.locator('.sidebar .navitem').filter({ hasText: 'OMEN v2' }).first().click({ modifiers: ['Control'] });
+  await page.locator('.ptab.on').filter({ hasText: 'OMEN v2' }).waitFor();
+  await page.getByRole('tab', { name: /Files/ }).first().click();
+  await page.locator('.ptab').filter({ hasText: 'Desk Cat' }).click();
   if ((await page.locator('.ptab').allTextContents()).length !== 2) throw new Error('expected two project tabs');
   if (shots) await page.screenshot({ path: join(shots, 'x-project-tabs-two.png') });
   // Ctrl+Tab back to OMEN v2: still on its Files tab

@@ -1,0 +1,15 @@
+[package]
+name = "vault-stress"
+version = "0.8.0"
+edition = "2021"
+description = "Mothball's save/restore torture test, buildable on Windows (bundles SQLite)."
+license = "GPL-3.0-or-later"
+
+[dependencies]
+vault-core = { path = "../vault-core", default-features = false }
+# SQLite compiled from source, like the desktop app (Windows has no system SQLite)
+libsqlite3-sys = { version = "0.30", features = ["bundled"] }
+
+[[bin]]
+name = "vault-stress"
+path = "src/main.rs"

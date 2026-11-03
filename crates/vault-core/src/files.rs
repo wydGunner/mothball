@@ -719,13 +719,35 @@ pub fn groups(v: &Vault, project_id: &str) -> DbResult<Json> {
     Ok(Json::Arr(out))
 }
 
+/// A file's activity, newest first. Content changes carry `from` (what it
+/// was before) and `to`, so the change can be shown as a diff whether it was
+/// made in Mothball or outside it (another editor, a dropped-in file).
 pub fn events(v: &Vault, file_id: &str, limit: i64) -> DbResult<Json> {
-    let rows = v.db.query("SELECT * FROM file_events WHERE file_id=? ORDER BY at DESC LIMIT ?", p![file_id, limit])?;
-    Ok(Json::Arr(
-        rows.iter()
-            .map(|r| Json::obj().with("kind", r.s("kind")).with("detail", r.s("detail")).with("sha256", r.os("sha256")).with("at", r.i("at")))
-            .collect(),
-    ))
+    let rows = v.db.query("SELECT * FROM file_events WHERE file_id=? ORDER BY at ASC, rowid ASC", p![file_id])?;
+    let versions = v.db.query("SELECT sha256, created_at FROM file_versions WHERE file_id=? ORDER BY created_at ASC", p![file_id])?;
+    let mut last: Option<String> = None;
+    let mut out: Vec<Json> = Vec::new();
+    for r in &rows {
+        let sha = r.os("sha256");
+        let mut j = Json::obj().with("kind", r.s("kind")).with("detail", r.s("detail")).with("sha256", sha.clone()).with("at", r.i("at"));
+        if r.s("kind") == "modified" {
+            // before this change: the last content seen, or the last version stored before it
+            let before = last.clone().or_else(|| versions.iter().filter(|x| x.i("created_at") < r.i("at")).last().map(|x| x.s("sha256")));
+            if let (Some(b), Some(a)) = (before, sha.clone()) {
+                if b != a {
+                    j.set("from", b);
+                    j.set("to", a);
+                }
+            }
+        }
+        if sha.is_some() {
+            last = sha;
+        }
+        out.push(j);
+    }
+    out.reverse();
+    out.truncate(limit.max(0) as usize);
+    Ok(Json::Arr(out))
 }
 
 pub fn recent_activity(v: &Vault, project_id: &str, limit: i64) -> DbResult<Json> {
@@ -1448,9 +1470,13 @@ pub fn restore_deleted(v: &Vault, file_id: &str) -> DbResult<Json> {
     if safe_join(&root, &f.s("rel_path"))?.exists() {
         return Err("A file already exists at that location; rescan the project".into());
     }
+    // the content it had when it was deleted (or last seen), which may be an
+    // older version than the newest one: deleting doesn't store it again when
+    // an earlier version already has the same bytes
     let ver = v
         .db
-        .one("SELECT id FROM file_versions WHERE file_id=? ORDER BY created_at DESC LIMIT 1", p![file_id])?
+        .one("SELECT id FROM file_versions WHERE file_id=? AND sha256=? ORDER BY created_at DESC LIMIT 1", p![file_id, f.os("sha256").unwrap_or_default()])?
+        .or(v.db.one("SELECT id FROM file_versions WHERE file_id=? ORDER BY created_at DESC LIMIT 1", p![file_id])?)
         .ok_or("No stored copy of this file exists, so it can't be restored here. Check the Recycle Bin.")?;
     crate::versions::restore(v, &ver.s("id"))?;
     get(v, file_id)
@@ -1618,6 +1644,77 @@ pub fn doc_revisions(v: &Vault, file_id: &str) -> DbResult<Json> {
 
 #[cfg(test)]
 mod tests {
+    /// A file replaced outside Mothball (an editor, a file dropped in) gets a
+    /// diff in its activity, like an edit made in Mothball.
+    #[test]
+    fn outside_changes_carry_before_and_after_for_a_diff() {
+        let (t, v) = crate::testutil::vault();
+        let dir = t.0.join("P");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.gsc"), "init()\n{\n}\n").unwrap();
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "P").with("category", "addon").with("linkPath", dir.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        scan(&v, &pid).unwrap();
+        let fid = v.db.one("SELECT id FROM files WHERE project_id=?", p![pid.as_str()]).unwrap().unwrap().s("id");
+        let before = crate::util::sha256_bytes(b"init()\n{\n}\n");
+        std::fs::write(dir.join("a.gsc"), "init()\n{\n    level.x = 1;\n}\n").unwrap(); // the dropped-in version
+        scan(&v, &pid).unwrap();
+        let ev = events(&v, &fid, 10).unwrap();
+        let m = ev.as_arr().unwrap().iter().find(|e| e.str_of("kind").as_deref() == Some("modified")).cloned().expect("a modified event");
+        assert_eq!(m.str_of("from").as_deref(), Some(before.as_str()));
+        let to = m.str_of("to").unwrap();
+        // and the two contents can be compared (both are kept)
+        let d = crate::api::dispatch(&v, "versions.compare", &Json::obj().with("fileId", fid.as_str()).with("old", format!("sha:{before}")).with("new", format!("sha:{to}"))).unwrap();
+        assert_eq!(d.get("diff").unwrap().get("added").and_then(|x| x.as_i64()), Some(1));
+    }
+
+    /// Found by the stress test: deleting relied on an existing automatic
+    /// version, which pruning later removed — the deleted file's only copy.
+    #[test]
+    fn pruning_never_removes_the_copy_of_a_deleted_file() {
+        let (t, v) = crate::testutil::vault();
+        let dir = t.0.join("P");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("a.txt");
+        std::fs::write(&f, b"keep me").unwrap();
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "P").with("linkPath", dir.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        scan(&v, &pid).unwrap(); // automatic version of "keep me"
+        let fid = v.db.one("SELECT id FROM files WHERE project_id=?", p![pid.as_str()]).unwrap().unwrap().s("id");
+        for i in 0..3 {
+            std::fs::write(&f, format!("edit {i}")).unwrap();
+            scan(&v, &pid).unwrap();
+        }
+        std::fs::write(&f, b"keep me").unwrap(); // back to content an old automatic version has
+        scan(&v, &pid).unwrap();
+        delete(&v, &[fid.clone()]).unwrap();
+        crate::versions::prune_impl(&v, &pid, 1, true, false).unwrap(); // even "including named"
+        restore_deleted(&v, &fid).unwrap();
+        assert_eq!(std::fs::read(&f).unwrap(), b"keep me");
+    }
+
+    /// Found by the stress test: deleting a file whose content matches an older
+    /// backup doesn't store it again, and restoring then picked the newest
+    /// version (different content) instead of what was deleted.
+    #[test]
+    fn restoring_a_deleted_file_brings_back_what_was_deleted() {
+        let (t, v) = crate::testutil::vault();
+        let dir = t.0.join("P");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("a.bin");
+        std::fs::write(&f, b"first").unwrap();
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "P").with("linkPath", dir.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        scan(&v, &pid).unwrap();
+        let fid = v.db.one("SELECT id FROM files WHERE project_id=?", p![pid.as_str()]).unwrap().unwrap().s("id");
+        crate::versions::backup_now(&v, &fid, "", "", "").unwrap(); // "first" stored
+        std::fs::write(&f, b"second").unwrap();
+        crate::versions::backup_now(&v, &fid, "", "", "").unwrap(); // "second" stored, newest
+        std::fs::write(&f, b"first").unwrap(); // back to the old content
+        scan(&v, &pid).unwrap();
+        delete(&v, &[fid.clone()]).unwrap();
+        assert!(!f.exists());
+        restore_deleted(&v, &fid).unwrap();
+        assert_eq!(std::fs::read(&f).unwrap(), b"first", "must bring back the content it had when deleted");
+    }
+
     use super::*;
     use crate::projects::{create, NewProject};
     use crate::testutil::*;

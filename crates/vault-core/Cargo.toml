@@ -1,6 +1,6 @@
 [package]
 name = "vault-core"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 description = "Mothball core: storage, file reconciliation, notes, search, tasks, git."
 license = "GPL-3.0-or-later"
@@ -23,3 +23,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "vault-devserver"
 path = "src/bin/vault-devserver.rs"
+
+[[bin]]
+name = "vault-stress"
+path = "src/bin/vault-stress.rs"

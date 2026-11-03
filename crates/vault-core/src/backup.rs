@@ -96,6 +96,25 @@ pub fn create(v: &Vault, dest: &Path, project_id: Option<&str>) -> DbResult<Json
     create_opts(v, dest, project_id, Opts::default())
 }
 
+/// A backup interrupted by a crash or power cut leaves its unfinished
+/// `.….partial` folder behind. Those are never complete backups: remove the one
+/// this backup is about to use, and any older than an hour (a younger one may
+/// belong to another Mothball writing to the same folder right now).
+fn clear_stale_partials(dest: &Path, ours: &Path) {
+    if ours.exists() {
+        let _ = std::fs::remove_dir_all(ours);
+    }
+    let Ok(rd) = std::fs::read_dir(dest) else { return };
+    for e in rd.flatten() {
+        let n = e.file_name().to_string_lossy().to_string();
+        let ours_kind = (n.starts_with(".Mothball-backup-") || n.starts_with(".ProjectVault-backup-")) && n.ends_with(".partial");
+        let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|d| d.as_secs() > 3600).unwrap_or(false);
+        if ours_kind && old {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+}
+
 pub fn create_opts(v: &Vault, dest: &Path, project_id: Option<&str>, o: Opts) -> DbResult<Json> {
     if !dest.is_dir() {
         return Err(format!("Backup destination {} is not an accessible folder", dest.display()));
@@ -108,6 +127,7 @@ pub fn create_opts(v: &Vault, dest: &Path, project_id: Option<&str>, o: Opts) ->
     }
     let tmp = dest.join(format!(".{name}.partial"));
     let out = dest.join(&name);
+    clear_stale_partials(dest, &tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| format!("Cannot write to {}: {e}", dest.display()))?;
     let mut skipped_files: Vec<Json> = Vec::new();
     let mut copied_files = 0i64;
@@ -208,7 +228,8 @@ pub fn create_opts(v: &Vault, dest: &Path, project_id: Option<&str>, o: Opts) ->
         let zv = verify(&zp)?;
         if !zv.get("ok").and_then(|x| x.as_bool()).unwrap_or(false) {
             let _ = std::fs::remove_file(&zp);
-            return Err(format!("The ZIP failed verification, so the backup folder was kept at {}", out.display()));
+            let why: Vec<String> = zv.get("problems").and_then(|x| x.as_arr()).map(|a| a.iter().take(3).filter_map(|p| p.as_str().map(String::from)).collect()).unwrap_or_default();
+            return Err(format!("The ZIP failed verification ({}), so the backup folder was kept at {}", why.join("; "), out.display()));
         }
         // the folder was ours and the verified ZIP holds the same files
         let _ = std::fs::remove_dir_all(&out);
@@ -643,6 +664,22 @@ fn prune_auto(dest: &Path, keep: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    /// Found by the crash test: a backup killed half-way left `.….partial`
+    /// behind, and the next backup in the same minute failed on it.
+    #[test]
+    fn a_leftover_from_an_interrupted_backup_doesnt_block_the_next_one() {
+        let (t, v) = crate::testutil::vault();
+        let dest = t.0.join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        let readable = crate::util::iso_utc(crate::util::now_ms()).replace([' ', ':'], "-").replace("-UTC", "");
+        let stale = dest.join(format!(".Mothball-backup-{readable}.partial"));
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("vault.db"), b"half written").unwrap();
+        let r = create_opts(&v, &dest, None, Opts { include_files: false, max_file_mb: 10.0, zip: false, auto: false }).unwrap();
+        assert!(std::path::Path::new(&r.str_of("path").unwrap()).exists());
+        assert!(!stale.exists(), "the leftover is cleared");
+    }
+
     use super::*;
     use crate::testutil::*;
     #[test]
@@ -712,3 +749,4 @@ mod tests {
         assert!(std::fs::read_dir(data_dir.join("backups")).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("before-restore-")));
     }
 }
+

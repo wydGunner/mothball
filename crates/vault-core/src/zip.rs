@@ -297,8 +297,11 @@ impl<R: Read + Seek> Archive<R> {
         Ok(Archive { r, entries })
     }
 
+    /// The entry with exactly this name; failing that, one that differs only
+    /// in case (archives written on Windows). Exact first, so two files whose
+    /// names differ only in case are never mixed up.
     pub fn find(&self, name: &str) -> Option<Entry> {
-        self.entries.iter().find(|e| e.name.eq_ignore_ascii_case(name)).cloned()
+        self.entries.iter().find(|e| e.name == name).or_else(|| self.entries.iter().find(|e| e.name.eq_ignore_ascii_case(name))).cloned()
     }
 
     /// Reads and checks one entry. `limit` caps the uncompressed size.
@@ -431,6 +434,29 @@ mod tests {
     fn crc_vector() {
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
     }
+    /// Found by the crash test: two files whose names differ only in case were
+    /// read back as the same one (the wrong content passes its own CRC).
+    #[test]
+    fn names_that_differ_only_in_case_are_kept_apart() {
+        let t = std::env::temp_dir().join(format!("pv-zipcase-{}", &crate::util::new_id()[..8]));
+        std::fs::create_dir_all(t.join("src")).unwrap();
+        std::fs::write(t.join("src/a.gsc"), b"lower").unwrap();
+        std::fs::write(t.join("src/A.GSC"), b"UPPER").unwrap();
+        if std::fs::read(t.join("src/a.gsc")).unwrap() != b"lower" {
+            return; // case-insensitive file system: the two can't coexist here
+        }
+        let z = t.with_extension("zip");
+        zip_dir(&t.join("src"), &z).unwrap();
+        let mut a = Archive::open(&z).unwrap();
+        let lo = a.find("a.gsc").unwrap();
+        let up = a.find("A.GSC").unwrap();
+        assert_eq!(a.read(&lo, 100).unwrap(), b"lower");
+        assert_eq!(a.read(&up, 100).unwrap(), b"UPPER");
+        assert_eq!(a.read(&a.find("a.GSC").unwrap(), 100).unwrap().len(), 5, "case-insensitive fallback still works");
+        let _ = std::fs::remove_dir_all(&t);
+        let _ = std::fs::remove_file(&z);
+    }
+
     #[test]
     fn inflate_fixed_and_dynamic() {
         // "hello hello hello hello\n" compressed with zlib's raw deflate (fixed Huffman)

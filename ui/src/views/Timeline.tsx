@@ -105,7 +105,7 @@ export function TimelineTab({ ctx }: { ctx: ProjectCtx }) {
   );
 }
 
-type CompareReq = { fileId: string; title: string; old: string; new: string };
+export type CompareReq = { fileId: string; title: string; old: string; new: string };
 
 /** The files one scan found changed. Changed text files expand to their diff. */
 function ChangeList({ changes, total, openFile, onCompare }: { changes: Change[]; total: number; openFile: (id: string) => void; onCompare: (c: CompareReq) => void }) {
@@ -132,7 +132,7 @@ function ChangeList({ changes, total, openFile, onCompare }: { changes: Change[]
 }
 
 /** Inline diff between two stored contents of one file. */
-function ChangeDiff({ fileId, from, to, title, openFile, onCompare }: { fileId: string; from: string; to: string; title: string; openFile: (id: string) => void; onCompare: (c: CompareReq) => void }) {
+export function ChangeDiff({ fileId, from, to, title, openFile, onCompare }: { fileId: string; from: string; to: string; title: string; openFile: (id: string) => void; onCompare: (c: CompareReq) => void }) {
   const r = useLoad(() => call<any>('versions.compare', { fileId, old: `sha:${from}`, new: `sha:${to}` }), [fileId, from, to]);
   const full = () => onCompare({ fileId, title, old: `sha:${from}`, new: `sha:${to}` });
   if (r.error) return <div className="small muted tl-diffnote">{String(r.error).replace(/^NOT_KEPT:/, '')}</div>;

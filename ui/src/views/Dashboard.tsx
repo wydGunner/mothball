@@ -137,6 +137,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   };
   const ctx = (e: React.MouseEvent, p: Project) => menu(e, [
     { label: 'Open', icon: <LuFolderOpen />, onClick: () => nav.go({ view: 'project', id: p.id }) },
+    { label: 'Open in new tab', onClick: () => nav.go({ view: 'project', id: p.id, newTab: true }) },
     { label: p.favorite ? 'Remove from favorites' : 'Add to favorites', icon: <LuStar />, onClick: () => toggleFav(p) },
     { label: p.group ? 'Change group…' : 'Add to a group…', icon: <LuFolderInput />, onClick: () => askGroup(p) },
     { label: 'Change picture…', icon: <LuImage />, onClick: () => setPictureFor(p) },
@@ -205,7 +206,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
       {mode === 'grid' ? (
         <div className="pgrid">
           {sec.items.map((p) => (
-            <ProjectCard key={p.id} p={p} colors={colors} onOpen={() => nav.go({ view: 'project', id: p.id })} onMenu={(e) => ctx(e, p)} onFav={() => toggleFav(p)} onPictureChanged={nav.refreshProjects}
+            <ProjectCard key={p.id} p={p} colors={colors} onOpen={(newTab) => nav.go({ view: 'project', id: p.id, newTab })} onMenu={(e) => ctx(e, p)} onFav={() => toggleFav(p)} onPictureChanged={nav.refreshProjects}
               dropSide={cardDrop?.id === p.id ? (cardDrop.after ? 'after' : 'before') : undefined}
               onCardDragOver={(after) => { if (cardDrop?.id !== p.id || cardDrop.after !== after) setCardDrop({ id: p.id, after }); }}
               onCardDrop={(dragId, after) => { setCardDrop(null); dropOnCard(dragId, p, after); }}
@@ -217,7 +218,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
           <thead><tr><th style={{ width: 28 }} /><th>Name</th><th>Status</th><th>Category</th><th>Progress</th><th>Files</th><th>Size</th><th>Latest activity</th><th>Created</th></tr></thead>
           <tbody>
             {sec.items.map((p) => (
-              <tr key={p.id} className="click" draggable onDragStart={(e) => { e.dataTransfer.setData('text/pv-project', p.id); e.dataTransfer.effectAllowed = 'move'; }} onClick={() => nav.go({ view: 'project', id: p.id })} onContextMenu={(e) => ctx(e, p)}>
+              <tr key={p.id} className="click" draggable onDragStart={(e) => { e.dataTransfer.setData('text/pv-project', p.id); e.dataTransfer.effectAllowed = 'move'; }} onClick={(e) => nav.go({ view: 'project', id: p.id, newTab: e.ctrlKey || e.metaKey })} onAuxClick={(e) => { if (e.button === 1) nav.go({ view: 'project', id: p.id, newTab: true }); }} onContextMenu={(e) => ctx(e, p)}>
                 <td><button className={cx('star', p.favorite && 'on')} onClick={(e) => { e.stopPropagation(); toggleFav(p); }}><LuStar fill={p.favorite ? 'currentColor' : 'none'} /></button></td>
                 <td><div className="row"><ProjectIcon category={p.category} icon={p.icon} color={p.color} size={22} /><b>{p.name}</b>{p.tags.slice(0, 3).map((t) => <span className="tag" key={t}>{t}</span>)}</div></td>
                 <td><StatusPill status={p.status} colors={colors} /></td><td className="muted">{typeLabel(typeKeyOf(p.category, p.module))}</td>
@@ -450,7 +451,7 @@ function RecentList({ data, nav }: { data?: DashData; nav: Nav }) {
 
 /** A project card: its picture (print plate, cover image) or, for code, the file you touched last. */
 function ProjectCard({ p, colors, onOpen, onMenu, onFav, onPictureChanged, dropSide, onCardDragOver, onCardDrop, onCardDragEnd }: {
-  p: Project; colors: Record<string, string>; onOpen: () => void; onMenu: (e: React.MouseEvent) => void; onFav: () => void; onPictureChanged: () => void;
+  p: Project; colors: Record<string, string>; onOpen: (newTab?: boolean) => void; onMenu: (e: React.MouseEvent) => void; onFav: () => void; onPictureChanged: () => void;
   dropSide?: 'before' | 'after'; onCardDragOver: (after: boolean) => void; onCardDrop: (dragId: string, after: boolean) => void; onCardDragEnd: () => void;
 }) {
   const thumb = useThumb(p);
@@ -463,7 +464,8 @@ function ProjectCard({ p, colors, onOpen, onMenu, onFav, onPictureChanged, dropS
       onDragEnd={onCardDragEnd}
       onDragOver={(e) => { if (!e.dataTransfer.types.includes('text/pv-project')) return; e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onCardDragOver(e.clientX > r.left + r.width / 2); }}
       onDrop={(e) => { const id = e.dataTransfer.getData('text/pv-project'); if (!id) return; e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onCardDrop(id, e.clientX > r.left + r.width / 2); }}
-      onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }} onContextMenu={onMenu}>
+      onClick={(e) => onOpen(e.ctrlKey || e.metaKey)} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onOpen(true); } }} onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+      onKeyDown={(e) => { if (e.key === 'Enter') onOpen(e.ctrlKey || e.metaKey); }} onContextMenu={onMenu}>
       <div className={cx('pc-face', thumb ? 'pic' : 'nopic')}>
         <button className="pc-edit btn sm" title="Change the picture" onClick={(e) => { e.stopPropagation(); setPicking(true); }}><LuImage /> Picture</button>
         {thumb ? <>
