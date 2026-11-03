@@ -172,8 +172,24 @@ function PrintRow({ h, onChanged, nav }: { h: PrintRecord; onChanged: () => void
 
 const EMPTY = { id: '', name: '', host: '', serial: '', accessCode: '' };
 
+interface FoundPrinter { serial: string; ip: string; name: string; model: string; seenAt: number; added: boolean }
+
+/** Bambu printers announcing themselves on the network (refreshed every few seconds). */
+function useFound(): FoundPrinter[] {
+  const [f, setF] = useState<FoundPrinter[]>([]);
+  useEffect(() => {
+    let off = false;
+    const tick = () => call<FoundPrinter[]>('printers.found').then((x) => { if (!off) setF(x); }).catch(() => {});
+    tick();
+    const t = setInterval(tick, 5000);
+    return () => { off = true; clearInterval(t); };
+  }, []);
+  return f;
+}
+
 export function PrinterSettings() {
   const printers = usePrinters();
+  const found = useFound().filter((f) => !f.added);
   const [form, setForm] = useState<typeof EMPTY | null>(null);
   const act = useAction();
   const toast = useToast();
@@ -210,6 +226,18 @@ export function PrinterSettings() {
           }}><LuTrash2 /></button>
         </div>
       ))}
+      {found.length > 0 && !form && (
+        <div className="found-printers">
+          <div className="small muted" style={{ margin: '10px 0 4px' }}>Found on your network</div>
+          {found.map((f) => (
+            <div key={f.serial} className="printer-set-row">
+              <LuPrinter />
+              <div className="grow" style={{ minWidth: 0 }}><b>{f.name || 'Bambu Lab printer'}</b> <span className="small dim mono">{f.ip} · {f.serial}</span></div>
+              <button className="btn sm" onClick={() => setForm({ id: '', name: f.name, host: f.ip, serial: f.serial, accessCode: '' })}><LuPlus /> Add</button>
+            </div>
+          ))}
+        </div>
+      )}
       {form ? (
         <div className="printer-form">
           <div className="field"><label>Name</label><input className="input" value={form.name} placeholder="X2D" onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
@@ -219,6 +247,7 @@ export function PrinterSettings() {
           <p className="small dim" style={{ gridColumn: '1 / -1', margin: 0 }}>
             On the printer's screen, the network settings show its IP address and the LAN access code. The serial number is in the printer's device information,
             and in Bambu Studio or Bambu Handy under the device. The access code is stored only in Mothball's database on this computer.
+            If the printer's address changes later, Mothball finds it again by its serial number (Windows may ask once to let Mothball receive on your private network).
           </p>
           <div className="row" style={{ gridColumn: '1 / -1', justifyContent: 'flex-end' }}>
             <button className="btn" onClick={() => setForm(null)}>Cancel</button>

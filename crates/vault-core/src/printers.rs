@@ -891,6 +891,123 @@ pub fn assign(v: &Vault, key: &str, project_id: Option<&str>, remember: bool) ->
     Ok(Json::obj().with("ok", true))
 }
 
+// ---------------------------------------------------------------- discovery
+
+/// Bambu printers announce themselves every few seconds with an SSDP NOTIFY
+/// (from port 1900 to ports 2021 and 1990; broadcast and 239.255.255.250)
+/// carrying their IP (`Location`) and serial (`USN`). Mothball listens so a
+/// printer whose address changed (DHCP) is found again by its serial, and so
+/// printers not added yet can be offered in Settings.
+pub const DISCOVERY_PORTS: [u16; 2] = [2021, 1990];
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Found {
+    pub serial: String,
+    pub ip: String,
+    pub name: String,
+    pub model: String,
+    pub at: i64,
+}
+
+fn found() -> &'static Mutex<HashMap<String, Found>> {
+    static F: std::sync::OnceLock<Mutex<HashMap<String, Found>>> = std::sync::OnceLock::new();
+    F.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Reads a printer announcement; None for anything else.
+pub fn parse_announcement(msg: &str, sender: std::net::IpAddr) -> Option<Found> {
+    let mut h: HashMap<String, String> = HashMap::new();
+    let mut lines = msg.lines();
+    let first = lines.next()?.trim().to_uppercase();
+    if !(first.starts_with("NOTIFY") || first.starts_with("HTTP/1.1 200")) {
+        return None;
+    }
+    for l in lines {
+        if let Some((k, v)) = l.split_once(':') {
+            h.insert(k.trim().to_lowercase(), v.trim().to_string());
+        }
+    }
+    let kind = h.get("nt").or(h.get("st"))?;
+    if !kind.contains("bambulab-com:device:3dprinter") {
+        return None;
+    }
+    let serial = h.get("usn")?.trim().to_uppercase();
+    if serial.is_empty() || serial.len() > 64 {
+        return None;
+    }
+    // the printer's own address; fall back to where the packet came from
+    let ip = h.get("location").and_then(|l| l.trim().parse::<std::net::Ipv4Addr>().ok()).map(|a| a.to_string()).unwrap_or_else(|| sender.to_string());
+    Some(Found {
+        serial,
+        ip,
+        name: h.get("devname.bambu.com").cloned().unwrap_or_default(),
+        model: h.get("devmodel.bambu.com").cloned().unwrap_or_default(),
+        at: now_ms(),
+    })
+}
+
+/// If a configured printer with this serial is at a different address now,
+/// switch to it. Its pinned certificate stays: a device that merely claims the
+/// serial still has to present the same certificate.
+pub fn follow_address(v: &Vault, f: &Found) -> DbResult<bool> {
+    let mut list = configs(v)?;
+    let Some(p) = list.iter_mut().find(|p| p.serial.eq_ignore_ascii_case(&f.serial)) else { return Ok(false) };
+    if p.host.contains(':') || p.host == f.ip {
+        return Ok(false); // an explicit host:port (tests, port forwarding) is left alone
+    }
+    let (id, old) = (p.id.clone(), p.host.clone());
+    p.host = f.ip.clone();
+    save_configs(v, &list)?;
+    set_live(&id, |l| {
+        l.state = "connecting".into();
+        l.message = Some(format!("Found at a new address ({} → {}); reconnecting.", old, f.ip));
+    });
+    Ok(true)
+}
+
+/// Printers seen on the network recently, and whether each is already added.
+pub fn found_json(v: &Vault) -> DbResult<Json> {
+    let cfg = configs(v)?;
+    let cutoff = now_ms() - 10 * 60_000;
+    let m = found().lock().unwrap_or_else(|e| e.into_inner());
+    let mut out: Vec<Json> = m.values().filter(|f| f.at > cutoff).map(|f| {
+        Json::obj().with("serial", f.serial.as_str()).with("ip", f.ip.as_str()).with("name", f.name.as_str()).with("model", f.model.as_str()).with("seenAt", f.at)
+            .with("added", cfg.iter().any(|p| p.serial.eq_ignore_ascii_case(&f.serial)))
+    }).collect();
+    out.sort_by(|a, b| a.str_of("name").cmp(&b.str_of("name")));
+    Ok(Json::Arr(out))
+}
+
+/// Listens on the given ports (whichever are free) until `stop` is set.
+pub fn start_discovery(ports: &[u16], locker: Locker, stop: Arc<AtomicBool>) -> usize {
+    let mut listening = 0;
+    for &port in ports {
+        let Ok(sock) = std::net::UdpSocket::bind(("0.0.0.0", port)) else { continue }; // e.g. Bambu Studio has it
+        let _ = sock.join_multicast_v4(&std::net::Ipv4Addr::new(239, 255, 255, 250), &std::net::Ipv4Addr::UNSPECIFIED);
+        let _ = sock.set_read_timeout(Some(Duration::from_millis(500)));
+        listening += 1;
+        let (l, stop) = (locker.clone(), stop.clone());
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 2048];
+            while !stop.load(Ordering::SeqCst) {
+                let Ok((n, from)) = sock.recv_from(&mut buf) else { continue };
+                let Some(f) = parse_announcement(&String::from_utf8_lossy(&buf[..n]), from.ip()) else { continue };
+                let moved = {
+                    let mut m = found().lock().unwrap_or_else(|e| e.into_inner());
+                    let prev = m.insert(f.serial.clone(), f.clone());
+                    prev.map(|p| p.ip != f.ip).unwrap_or(true)
+                };
+                if moved {
+                    l(&mut |v: &Vault| {
+                        let _ = follow_address(v, &f);
+                    });
+                }
+            }
+        });
+    }
+    listening
+}
+
 // ---------------------------------------------------------------- workers
 
 struct Worker {
@@ -902,6 +1019,7 @@ struct Worker {
 /// returned flag stops everything when set (used by tests).
 pub fn start(connector: Connector, locker: Locker) -> Arc<AtomicBool> {
     let shutdown = Arc::new(AtomicBool::new(false));
+    start_discovery(&DISCOVERY_PORTS, locker.clone(), shutdown.clone());
     let down = shutdown.clone();
     std::thread::spawn(move || {
         let mut workers: HashMap<String, Worker> = HashMap::new();
@@ -1238,6 +1356,49 @@ mod tests {
         assert_eq!(log.str_of("grams").as_deref(), Some("~83"), "estimate marked with ~");
         assert!(log.str_of("notes").unwrap().contains("PLA, PETG"), "{}", log.to_string());
         assert_eq!(log.get("filaments").unwrap().as_arr().unwrap()[0].str_of("color").as_deref(), Some("#FF6A13"));
+    }
+
+    const ANNOUNCE: &str = "NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nServer: UPnP/1.0\r\nLocation: 10.0.0.41\r\nNT: urn:bambulab-com:device:3dprinter:1\r\nUSN: 0938abc123\r\nCache-Control: max-age=1800\r\nDevModel.bambu.com: N6\r\nDevName.bambu.com: Big Boi\r\nDevConnect.bambu.com: lan\r\n\r\n";
+
+    #[test]
+    fn reads_printer_announcements_and_ignores_other_ssdp() {
+        let from: std::net::IpAddr = "10.0.0.41".parse().unwrap();
+        let f = parse_announcement(ANNOUNCE, from).unwrap();
+        assert_eq!((f.serial.as_str(), f.ip.as_str(), f.name.as_str(), f.model.as_str()), ("0938ABC123", "10.0.0.41", "Big Boi", "N6"));
+        let router = "NOTIFY * HTTP/1.1\r\nNT: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\nUSN: uuid:x\r\nLocation: http://10.0.0.1:5000/\r\n\r\n";
+        assert_eq!(parse_announcement(router, from), None);
+        let bad_loc = ANNOUNCE.replace("Location: 10.0.0.41", "Location: http://evil/");
+        assert_eq!(parse_announcement(&bad_loc, "10.0.0.77".parse().unwrap()).unwrap().ip, "10.0.0.77", "falls back to the sender");
+    }
+
+    #[test]
+    fn a_printer_that_changed_address_is_followed_and_keeps_its_certificate_pin() {
+        let (_t, v) = crate::testutil::vault();
+        save(&v, &Json::obj().with("name", "Big Boi").with("host", "10.0.0.38").with("serial", "0938abc123").with("accessCode", "x")).unwrap();
+        let id = configs(&v).unwrap()[0].id.clone();
+        pin_certificate(&v, &id, "ab12").unwrap();
+        let v = Arc::new(Mutex::new(v));
+        let vv = v.clone();
+        let locker: Locker = Arc::new(move |f: &mut dyn FnMut(&Vault)| f(&vv.lock().unwrap()));
+        // listen on a free port and announce to it, like the printer would
+        let port = { let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap(); s.local_addr().unwrap().port() };
+        let stop = Arc::new(AtomicBool::new(false));
+        assert_eq!(start_discovery(&[port], locker, stop.clone()), 1);
+        let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let t0 = Instant::now();
+        loop {
+            tx.send_to(ANNOUNCE.as_bytes(), ("127.0.0.1", port)).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            let p = configs(&v.lock().unwrap()).unwrap().remove(0);
+            if p.host == "10.0.0.41" {
+                assert_eq!(p.cert_sha256.as_deref(), Some("ab12"), "the pin survives the move");
+                break;
+            }
+            assert!(t0.elapsed() < Duration::from_secs(10), "address never followed");
+        }
+        let f = found_json(&v.lock().unwrap()).unwrap();
+        assert!(f.as_arr().unwrap().iter().any(|x| x.str_of("serial").as_deref() == Some("0938ABC123") && x.get("added").and_then(|a| a.as_bool()) == Some(true)));
+        stop.store(true, Ordering::SeqCst);
     }
 
     #[test]

@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { deflateSync } from 'node:zlib';
 import { createServer } from 'node:net';
+import { createSocket } from 'node:dgram';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : undefined; };
@@ -1099,6 +1100,19 @@ await step('Printers: add a printer, live status, prints logged to the matching 
   const row = page.locator('.printer-set-row').filter({ hasText: 'X2D' });
   await row.getByText('FAKESERIAL01').waitFor(); // serial is normalised
   await row.getByText('Idle').waitFor({ timeout: 20000 }); // connected
+  // another Bambu printer announcing itself on the network is offered with one click
+  const udp = createSocket('udp4');
+  const hello = Buffer.from('NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nLocation: 10.0.0.77\r\nNT: urn:bambulab-com:device:3dprinter:1\r\nUSN: 0938NEWPRINTER\r\nDevModel.bambu.com: N6\r\nDevName.bambu.com: Little Boi\r\n\r\n');
+  const announce = () => { for (const port of [2021, 1990]) udp.send(hello, port, '127.0.0.1'); };
+  announce();
+  const tick = setInterval(announce, 1000);
+  const foundRow = page.locator('.found-printers .printer-set-row').filter({ hasText: 'Little Boi' });
+  await foundRow.waitFor({ timeout: 15000 });
+  clearInterval(tick); udp.close();
+  await foundRow.getByRole('button', { name: 'Add' }).click();
+  if ((await f.getByPlaceholder('192.168.1.50').inputValue()) !== '10.0.0.77' || (await f.getByPlaceholder('Printer serial number').inputValue()) !== '0938NEWPRINTER') throw new Error('found printer not filled in');
+  if (shots) await page.screenshot({ path: join(shots, 'x-printer-found.png') });
+  await f.getByRole('button', { name: 'Cancel' }).click();
   if (shots) await page.screenshot({ path: join(shots, 'x-printer-settings.png') });
 
   // a print starts: the dashboard shows its progress
