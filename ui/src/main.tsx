@@ -1,13 +1,13 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { LuLayoutDashboard, LuSearch, LuSettings, LuPanelLeftClose, LuPanelLeftOpen, LuStar, LuClock, LuPlus, LuChevronRight, LuChevronDown } from 'react-icons/lu';
+import { LuLayoutDashboard, LuSearch, LuSettings, LuPanelLeftClose, LuPanelLeftOpen, LuStar, LuClock, LuPlus, LuChevronRight, LuChevronDown, LuX } from 'react-icons/lu';
 import { call, isTauri, type Project } from './ipc';
 import { ToastProvider, ConfirmProvider, ContextMenuProvider, PromptProvider, ProjectIcon, TooltipLayer, useToast } from './components/common';
 import { Dashboard, NewProjectDialog } from './views/Dashboard';
 import { ProjectView, type Tab } from './views/Project';
 import { SearchView } from './views/Search';
 import { SettingsView } from './views/Settings';
-import { confirmDiscardAll } from './unsaved';
+import { confirmDiscardProject, unsavedNames } from './unsaved';
 import { CommandPalette } from './views/Palette';
 import { cx } from './format';
 import { checkForUpdate, type AvailableUpdate } from './updater';
@@ -57,6 +57,14 @@ function App() {
   const [route, setRoute] = useState<Route>({ view: 'dashboard' });
   const [history, setHistory] = useState<Route[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
+  // open project tabs (ids, in tab order), kept across restarts
+  const [openTabs, setOpenTabs] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pv.openTabs') || '[]'); } catch { return []; } });
+  useEffect(() => { try { localStorage.setItem('pv.openTabs', JSON.stringify(openTabs)); } catch { /* ignore */ } }, [openTabs]);
+  // the tab/focus each open project was last asked to show (stable objects, so hidden tabs don't re-run them)
+  const tabRoutes = useRef<Record<string, { tab?: Tab; focus?: Focus }>>({});
+  const [, setDirtyTick] = useState(0);
+  useEffect(() => { const f = () => setDirtyTick((n) => n + 1); window.addEventListener('pv:dirty', f); return () => window.removeEventListener('pv:dirty', f); }, []);
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem('pv.sidebar') === '1'; } catch { return false; } });
   const [palette, setPalette] = useState(false);
   const [newProject, setNewProject] = useState(false);
@@ -71,7 +79,9 @@ function App() {
     return () => { off = true; clearTimeout(t); clearInterval(i); };
   }, []);
 
-  const refreshProjects = useCallback(() => { call<Project[]>('projects.list').then(setProjects).catch(() => {}); }, []);
+  const refreshProjects = useCallback(() => { call<Project[]>('projects.list').then((l) => { setProjects(l); setProjectsLoaded(true); }).catch(() => {}); }, []);
+  // tabs of removed projects go away
+  useEffect(() => { if (projectsLoaded) setOpenTabs((t) => { const n = t.filter((id) => projects.some((p) => p.id === id)); return n.length === t.length ? t : n; }); }, [projects, projectsLoaded]);
   useEffect(refreshProjects, [refreshProjects]);
   useEffect(() => { try { localStorage.setItem('pv.sidebar', collapsed ? '1' : '0'); } catch { /* ignore */ } }, [collapsed]);
 
@@ -79,9 +89,22 @@ function App() {
   routeRef.current = route;
   const go = useCallback((r: Route) => {
     const cur = routeRef.current;
-    // leaving a project closes its editors: ask if any have unsaved changes
-    const leaving = cur.view === 'project' && (r.view !== 'project' || (r as any).id !== (cur as any).id);
-    if (leaving && !confirmDiscardAll()) return;
+    if (r.view === 'project') {
+      tabRoutes.current[r.id] = { tab: r.tab, focus: r.focus };
+      setOpenTabs((t) => {
+        if (t.includes(r.id)) return t;
+        let n = [...t, r.id];
+        // too many open: close the oldest tab without unsaved edits (never the one being opened)
+        const max = (() => { try { return Number(localStorage.getItem('pv.maxTabs')) || 10; } catch { return 10; } })();
+        while (n.length > max) {
+          const drop = n.find((id) => id !== r.id && !unsavedNames(id).length);
+          if (!drop) break;
+          n = n.filter((id) => id !== drop);
+          delete tabRoutes.current[drop];
+        }
+        return n;
+      });
+    }
     setHistory((h) => [...h.slice(-30), cur]);
     setRoute(r);
   }, []);
@@ -90,10 +113,36 @@ function App() {
   const back = useCallback(() => {
     const h = historyRef.current;
     if (!h.length) return;
-    const prev = h[h.length - 1], cur = routeRef.current;
-    if (cur.view === 'project' && (prev.view !== 'project' || (prev as any).id !== (cur as any).id) && !confirmDiscardAll()) return;
+    const prev = h[h.length - 1];
+    if (prev.view === 'project' && !openTabsRef.current.includes(prev.id)) setOpenTabs((t) => [...t, prev.id]);
     setRoute(prev);
     setHistory(h.slice(0, -1));
+  }, []);
+  const openTabsRef = useRef(openTabs);
+  openTabsRef.current = openTabs;
+  /** Closes a project tab (asking about unsaved edits); shows its neighbour if it was in front. */
+  const closeTab = useCallback((id: string) => {
+    if (!confirmDiscardProject(id)) return;
+    const t = openTabsRef.current;
+    const i = t.indexOf(id);
+    const rest = t.filter((x) => x !== id);
+    setOpenTabs(rest);
+    delete tabRoutes.current[id];
+    setHistory((h) => h.filter((r) => !(r.view === 'project' && r.id === id)));
+    const cur = routeRef.current;
+    if (cur.view === 'project' && cur.id === id) {
+      const next = rest[i] || rest[i - 1];
+      setRoute(next ? { view: 'project', id: next } : { view: 'dashboard' });
+    }
+  }, []);
+  const cycleTab = useCallback((dir: 1 | -1) => {
+    const t = openTabsRef.current;
+    if (!t.length) return;
+    const cur = routeRef.current;
+    const i = cur.view === 'project' ? t.indexOf(cur.id) : -1;
+    const next = i < 0 ? (dir === 1 ? t[0] : t[t.length - 1]) : t[(i + dir + t.length) % t.length];
+    setHistory((h) => [...h.slice(-30), cur]);
+    setRoute({ view: 'project', id: next });
   }, []);
   const nav: Nav = useMemo(() => ({ go, refreshProjects, projects }), [go, refreshProjects, projects]);
 
@@ -105,10 +154,12 @@ function App() {
       else if (mod && e.key.toLowerCase() === 'n' && !e.shiftKey) { e.preventDefault(); setNewProject(true); }
       else if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); setCollapsed((c) => !c); }
       else if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); back(); }
+      else if (e.ctrlKey && e.key === 'Tab') { e.preventDefault(); cycleTab(e.shiftKey ? -1 : 1); }
+      else if (mod && !e.shiftKey && e.key.toLowerCase() === 'w') { e.preventDefault(); const r = routeRef.current; if (r.view === 'project') closeTab(r.id); }
     };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
-  }, [go, back]);
+  }, [go, back, cycleTab, closeTab]);
 
   const byName = (a: Project, b: Project) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
   // Scheduled backups: checked at start-up and every 30 minutes while the app is open.
@@ -152,7 +203,6 @@ function App() {
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
   const [sideClosed, setSideClosed] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pv.sideCollapsed') || '[]'); } catch { return []; } });
   const toggleSide = (g: string) => setSideClosed((c) => { const n = c.includes(g) ? c.filter((x) => x !== g) : [...c, g]; try { localStorage.setItem('pv.sideCollapsed', JSON.stringify(n)); } catch { /* ignore */ } return n; });
-  const current = route.view === 'project' ? projects.find((p) => p.id === route.id) : undefined;
 
   const projLink = (p: Project) => (
     <button key={p.id} className={cx('navitem', route.view === 'project' && route.id === p.id && 'active')} onClick={() => go({ view: 'project', id: p.id })} title={p.name}>
@@ -189,11 +239,30 @@ function App() {
       <main className="main">
         <div className="topbar" data-tauri-drag-region>
           <div className="crumbs" data-tauri-drag-region>
-            <button onClick={() => go({ view: 'dashboard' })}>Projects</button>
-            {route.view === 'project' && current && <><LuChevronRight /><span className="cur">{current.name}</span></>}
+            <button className={cx(route.view === 'dashboard' && 'cur')} onClick={() => go({ view: 'dashboard' })}>Projects</button>
             {route.view === 'search' && <><LuChevronRight /><span className="cur">Search</span></>}
             {route.view === 'settings' && <><LuChevronRight /><span className="cur">Settings</span></>}
           </div>
+          {openTabs.length > 0 && (
+            <div className="ptabs" role="tablist" aria-label="Open projects" data-tauri-drag-region>
+              {openTabs.map((id) => {
+                const p = projects.find((x) => x.id === id);
+                if (!p) return null;
+                const on = route.view === 'project' && route.id === id;
+                const unsaved = unsavedNames(id).length > 0;
+                return (
+                  <div key={id} role="tab" aria-selected={on} tabIndex={0} className={cx('ptab', on && 'on')} title={p.name + (unsaved ? ' — unsaved changes' : '')}
+                    onClick={() => go({ view: 'project', id })} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go({ view: 'project', id }); } }}
+                    onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(id); } }} onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}>
+                    <ProjectIcon category={p.category} icon={p.icon} color={p.color} size={16} />
+                    <span className="ptab-name">{p.name}</span>
+                    {unsaved && <span className="ptab-dirty" aria-label="unsaved changes" />}
+                    <button className="ptab-x" aria-label={`Close ${p.name}`} title="Close (Ctrl+W)" onClick={(e) => { e.stopPropagation(); closeTab(id); }}><LuX size={12} /></button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           {update && (
             <button className="btn primary sm" style={{ marginLeft: 'auto' }} disabled={updating !== false} title={update.notes || undefined}
               onClick={async () => { setUpdating(null); try { await update.install((p) => setUpdating(p)); } catch (e: any) { setUpdating(false); alert('Update failed: ' + (e?.message || e)); } }}>
@@ -207,7 +276,12 @@ function App() {
           {route.view === 'dashboard' && <Dashboard nav={nav} onNew={() => setNewProject(true)} />}
           {route.view === 'search' && <SearchView nav={nav} initial={route.query} />}
           {route.view === 'settings' && <SettingsView nav={nav} />}
-          {route.view === 'project' && <ProjectView key={route.id} nav={nav} id={route.id} tab={route.tab} focus={route.focus} />}
+          {/* every open project stays mounted; only the one in front is shown */}
+          {openTabs.map((id) => {
+            const on = route.view === 'project' && route.id === id;
+            const r = tabRoutes.current[id] || (tabRoutes.current[id] = {});
+            return <div key={id} className="ptab-pane" style={{ display: on ? 'contents' : 'none' }}><ProjectView nav={nav} id={id} tab={r.tab} focus={r.focus} active={on} /></div>;
+          })}
         </div>
       </main>
       {palette && <CommandPalette nav={nav} route={route} onClose={() => setPalette(false)} onNewProject={() => setNewProject(true)} />}

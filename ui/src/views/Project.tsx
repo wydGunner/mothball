@@ -45,7 +45,11 @@ export interface ProjectCtx {
   focus?: Focus;
 }
 
-export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: { nav: Nav; id: string; tab?: Tab; focus?: Focus }) {
+/** `active`: this is the visible tab. Hidden tabs stay mounted (open editors and
+ *  unsaved edits survive switching) but don't react to keys, drops or focus. */
+export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus, active = true }: { nav: Nav; id: string; tab?: Tab; focus?: Focus; active?: boolean }) {
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const [project, setProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>(initialTab || 'overview');
@@ -101,30 +105,35 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus }: {
   // The background watcher records changes as they happen; when it is
   // switched off, fall back to a periodic rescan of the open project.
   useEffect(() => {
-    const onFocus = () => scan(true);
+    const onFocus = () => { if (activeRef.current) scan(true); };
     window.addEventListener('focus', onFocus);
     const onChanged = () => { setScanTick((t) => t + 1); reload(); };
     window.addEventListener('pv:changed', onChanged);
     let t: ReturnType<typeof setInterval> | undefined;
     call<{ enabled: boolean }>('watch.settings').then((w) => {
-      if (!w.enabled) t = setInterval(() => { if (document.visibilityState === 'visible') scan(true); }, AUTO_SCAN_MS);
+      if (!w.enabled) t = setInterval(() => { if (document.visibilityState === 'visible' && activeRef.current) scan(true); }, AUTO_SCAN_MS);
     }).catch(() => {});
     return () => { window.removeEventListener('focus', onFocus); window.removeEventListener('pv:changed', onChanged); if (t) clearInterval(t); };
   }, [scan, reload]);
+
+  // coming back to a tab: catch up with changes made meanwhile
+  const wasActive = useRef(active);
+  useEffect(() => { if (active && !wasActive.current) scan(true); wasActive.current = active; }, [active, scan]);
 
   // OS drag-and-drop import (desktop app)
   useEffect(() => {
     let off: (() => void) | undefined;
     onFileDrop(async (paths) => {
-      if (!paths.length) return;
+      if (!paths.length || !activeRef.current) return;
       // always confirm: shows the destination project/folder and what will happen
       setDropImport(paths);
-    }, setDropping).then((f) => { off = f; });
+    }, (over) => { if (activeRef.current) setDropping(over); }).then((f) => { off = f; });
     return () => off?.();
   }, [id, project?.mode, act, confirm, toast, reload]);
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
+      if (!activeRef.current) return;
       if (e.altKey && /^[1-7]$/.test(e.key)) { e.preventDefault(); setTab(TABS[Number(e.key) - 1].id); }
       if (e.key === 'F5') { e.preventDefault(); scan(false); }
     };

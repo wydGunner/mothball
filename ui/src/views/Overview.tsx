@@ -109,6 +109,17 @@ export function moduleFor(key: string): { title: string; fields: FieldDef[] } | 
 }
 export const fieldsFor = (key: string): FieldDef[] => moduleFor(key)?.fields || [];
 
+/** Today as YYYY-MM-DD in local time (toISOString would give the UTC date). */
+const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+/** A print log entry's date, in the same local format for printer and hand-logged entries. */
+const logDate = (e: { at?: number; date?: string }) => {
+  if (e.at) return new Date(e.at).toLocaleDateString();
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.date || '');
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString() : e.date || '';
+};
+/** Grams shown beside an entry only when no filament chip already says it. */
+const looseGrams = (e: { grams?: string; filaments?: { grams?: number }[] }) => (e.grams && !(e.filaments || []).some((f) => f.grams) ? e.grams : '');
+
 const PRINT_STATUS_DOT: Record<string, string> = { REPRINT_READY: 'on', TEST_FIT_PASSED: 'on', SLICED_UNTESTED: 'half', NEEDS_WORK: 'half' };
 
 export function Overview({ ctx }: { ctx: ProjectCtx }) {
@@ -250,7 +261,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
               <div style={{ marginTop: 14 }}>
                 <h3>Print history <span className="dim small" style={{ fontWeight: 400 }}>{printLog.filter((e) => e.result === 'success').length} succeeded, {printLog.filter((e) => e.result !== 'success').length} failed</span></h3>
                 {printLog.slice(-4).reverse().map((e, i) => (
-                  <div key={i} className="row small" style={{ padding: '3px 0' }}>{e.result === 'success' ? <LuCircleCheck color="var(--ok)" /> : <LuCircleX color="var(--bad)" />}<span style={{ width: 90 }} title={e.source === 'printer' ? 'Logged automatically from the printer' : undefined}>{e.at ? new Date(e.at).toLocaleDateString() : e.date}</span><span className="grow muted">{e.notes}</span>{(e.filaments || []).map((f: any, j: number) => <SpoolChip key={j} s={f} />)}{e.grams && <span className="dim">{e.grams} g</span>}</div>
+                  <div key={i} className="row small" style={{ padding: '3px 0' }}>{e.result === 'success' ? <LuCircleCheck color="var(--ok)" /> : <LuCircleX color="var(--bad)" />}<span style={{ width: 90 }} title={e.source === 'printer' ? 'Logged automatically from the printer' : undefined}>{logDate(e)}</span><span className="grow muted">{e.notes}</span>{(e.filaments || []).map((f: any, j: number) => <SpoolChip key={j} s={f} />)}{looseGrams(e) && <span className="dim">{looseGrams(e)} g</span>}</div>
                 ))}
               </div>
             )}
@@ -397,7 +408,7 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
 }
 
 function PrintLog({ log, onChange }: { log: any[]; onChange: (l: any[]) => void }) {
-  const [draft, setDraft] = useState({ date: new Date().toISOString().slice(0, 10), result: 'success', notes: '', grams: '', time: '' });
+  const [draft, setDraft] = useState({ date: localToday(), result: 'success', notes: '', grams: '', time: '' });
   return (
     <div style={{ marginTop: 6 }}>
       <h3 style={{ marginBottom: 8 }}>Print history</h3>
@@ -405,7 +416,7 @@ function PrintLog({ log, onChange }: { log: any[]; onChange: (l: any[]) => void 
       {log.map((e, i) => (
         <div key={i} className="row small" style={{ padding: '3px 0' }}>
           {e.result === 'success' ? <LuCircleCheck color="var(--ok)" /> : <LuCircleX color="var(--bad)" />}
-          <span style={{ width: 90 }} title={e.source === 'printer' ? 'Logged automatically from the printer' : undefined}>{e.at ? new Date(e.at).toLocaleDateString() : e.date}</span><span className="grow">{e.notes}</span>{(e.filaments || []).map((f: any, j: number) => <SpoolChip key={j} s={f} />)}<span className="dim">{[e.grams && `${e.grams} g`, e.time].filter(Boolean).join(' · ')}</span>
+          <span style={{ width: 90 }} title={e.source === 'printer' ? 'Logged automatically from the printer' : undefined}>{logDate(e)}</span><span className="grow">{e.notes}</span>{(e.filaments || []).map((f: any, j: number) => <SpoolChip key={j} s={f} />)}<span className="dim">{[looseGrams(e) && `${looseGrams(e)} g`, e.time].filter(Boolean).join(' · ')}</span>
           <button className="btn ghost sm icon" title="Remove" onClick={() => onChange(log.filter((_, j) => j !== i))}><LuTrash2 /></button>
         </div>
       ))}

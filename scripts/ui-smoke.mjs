@@ -99,6 +99,8 @@ const api = (cmd, args = {}) => page.evaluate(async ([c, a]) => (await (await fe
 const toastGone = async () => { while (await page.locator('.toast button').count()) await page.locator('.toast button').first().click(); };
 
 await page.goto(base);
+// most steps were written for one project at a time; the project-tabs step turns tabs on
+await page.evaluate(() => localStorage.setItem('pv.maxTabs', '1'));
 
 await step('First run: welcome screen', async () => {
   await page.getByRole('button', { name: /Add a folder I already have/ }).waitFor();
@@ -324,15 +326,30 @@ await step('Editor tabs keep unsaved edits while switching files', async () => {
   await page.getByRole('tab', { name: /Files/ }).click();
   await page.locator('.edtab').filter({ hasText: '_util.gsc' }).click();
   await page.waitForFunction(() => [...document.querySelectorAll('.edslot')].some((e) => e.style.display !== 'none' && ((e.textContent || '').includes('tab test') || [...e.querySelectorAll('textarea')].some((t) => t.value.includes('tab test')))));
-  // leaving the project asks about unsaved changes; cancel stays
-  page.once('dialog', (d) => d.dismiss());
+  // project tabs: going to the dashboard keeps the project open (no question), and the edit survives
+  await page.evaluate(() => localStorage.setItem('pv.maxTabs', '10'));
+  let asked = false;
+  const onDialog = (d) => { asked = true; d.dismiss(); };
+  page.on('dialog', onDialog);
   await page.getByRole('button', { name: 'Dashboard' }).click();
+  await page.locator('.dash-bar').waitFor();
+  if (asked) throw new Error('leaving for the dashboard asked about unsaved edits');
+  const ptab = page.getByRole('tab', { name: /OMEN v2/ });
+  await ptab.locator('.ptab-dirty').waitFor(); // unsaved marker on the project tab
+  if (shots) await page.screenshot({ path: join(shots, 'x-project-tabs.png') });
+  await ptab.click();
+  await page.locator('.edtab').filter({ hasText: '_util.gsc' }).locator('.dirty-dot').waitFor();
+  // closing the project tab asks; cancelling keeps it
+  await ptab.getByRole('button', { name: 'Close OMEN v2' }).click();
+  if (!asked) throw new Error('closing a project with unsaved edits did not ask');
+  page.off('dialog', onDialog);
   await page.locator('.edtab').filter({ hasText: '_util.gsc' }).waitFor();
   // close both tabs (discarding)
   page.once('dialog', (d) => d.accept());
   await page.locator('.edtab').filter({ hasText: '_util.gsc' }).locator('.edtab-x').click();
   await page.locator('.edtab .edtab-x').first().click();
   await page.locator('.edtab').first().waitFor({ state: 'detached' }).catch(() => {});
+  await page.evaluate(() => localStorage.setItem('pv.maxTabs', '1'));
 });
 
 await step('Timeline: expand an edit to see what changed', async () => {
@@ -622,13 +639,13 @@ await step('3D printing project details', async () => {
   });
 
 await step('Reveal in project from another project', async () => {
-  await page.locator('.crumbs .cur').filter({ hasText: 'Desk Cat' }).waitFor();
+  await page.locator('.ptab.on').filter({ hasText: 'Desk Cat' }).waitFor();
   await page.keyboard.press('Control+K');
   await page.locator('.palette input').fill('createserver');
   const item = page.locator('.palette .item.fileitem').filter({ hasText: 'menus / createserver.menu' });
   await item.click({ button: 'right' });
   await page.locator('.ctx button').filter({ hasText: 'Reveal in project' }).click();
-  await page.locator('.crumbs .cur').filter({ hasText: 'OMEN v2' }).waitFor();
+  await page.locator('.ptab.on').filter({ hasText: 'OMEN v2' }).waitFor();
   await page.locator('.tabs button.on').filter({ hasText: 'Files' }).waitFor();
   await page.locator('.tnode.on').filter({ hasText: 'menus' }).waitFor();
   await page.locator('.filerow.sel').filter({ hasText: 'createserver.menu' }).waitFor();
@@ -765,7 +782,7 @@ await step('New project as a copy; attach a dependency, put it in place, put the
   await dlg.getByRole('button', { name: /Browse/ }).click();
   await dlg.locator('label').filter({ hasText: 'Make a copy in Mothball' }).click();
   await dlg.getByRole('button', { name: 'Create project' }).click();
-  await page.locator('.crumbs .cur').filter({ hasText: 'OMEN old' }).waitFor({ timeout: 30000 });
+  await page.locator('.ptab.on').filter({ hasText: 'OMEN old' }).waitFor({ timeout: 30000 });
   const pr = (await api('projects.list')).data.find((x) => x.name === 'OMEN old');
   if (pr.mode !== 'managed' || pr.rootPath.startsWith(orig)) throw new Error('not copied: ' + JSON.stringify(pr));
   if (readFileSync(join(pr.rootPath, 'scripts', 'menu.gsc'), 'utf8') !== 'init() {}\n') throw new Error('copy content');
@@ -938,11 +955,12 @@ await step('GSC: functions list, go to definition, function search', async () =>
   await page.getByRole('button', { name: 'Edit file' }).click();
   const ed = page.locator('.pv-editor textarea').first();
   await ed.waitFor();
-  const monacoWord = page.locator('.pv-editor .monaco-editor .view-line span').filter({ hasText: /^util$/ });
-  if (await page.locator('.pv-editor .monaco-editor').count()) {
-    // Monaco: put the cursor in the word the way a person would, by clicking it
-    await monacoWord.first().waitFor();
-    await monacoWord.first().click();
+  // Monaco colours `scripts\mp\_util::util` as one piece; click on its last word, as a person would
+  const monacoCall = page.locator('.pv-editor .monaco-editor .view-line span span:visible').filter({ hasText: /::util$/ });
+  if (await page.locator('.pv-editor .monaco-editor:visible').count()) {
+    await monacoCall.first().waitFor();
+    const b = await monacoCall.first().boundingBox();
+    await page.mouse.click(b.x + b.width - 6, b.y + b.height / 2);
   } else {
     await ed.evaluate((ta) => { const i = ta.value.indexOf('::util') + 4; ta.focus(); ta.setSelectionRange(i, i); });
   }
@@ -1128,6 +1146,41 @@ await step('Printers: add a printer, live status, prints logged to the matching 
   await page.getByText('Printed Desk Cat').first().waitFor();
   await page.getByText('Print failed: Benchy').first().waitFor();
   await page.getByRole('tab', { name: /Overview/ }).click();
+});
+
+await step('Project tabs: several projects open, each keeps its place', async () => {
+  await page.evaluate(() => localStorage.setItem('pv.maxTabs', '10'));
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  // close whatever is open, to start clean
+  while (await page.locator('.ptab').count()) await page.locator('.ptab .ptab-x').first().click();
+  await page.locator('.pcard').filter({ hasText: 'OMEN v2' }).click();
+  await page.locator('.ptab.on').filter({ hasText: 'OMEN v2' }).waitFor();
+  await page.getByRole('tab', { name: /Files/ }).first().click();
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  await page.locator('.pcard').filter({ hasText: 'Desk Cat' }).click();
+  await page.locator('.ptab.on').filter({ hasText: 'Desk Cat' }).waitFor();
+  if ((await page.locator('.ptab').allTextContents()).length !== 2) throw new Error('expected two project tabs');
+  if (shots) await page.screenshot({ path: join(shots, 'x-project-tabs-two.png') });
+  // Ctrl+Tab back to OMEN v2: still on its Files tab
+  await page.keyboard.press('Control+Tab');
+  await page.locator('.ptab.on').filter({ hasText: 'OMEN v2' }).waitFor();
+  await page.locator('.tabs button.on:visible').filter({ hasText: 'Files' }).waitFor();
+  await page.locator('.filerow:visible').first().waitFor();
+  // the sidebar opens a project in its tab rather than a second copy
+  await page.locator('.sidebar .navitem').filter({ hasText: 'Desk Cat' }).first().click();
+  if ((await page.locator('.ptab').count()) !== 2) throw new Error('reopening made another tab');
+  // tabs come back after a restart
+  await page.reload();
+  await page.locator('.ptab').filter({ hasText: 'Desk Cat' }).waitFor();
+  await page.locator('.ptab').filter({ hasText: 'OMEN v2' }).waitFor();
+  // middle-click closes a tab; Ctrl+W closes the one in front
+  await page.locator('.ptab').filter({ hasText: 'Desk Cat' }).click({ button: 'middle' });
+  await page.locator('.ptab').filter({ hasText: 'Desk Cat' }).waitFor({ state: 'detached' });
+  await page.locator('.ptab').filter({ hasText: 'OMEN v2' }).click();
+  await page.keyboard.press('Control+w');
+  await page.locator('.ptab').first().waitFor({ state: 'detached' });
+  await page.locator('.dash-bar').waitFor(); // back on the dashboard
+  await page.evaluate(() => localStorage.setItem('pv.maxTabs', '1'));
 });
 
 await step('Dashboard: project groups', async () => {

@@ -329,7 +329,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
         {tabs.map((t) => (
           <div key={'ed' + t.id} className="edslot" style={{ display: editing === t.id ? undefined : 'none' }}>
             <EditorPane fileId={t.id} ctx={ctx} gotoLine={gotoLine?.fileId === t.id ? gotoLine : undefined}
-              onDirty={(d) => { markDirty(t.id, t.name, d); setDirtyTabs((s0) => { if (s0.has(t.id) === d) return s0; const n = new Set(s0); if (d) n.add(t.id); else n.delete(t.id); return n; }); }}
+              onDirty={(d) => { markDirty(t.id, t.name, d, ctx.project.id); setDirtyTabs((s0) => { if (s0.has(t.id) === d) return s0; const n = new Set(s0); if (d) n.add(t.id); else n.delete(t.id); return n; }); }}
               wide={full} onToggleWide={toggleWide}
               onClose={() => closeTab(t.id)}
               onDetails={() => { setEditingRaw(null); setSelectedRaw(t.id); }}

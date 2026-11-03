@@ -9,6 +9,23 @@ import { bytes, CATEGORY_LABELS, cx, dateTime, hiddenTypes, setHiddenTypes } fro
 import type { Nav } from '../main';
 import { THEMES, applyTheme, getTheme, themeFromColor } from '../theme';
 
+/** How many projects stay open as tabs (1 = one at a time, as before tabs). */
+function TabSettings() {
+  const [n, setN] = useState(() => { try { return Number(localStorage.getItem('pv.maxTabs')) || 10; } catch { return 10; } });
+  const set = (v: number) => { setN(v); try { localStorage.setItem('pv.maxTabs', String(v)); } catch { /* ignore */ } };
+  return (
+    <div className="card pad" style={{ marginBottom: 16 }}>
+      <h2>Open projects</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>Projects you open stay open as tabs at the top, so you can switch between them without losing your place or unsaved edits. Ctrl+Tab switches, Ctrl+W closes.</p>
+      <div className="row small">Keep up to
+        <select className="input" style={{ width: 'auto' }} value={n} onChange={(e) => set(Number(e.target.value))} aria-label="Open project tabs">
+          <option value={1}>1 (one project at a time)</option>{[3, 5, 10].map((x) => <option key={x} value={x}>{x} projects</option>)}
+        </select>
+        open; the oldest one without unsaved edits closes when you open another.</div>
+    </div>
+  );
+}
+
 function Appearance() {
   const [cur, setCur] = useState(getTheme());
   const pick = (t: typeof cur) => { applyTheme(t); setCur(t); };
@@ -537,7 +554,7 @@ export function SettingsView({ nav }: { nav: Nav }) {
       </nav>
       <div className="set-body" key={sec}>
         <h2 className="set-title">{cur.label}</h2>
-        {sec === 'appearance' && <Appearance />}
+        {sec === 'appearance' && <><Appearance /><TabSettings /></>}
         {sec === 'types' && <ProjectTypes nav={nav} />}
         {sec === 'editor' && <EditorSaving />}
         {sec === 'tracking' && <><WatchCard /><TimeSettings /></>}
