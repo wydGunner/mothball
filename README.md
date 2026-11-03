@@ -67,7 +67,10 @@ Studio under the device). Mothball then shows what's printing, progress and time
 left on the dashboard, and when a print finishes, fails or is stopped it is added
 to the print history and timeline of the project whose model or plate file has
 the same name. Prints that match no project wait in the dashboard's printer panel
-to be assigned (optionally remembered for next time).
+to be assigned (optionally remembered for next time). Loaded filament (AMS slots and
+external spool: type, colour, amount left on Bambu spools) shows live, and each
+print records what it used — grams measured from Bambu spool levels when Mothball
+saw the print start, otherwise the slicer's estimate from the project's .3mf.
 
 It is **read-only**: Mothball never starts, stops or changes anything on the
 printer. It connects directly over your network (MQTT over TLS, port 8883), not

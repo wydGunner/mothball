@@ -1,8 +1,8 @@
 // Read-only Bambu Lab printer status: settings, live status, print history.
 import { useEffect, useState } from 'react';
-import { LuPrinter, LuCircleCheck, LuCircleX, LuCircleSlash, LuTrash2, LuPencil, LuPlus, LuShieldCheck } from 'react-icons/lu';
+import { LuPrinter, LuCircleCheck, LuCircleX, LuCircleSlash, LuTrash2, LuPencil, LuPlus, LuShieldCheck, LuClipboardCopy } from 'react-icons/lu';
 import { call, type Project } from '../ipc';
-import { useAction, useConfirm } from '../components/common';
+import { useAction, useConfirm, useToast } from '../components/common';
 import { cx } from '../format';
 import type { Nav } from '../main';
 
@@ -10,12 +10,30 @@ export interface PrinterStatus {
   id: string; name: string; host: string; serial: string; hasCode: boolean; certPinned: boolean;
   state: 'connecting' | 'online' | 'offline' | 'error'; message?: string; updatedAt?: number;
   stage?: string; job?: string; progress?: number; remainingMin?: number; layer?: number; totalLayers?: number;
-  nozzle?: number; bed?: number; error?: string; hms?: number;
+  nozzle?: number; bed?: number; error?: string; hms?: number; spools?: Spool[];
 }
+export interface Spool { key?: string; slot?: string; type?: string; brand?: string; color?: string; remain?: number; weight?: number; active?: boolean; grams?: number }
 export interface PrintRecord {
   key: string; printerId: string; printer: string; name: string; file: string; result: 'success' | 'failure' | 'stopped';
   error?: string; startedAt?: number; endedAt: number; minutes?: number; projectId?: string; projectName?: string;
+  filaments?: Spool[]; grams?: number; estimatedGrams?: number; estimatedFilaments?: Spool[];
 }
+
+/** A filament swatch: colour dot + material (+ amount). */
+export function SpoolChip({ s, showLeft }: { s: Spool; showLeft?: boolean }) {
+  const name = s.brand || s.type || 'Filament';
+  const tip = [s.slot, s.brand && s.type && s.brand !== s.type ? `${s.brand} (${s.type})` : name, s.color, s.remain != null ? `${s.remain}% left` : showLeft ? 'level unknown (not a Bambu spool)' : '', s.grams ? `${s.grams} g used` : '', s.active ? 'feeding now' : ''].filter(Boolean).join(' · ');
+  return (
+    <span className={cx('spool', s.active && 'active')} title={tip}>
+      <i style={{ background: s.color || 'var(--bg4)' }} />{name}
+      {showLeft && s.remain != null && <span className="dim">{s.remain}%</span>}
+      {s.grams ? <span className="dim">{s.grams} g</span> : null}
+    </span>
+  );
+}
+
+/** Grams for a finished print: measured from spool levels, else the slicer's estimate. */
+export const printGrams = (h: PrintRecord) => (h.grams ? `${h.grams} g` : h.estimatedGrams ? `~${Math.round(h.estimatedGrams)} g (sliced)` : '');
 
 const ACTIVE = new Set(['prepare', 'running', 'pause', 'slicing']);
 export const fmtMin = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`);
@@ -97,6 +115,7 @@ export function PrinterPanel({ printers, history, onChanged, nav }: { printers: 
             <div className="pp-bar big"><i style={{ width: `${p.progress || 0}%` }} /></div>
             {p.totalLayers ? <div className="small dim">Layer {p.layer ?? 0} of {p.totalLayers}</div> : null}
           </>}
+          {p.state === 'online' && !!p.spools?.length && <div className="spools">{p.spools.map((sp) => <SpoolChip key={sp.key} s={sp} showLeft />)}</div>}
           {p.state === 'online' && !!p.hms && <div className="small bad-text" style={{ marginTop: 4 }}>The printer reports {p.hms} warning{p.hms === 1 ? '' : 's'} (see its screen).</div>}
         </div>
       ))}
@@ -125,9 +144,10 @@ function PrintRow({ h, onChanged, nav }: { h: PrintRecord; onChanged: () => void
     <div className="print-row">
       <div className="row" style={{ gap: 8 }}>
         <ResultIcon r={h.result} />
-        <span className="grow" style={{ minWidth: 0 }}><b>{h.name || 'Untitled job'}</b> <span className="small dim">{what}{h.error ? ` · error ${h.error}` : ''}{h.minutes ? ` · ${fmtMin(h.minutes)}` : ''}</span></span>
+        <span className="grow" style={{ minWidth: 0 }}><b>{h.name || 'Untitled job'}</b> <span className="small dim">{what}{h.error ? ` · error ${h.error}` : ''}{h.minutes ? ` · ${fmtMin(h.minutes)}` : ''}{printGrams(h) ? ` · ${printGrams(h)}` : ''}</span></span>
         <span className="small dim" title={h.printer}>{when(h.endedAt)}</span>
       </div>
+      {!!(h.filaments?.length || h.estimatedFilaments?.length) && <div className="spools" style={{ paddingLeft: 24, marginTop: 4 }}>{(h.filaments?.length ? h.filaments : h.estimatedFilaments!).map((f, i) => <SpoolChip key={i} s={f} />)}</div>}
       <div className="row small" style={{ gap: 8, marginTop: 3, paddingLeft: 24 }}>
         {h.projectId
           ? <a href="#" onClick={(e) => { e.preventDefault(); nav.go({ view: 'project', id: h.projectId! }); }}>{h.projectName}</a>
@@ -156,6 +176,7 @@ export function PrinterSettings() {
   const printers = usePrinters();
   const [form, setForm] = useState<typeof EMPTY | null>(null);
   const act = useAction();
+  const toast = useToast();
   const confirm = useConfirm();
   const save = async () => {
     if (!form) return;
@@ -179,6 +200,10 @@ export function PrinterSettings() {
           {p.certPinned && p.state === 'error' && /different security certificate/.test(p.message || '') && <button className="btn ghost sm" title="Use this if the printer's firmware was updated and it now presents a new certificate" onClick={async () => {
             if (await confirm({ title: 'Trust a new certificate?', body: 'The next certificate the printer presents will be remembered. Only do this if the printer\'s firmware was just updated or it was reset.', confirm: 'Trust new certificate' })) await act(() => call('printers.resetCertificate', { id: p.id }));
           }}><LuShieldCheck /> Trust new certificate</button>}
+          {p.state === 'online' && <button className="btn ghost sm icon" title="Copy the printer's raw status (to help fix how Mothball reads this printer; contains no access code)" aria-label={`Copy raw status of ${p.name}`} onClick={async () => {
+            const r = await act(() => call('printers.raw', { id: p.id }));
+            if (r) { await navigator.clipboard.writeText(JSON.stringify(r, null, 2)); toast('Raw printer status copied', 'success'); }
+          }}><LuClipboardCopy /></button>}
           <button className="btn ghost sm icon" title="Edit" aria-label={`Edit ${p.name}`} onClick={() => setForm({ id: p.id, name: p.name, host: p.host, serial: p.serial, accessCode: '' })}><LuPencil /></button>
           <button className="btn ghost sm icon" title="Remove" aria-label={`Remove ${p.name}`} onClick={async () => {
             if (await confirm({ title: `Remove ${p.name}?`, body: 'Mothball stops watching it. Prints already logged stay in your projects.', confirm: 'Remove', danger: true })) await act(() => call('printers.remove', { id: p.id }));

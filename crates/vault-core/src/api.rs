@@ -37,6 +37,7 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "deps.install" => deps::install(v, &s(a, "projectId")?, os(a, "id").as_deref()),
         "deps.restoreOriginal" => deps::restore_original(v, &s(a, "projectId")?, &s(a, "id")?),
         "printers.list" => printers::list(v),
+        "printers.raw" => printers::raw(v, &s(a, "id")?),
         "printers.save" => printers::save(v, a),
         "printers.remove" => printers::remove(v, &s(a, "id")?),
         "printers.resetCertificate" => printers::reset_certificate(v, &s(a, "id")?),

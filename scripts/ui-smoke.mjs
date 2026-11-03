@@ -1056,6 +1056,10 @@ const fakePrinter = await new Promise((resolve) => {
 });
 const started = Math.floor(Date.now() / 1000) - 5400;
 const job = (o) => ({ command: 'push_status', gcode_file: '/data/Metadata/plate_1.gcode', nozzle_temper: 220.1, bed_temper: 60, print_error: 0, ...o });
+const ams = (r0, r1, now) => ({ ams: { tray_now: now, ams: [{ id: '0', tray: [
+  { id: '0', tray_type: 'PLA', tray_sub_brands: 'PLA Basic', tray_color: 'FF6A13FF', remain: r0, tray_weight: '1000' },
+  { id: '1', tray_type: 'PETG', tray_sub_brands: 'PETG HF', tray_color: '1F1F1FFF', remain: r1, tray_weight: '1000' },
+  { id: '2', tray_type: '', tray_color: '00000000' }] }] }, vt_tray: { id: '254', tray_type: 'TPU', tray_color: '2850E0FF', remain: -1 } });
 
 await step('Printers: add a printer, live status, prints logged to the matching project', async () => {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -1073,7 +1077,10 @@ await step('Printers: add a printer, live status, prints logged to the matching 
   if (shots) await page.screenshot({ path: join(shots, 'x-printer-settings.png') });
 
   // a print starts: the dashboard shows its progress
-  fakePrinter.report(job({ gcode_state: 'RUNNING', subtask_name: 'Desk Cat', mc_percent: 45, mc_remaining_time: 72, layer_num: 90, total_layer_num: 200, gcode_start_time: String(started) }));
+  // seen from the start (1%), so filament use can be measured from the spool levels
+  fakePrinter.report(job({ gcode_state: 'RUNNING', subtask_name: 'Desk Cat', mc_percent: 1, mc_remaining_time: 130, layer_num: 1, total_layer_num: 200, gcode_start_time: String(started), ...ams(80, 50, '0') }));
+  await page.waitForTimeout(1500);
+  fakePrinter.report({ mc_percent: 45, mc_remaining_time: 72, layer_num: 90 });
   await page.getByRole('button', { name: 'Dashboard' }).click();
   const btn = page.getByRole('button', { name: 'Printers' });
   await btn.getByText(/45%/).waitFor({ timeout: 15000 });
@@ -1081,12 +1088,19 @@ await step('Printers: add a printer, live status, prints logged to the matching 
   const drawer = page.locator('.drawer');
   await drawer.getByText('Printing Desk Cat · 45% · 1h 12m left').waitFor();
   await drawer.getByText('Layer 90 of 200').waitFor();
+  // loaded filament: three spools (empty slot skipped), the feeding one marked
+  const live = drawer.locator('.pcard-live .spool');
+  await live.filter({ hasText: 'PLA Basic' }).waitFor();
+  if ((await live.count()) !== 3) throw new Error('spools: ' + (await live.allTextContents()).join(' | '));
+  if (!(await live.filter({ hasText: 'PLA Basic' }).getAttribute('class')).includes('active')) throw new Error('active spool not marked');
+  await live.filter({ hasText: 'PLA Basic' }).getByText('80%').waitFor();
   if (shots) await page.screenshot({ path: join(shots, 'x-printer-drawer.png') });
 
   // it finishes: logged to the Desk Cat project (its model file has the same name)
-  fakePrinter.report({ gcode_state: 'FINISH', mc_percent: 100, mc_remaining_time: 0 });
+  fakePrinter.report({ gcode_state: 'FINISH', mc_percent: 100, mc_remaining_time: 0, ...ams(74, 50, '255') });
   const done = drawer.locator('.print-row').filter({ hasText: 'Desk Cat' });
-  await done.getByText(/Printed · 1h 3\dm/).waitFor({ timeout: 15000 });
+  await done.getByText(/Printed · 1h 3\dm · 60 g/).waitFor({ timeout: 15000 });
+  await done.locator('.spool').filter({ hasText: 'PLA Basic' }).getByText('60 g').waitFor();
   await done.getByRole('link', { name: 'Desk Cat' }).waitFor();
 
   // a print with no matching file fails: unassigned, badge on the button, then assigned
@@ -1107,7 +1121,8 @@ await step('Printers: add a printer, live status, prints logged to the matching 
   // both are in the project's print history and timeline
   await page.locator('.pcard').filter({ hasText: 'Desk Cat' }).click();
   await page.getByText('2 succeeded').or(page.getByText('1 succeeded, 1 failed')).first().waitFor();
-  await page.getByText('Desk Cat on X2D').first().waitFor();
+  await page.getByText('Desk Cat on X2D · PLA Basic').first().waitFor();
+  await page.locator('[data-panel=details] .spool').filter({ hasText: 'PLA Basic' }).first().waitFor();
   await page.getByText('Benchy on X2D (error 0300-4000)').first().waitFor();
   await page.getByRole('tab', { name: /Timeline/ }).click();
   await page.getByText('Printed Desk Cat').first().waitFor();

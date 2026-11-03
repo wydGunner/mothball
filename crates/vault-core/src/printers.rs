@@ -258,6 +258,86 @@ fn error_code(r: &Json) -> Option<String> {
     (n != 0).then(|| format!("{:04X}-{:04X}", (n >> 16) & 0xFFFF, n & 0xFFFF))
 }
 
+/// "FFFFFFFF" / "#ffffff" → "#FFFFFF" (alpha dropped); None if not a colour.
+fn hex_color(s: &str) -> Option<String> {
+    let h = s.trim().trim_start_matches('#');
+    (h.len() >= 6 && h[..6].chars().all(|c| c.is_ascii_hexdigit())).then(|| format!("#{}", h[..6].to_uppercase()))
+}
+
+fn int_of(j: &Json, k: &str) -> Option<i64> {
+    match j.get(k)? {
+        Json::Num(n) => Some(*n as i64),
+        Json::Str(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+/// Spools the printer reports: AMS slots (ams.ams[].tray[]) and external
+/// spools (vt_tray, or vir_slot on dual-nozzle printers). Each has a stable
+/// key ("a0.2", "ext0"), type, brand, colour, remaining % (Bambu RFID spools
+/// only) and whether it's feeding now.
+pub fn spools(r: &Json) -> Vec<Json> {
+    let mut active: Vec<String> = Vec::new();
+    let ams = r.get("ams");
+    // single-nozzle printers: ams.tray_now = unit*4 + slot (254 external, 255 none)
+    if let Some(n) = ams.and_then(|a| int_of(a, "tray_now")) {
+        match n {
+            0..=127 => active.push(format!("a{}.{}", n / 4, n % 4)),
+            254 => active.push("ext0".into()),
+            _ => {}
+        }
+    }
+    // dual-nozzle printers (H2D, X2D): device.extruder.info[].snow = (ams id << 8) | slot
+    if let Some(list) = r.get("device").and_then(|d| d.get("extruder")).and_then(|e| e.get("info")).and_then(|i| i.as_arr()) {
+        for e in list {
+            if let Some(snow) = int_of(e, "snow") {
+                let (unit, slot) = (snow >> 8, snow & 0xFF);
+                if unit == 255 && slot != 255 {
+                    active.push(format!("ext{}", slot.min(1)));
+                } else if unit < 255 && slot < 255 {
+                    active.push(format!("a{unit}.{slot}"));
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut push = |key: String, label: String, t: &Json| {
+        let ty = t.str_of("tray_type").unwrap_or_default();
+        if ty.trim().is_empty() {
+            return; // empty slot
+        }
+        let remain = int_of(t, "remain").filter(|n| (0..=100).contains(n));
+        out.push(
+            Json::obj()
+                .with("key", key.as_str())
+                .with("slot", label)
+                .with("type", ty.trim())
+                .with("brand", t.str_of("tray_sub_brands").map(|b| b.trim().to_string()).filter(|b| !b.is_empty()))
+                .with("color", t.str_of("tray_color").and_then(|c| hex_color(&c)))
+                .with("remain", remain)
+                .with("weight", int_of(t, "tray_weight").filter(|w| *w > 0))
+                .with("active", active.contains(&key)),
+        );
+    };
+    for unit in ams.and_then(|a| a.get("ams")).and_then(|a| a.as_arr()).cloned().unwrap_or_default() {
+        let uid = int_of(&unit, "id").unwrap_or(0);
+        // AMS HT units report ids from 128
+        let name = if uid >= 128 { format!("AMS HT {}", uid - 127) } else { format!("AMS {}", uid + 1) };
+        for t in unit.get("tray").and_then(|t| t.as_arr()).cloned().unwrap_or_default() {
+            let sid = int_of(&t, "id").unwrap_or(0);
+            push(format!("a{uid}.{sid}"), if uid >= 128 { name.clone() } else { format!("{name} · slot {}", sid + 1) }, &t);
+        }
+    }
+    if let Some(slots) = r.get("vir_slot").and_then(|v| v.as_arr()) {
+        for (i, t) in slots.iter().enumerate() {
+            push(format!("ext{i}"), if slots.len() > 1 { format!("External spool {}", i + 1) } else { "External spool".into() }, t);
+        }
+    } else if let Some(t) = r.get("vt_tray") {
+        push("ext0".into(), "External spool".into(), t);
+    }
+    out
+}
+
 fn status_json(p: &Printer, l: Option<&Live>) -> Json {
     let mut j = Json::obj()
         .with("id", p.id.as_str())
@@ -283,8 +363,16 @@ fn status_json(p: &Printer, l: Option<&Live>) -> Json {
         j.set("bed", num(r, "bed_temper").map(|n| n.round() as i64));
         j.set("error", error_code(r));
         j.set("hms", r.get("hms").and_then(|h| h.as_arr()).map(|a| a.len()).unwrap_or(0));
+        j.set("spools", Json::Arr(spools(r)));
     }
     j
+}
+
+/// The printer's last full report, for troubleshooting (no access code in it).
+pub fn raw(v: &Vault, id: &str) -> DbResult<Json> {
+    configs(v)?.iter().find(|p| p.id == id).ok_or("Printer not found")?;
+    let m = live().lock().unwrap_or_else(|e| e.into_inner());
+    Ok(m.get(id).map(|l| l.report.clone()).unwrap_or(Json::obj()))
 }
 
 pub fn list(v: &Vault) -> DbResult<Json> {
@@ -430,12 +518,58 @@ pub struct Finished {
     pub ended_at: i64,
     /// True when the job was never seen running (the app was closed).
     pub late: bool,
+    /// Spools used: type, brand, colour, and grams where the spool's level is known.
+    pub filaments: Vec<Json>,
 }
 
 #[derive(Default)]
 pub struct Tracker {
     running: Option<(String, String, String, Option<i64>)>, // key, name, file, start
     last_final: Option<String>,
+    /// spool levels when the job started, and every spool seen feeding during it
+    start_spools: Vec<Json>,
+    used: std::collections::BTreeMap<String, Json>,
+    /// first seen already well under way (app opened mid-print): the starting
+    /// spool levels are unknown, so measured grams would undercount
+    joined_late: bool,
+}
+
+impl Tracker {
+    fn note_spools(&mut self, r: &Json) {
+        for sp in spools(r) {
+            if sp.get("active").and_then(|a| a.as_bool()) == Some(true) {
+                self.used.insert(sp.str_of("key").unwrap_or_default(), sp);
+            }
+        }
+    }
+
+    /// What this job used: spools seen feeding, plus spools whose level dropped.
+    fn usage(&mut self, r: &Json) -> Vec<Json> {
+        let now = spools(r);
+        let mut out = Vec::new();
+        let mut keys: Vec<String> = self.used.keys().cloned().collect();
+        for sp in &self.start_spools {
+            let k = sp.str_of("key").unwrap_or_default();
+            let before = sp.get("remain").and_then(|x| x.as_i64());
+            let after = now.iter().find(|n| n.str_of("key").as_deref() == Some(k.as_str())).and_then(|n| n.get("remain")).and_then(|x| x.as_i64());
+            if matches!((before, after), (Some(b), Some(a)) if a < b) && !keys.contains(&k) {
+                keys.push(k);
+            }
+        }
+        for k in keys {
+            let start = self.start_spools.iter().find(|x| x.str_of("key").as_deref() == Some(k.as_str()));
+            let end = now.iter().find(|x| x.str_of("key").as_deref() == Some(k.as_str()));
+            let Some(info) = end.or(start).or_else(|| self.used.get(&k)) else { continue };
+            let grams = if self.joined_late { None } else { match (start.and_then(|s| s.get("remain")).and_then(|x| x.as_i64()), end.and_then(|e| e.get("remain")).and_then(|x| x.as_i64()), info.get("weight").and_then(|w| w.as_i64())) {
+                (Some(b), Some(a), Some(w)) if b > a => Some(((b - a) as f64 * w as f64 / 100.0).round() as i64),
+                _ => None,
+            } };
+            out.push(Json::obj().with("type", info.str_of("type")).with("brand", info.str_of("brand")).with("color", info.str_of("color")).with("slot", info.str_of("slot")).with("grams", grams));
+        }
+        self.used.clear();
+        self.start_spools.clear();
+        out
+    }
 }
 
 fn start_ms(r: &Json) -> Option<i64> {
@@ -462,7 +596,11 @@ impl Tracker {
                 let key = job_key(r, &name);
                 if self.running.as_ref().map(|x| &x.0) != Some(&key) {
                     self.running = Some((key, name, file, start_ms(r)));
+                    self.start_spools = spools(r);
+                    self.used.clear();
+                    self.joined_late = num(r, "mc_percent").unwrap_or(0.0) > 2.0;
                 }
+                self.note_spools(r);
                 None
             }
             "FINISH" | "FAILED" => {
@@ -476,6 +614,7 @@ impl Tracker {
                 }
                 self.last_final = Some(key.clone());
                 let ok = stage == "FINISH" && error_code(r).is_none();
+                let filaments = if late { Vec::new() } else { self.usage(r) };
                 Some(Finished {
                     key,
                     name,
@@ -485,13 +624,15 @@ impl Tracker {
                     started_at: start,
                     ended_at: now,
                     late,
+                    filaments,
                 })
             }
             "IDLE" => {
                 // went idle without finishing: stopped from the printer
                 let (key, name, file, start) = self.running.take()?;
                 self.last_final = Some(key.clone());
-                Some(Finished { key, name, file, result: "stopped".into(), error: error_code(r), started_at: start, ended_at: now, late: false })
+                let filaments = self.usage(r);
+                Some(Finished { key, name, file, result: "stopped".into(), error: error_code(r), started_at: start, ended_at: now, late: false, filaments })
             }
             _ => None,
         }
@@ -593,6 +734,17 @@ fn log_to_project(v: &Vault, pid: &str, h: &Json) -> DbResult<()> {
     let mins = h.get("minutes").and_then(|m| m.as_i64());
     let ended = h.get("endedAt").and_then(|x| x.as_i64()).unwrap_or_else(now_ms);
     let mut notes = format!("{name} on {printer}");
+    let fils = h.get("filaments").and_then(|x| x.as_arr()).cloned().unwrap_or_default();
+    let fils = if fils.is_empty() { h.get("estimatedFilaments").and_then(|x| x.as_arr()).cloned().unwrap_or_default() } else { fils };
+    let fil_text: Vec<String> = fils.iter().map(|x| x.str_of("brand").or_else(|| x.str_of("type")).unwrap_or_default()).filter(|t| !t.is_empty()).collect();
+    if !fil_text.is_empty() {
+        let mut uniq = fil_text.clone();
+        uniq.dedup();
+        notes.push_str(&format!(" · {}", uniq.join(", ")));
+    }
+    let grams = h.get("grams").and_then(|g| g.as_i64()).map(|g| g.to_string())
+        .or_else(|| h.get("estimatedGrams").and_then(|g| g.as_f64()).map(|g| format!("~{}", g.round() as i64)))
+        .unwrap_or_default();
     match (result.as_str(), h.str_of("error")) {
         ("stopped", _) => notes.push_str(" (stopped before finishing)"),
         (_, Some(e)) => notes.push_str(&format!(" (error {e})")),
@@ -604,7 +756,8 @@ fn log_to_project(v: &Vault, pid: &str, h: &Json) -> DbResult<()> {
             .with("at", ended)
             .with("result", if result == "success" { "success" } else { "failure" })
             .with("notes", notes)
-            .with("grams", "")
+            .with("grams", grams)
+            .with("filaments", Json::Arr(fils.clone()))
             .with("time", mins.map(fmt_minutes).unwrap_or_default())
             .with("source", "printer")
             .with("key", key),
@@ -619,6 +772,33 @@ fn log_to_project(v: &Vault, pid: &str, h: &Json) -> DbResult<()> {
     let detail = format!("{printer}{}", mins.map(|m| format!(" · {}", fmt_minutes(m))).unwrap_or_default());
     timeline::add(v, pid, "print", &summary, &detail, None, false)?;
     Ok(())
+}
+
+/// The slicer's filament estimate for this job, from the project's sliced
+/// .3mf with the job's name (plate from the printer's gcode file name).
+fn sliced_estimate(v: &Vault, pid: &str, f: &Finished) -> Option<(f64, Vec<Json>)> {
+    let n = norm(&f.name);
+    let rows = v.db.query("SELECT f.rel_path, f.name, p.root_path FROM files f JOIN projects p ON p.id=f.project_id WHERE f.project_id=? AND f.ext='3mf' AND f.state='present'", p![pid]).ok()?;
+    let row = rows.into_iter().find(|r| {
+        let l = r.s("name").to_lowercase();
+        norm(l.strip_suffix(".gcode.3mf").or_else(|| l.strip_suffix(".3mf")).unwrap_or(&l)) == n
+    })?;
+    let path = crate::util::safe_join(std::path::Path::new(&row.s("root_path")), &row.s("rel_path")).ok()?;
+    let info = crate::models::threemf_info(&path).ok()?;
+    let plates = info.get("plates")?.as_arr()?.clone();
+    // "/data/Metadata/plate_2.gcode" → 2
+    let want = f.file.rsplit(['/', '\\']).next().and_then(|x| x.strip_prefix("plate_")).and_then(|x| x.split('.').next()).and_then(|x| x.parse::<i64>().ok());
+    let plate = match want {
+        Some(i) => plates.iter().find(|p| p.get("index").and_then(|x| x.as_i64()) == Some(i)).cloned(),
+        None if plates.len() == 1 => plates.first().cloned(),
+        None => None,
+    }?;
+    let fils: Vec<Json> = plate.get("filaments").and_then(|x| x.as_arr()).cloned().unwrap_or_default().into_iter()
+        .filter(|x| x.get("usedG").and_then(|g| g.as_f64()).unwrap_or(0.0) > 0.0)
+        .map(|x| Json::obj().with("type", x.str_of("type")).with("color", x.str_of("color").and_then(|c| hex_color(&c))).with("grams", (x.get("usedG").and_then(|g| g.as_f64()).unwrap_or(0.0) * 10.0).round() / 10.0))
+        .collect();
+    let total = plate.get("weightG").and_then(|x| x.as_f64()).filter(|w| *w > 0.0).unwrap_or_else(|| fils.iter().filter_map(|x| x.get("grams").and_then(|g| g.as_f64())).sum());
+    (total > 0.0).then_some(((total * 10.0).round() / 10.0, fils))
 }
 
 /// Stores a finished job once. Returns false when it was already recorded or
@@ -637,6 +817,8 @@ pub fn record(v: &Vault, printer: &Printer, f: &Finished) -> DbResult<bool> {
     }
     let pid = match_project(v, &f.name)?;
     let minutes = f.started_at.filter(|_| !f.late).map(|s| ((f.ended_at - s) / 60_000).max(0));
+    let measured: i64 = f.filaments.iter().filter_map(|x| x.get("grams").and_then(|g| g.as_i64())).sum();
+    let estimate = pid.as_deref().and_then(|p| sliced_estimate(v, p, f));
     let h = Json::obj()
         .with("key", f.key.as_str())
         .with("printerId", printer.id.as_str())
@@ -648,6 +830,10 @@ pub fn record(v: &Vault, printer: &Printer, f: &Finished) -> DbResult<bool> {
         .with("startedAt", f.started_at)
         .with("endedAt", f.ended_at)
         .with("minutes", minutes)
+        .with("filaments", Json::Arr(f.filaments.clone()))
+        .with("grams", (measured > 0).then_some(measured))
+        .with("estimatedGrams", estimate.as_ref().map(|e| e.0))
+        .with("estimatedFilaments", estimate.map(|e| Json::Arr(e.1)))
         .with("projectId", pid.clone());
     if let Some(pid) = &pid {
         log_to_project(v, pid, &h)?;
@@ -985,6 +1171,75 @@ mod tests {
         (t, v, pid, locker)
     }
 
+    fn ams_report(stage: &str, remain0: i64, remain1: i64, tray_now: &str) -> Json {
+        Json::parse(&format!(r#"{{"gcode_state":"{stage}","subtask_name":"Dry Pods","gcode_file":"/data/Metadata/plate_2.gcode","gcode_start_time":"1790000000",
+          "ams":{{"tray_now":"{tray_now}","ams":[{{"id":"0","tray":[
+            {{"id":"0","tray_type":"PLA","tray_sub_brands":"PLA Basic","tray_color":"FF6A13FF","remain":{remain0},"tray_weight":"1000"}},
+            {{"id":"1","tray_type":"PETG","tray_sub_brands":"PETG HF","tray_color":"000000FF","remain":{remain1},"tray_weight":"1000"}},
+            {{"id":"2","tray_type":"","tray_color":"00000000"}},
+            {{"id":"3","tray_type":"PLA","tray_color":"FFFFFFFF","remain":-1}}]}}]}},
+          "vt_tray":{{"id":"254","tray_type":"TPU","tray_color":"2850E0FF","remain":-1}}}}"#)).unwrap()
+    }
+
+    #[test]
+    fn reads_loaded_spools_and_what_a_print_used() {
+        let r = ams_report("RUNNING", 80, 50, "0");
+        let sp = spools(&r);
+        assert_eq!(sp.len(), 4, "empty slot skipped: {}", Json::Arr(sp.clone()).to_string());
+        assert_eq!(sp[0].str_of("slot").as_deref(), Some("AMS 1 · slot 1"));
+        assert_eq!(sp[0].str_of("color").as_deref(), Some("#FF6A13"));
+        assert_eq!(sp[0].get("active").and_then(|a| a.as_bool()), Some(true));
+        assert_eq!(sp[2].get("remain"), None, "non-RFID spool: level unknown");
+        assert_eq!(sp[3].str_of("slot").as_deref(), Some("External spool"));
+        // dual-nozzle printers say which slot feeds each nozzle
+        let mut dual = ams_report("RUNNING", 80, 50, "255");
+        dual.set("device", Json::parse(r#"{"extruder":{"info":[{"id":0,"snow":1},{"id":1,"snow":65280}]}}"#).unwrap());
+        let act: Vec<String> = spools(&dual).iter().filter(|x| x.get("active").and_then(|a| a.as_bool()) == Some(true)).filter_map(|x| x.str_of("key")).collect();
+        assert_eq!(act, vec!["a0.1".to_string(), "ext0".to_string()]);
+
+        // a job: starts on slot 1, switches to slot 2; levels drop 80→74 and 50→48
+        let mut t = Tracker::default();
+        assert_eq!(t.update(&ams_report("RUNNING", 80, 50, "0"), 1), None);
+        t.update(&ams_report("RUNNING", 77, 50, "1"), 2);
+        let f = t.update(&ams_report("FINISH", 74, 48, "255"), 3).unwrap();
+        let used: Vec<(String, Option<i64>)> = f.filaments.iter().map(|x| (x.str_of("brand").unwrap_or_default(), x.get("grams").and_then(|g| g.as_i64()))).collect();
+        assert_eq!(used, vec![("PLA Basic".to_string(), Some(60)), ("PETG HF".to_string(), Some(20))]);
+
+        // joined mid-print (app opened at 40%): spools are listed, grams aren't guessed
+        let mut late = Tracker::default();
+        let mut mid = ams_report("RUNNING", 77, 50, "0");
+        mid.set("mc_percent", 40);
+        late.update(&mid, 1);
+        let f = late.update(&ams_report("FINISH", 74, 50, "255"), 2).unwrap();
+        assert_eq!(f.filaments.len(), 1);
+        assert_eq!(f.filaments[0].get("grams"), None);
+    }
+
+    #[test]
+    fn slicer_estimate_comes_from_the_matching_plate() {
+        let (t, v) = crate::testutil::vault();
+        let folder = t.0.join("Dry Pods");
+        let src = t.0.join("3mf-src/Metadata");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(src.join("slice_info.config"), r##"<config><plate><metadata key="index" value="1"/><metadata key="weight" value="5"/><filament id="1" type="PLA" color="#FFFFFF" used_g="5"/></plate><plate><metadata key="index" value="2"/><metadata key="weight" value="83.4"/><filament id="1" type="PLA" color="#FF6A13" used_g="61.2"/><filament id="2" type="PETG" color="#000000" used_g="22.2"/></plate></config>"##).unwrap();
+        crate::zip::zip_dir(&t.0.join("3mf-src"), &folder.join("Dry Pods.3mf")).unwrap();
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "Dry Pods").with("category", "3d-printing").with("linkPath", folder.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        crate::files::scan(&v, &pid).unwrap();
+        save(&v, &Json::obj().with("name", "X2D").with("host", "127.0.0.1:1").with("serial", "S1").with("accessCode", "x")).unwrap();
+        let printer = configs(&v).unwrap().remove(0);
+        // no spool levels known (non-Bambu spools): only the slicer's estimate
+        let f = Finished { key: "Dry Pods|1".into(), name: "Dry Pods".into(), file: "/data/Metadata/plate_2.gcode".into(), result: "success".into(), error: None, started_at: Some(now_ms() - 3_600_000), ended_at: now_ms(), late: false, filaments: vec![] };
+        assert!(record(&v, &printer, &f).unwrap());
+        let h = history_json(&v, 5).unwrap().as_arr().unwrap()[0].clone();
+        assert_eq!(h.get("estimatedGrams").and_then(|g| g.as_f64()), Some(83.4));
+        assert_eq!(h.get("estimatedFilaments").unwrap().as_arr().unwrap().len(), 2);
+        let log = crate::projects::get(&v, &pid).unwrap().get("module").unwrap().get("printLog").unwrap().as_arr().unwrap()[0].clone();
+        assert_eq!(log.str_of("grams").as_deref(), Some("~83"), "estimate marked with ~");
+        assert!(log.str_of("notes").unwrap().contains("PLA, PETG"), "{}", log.to_string());
+        assert_eq!(log.get("filaments").unwrap().as_arr().unwrap()[0].str_of("color").as_deref(), Some("#FF6A13"));
+    }
+
     #[test]
     fn mqtt_codec_round_trips() {
         let big = vec![b'x'; 300];
@@ -1063,7 +1318,7 @@ mod tests {
         // a job whose name matches no file stays unassigned until assigned
         let vg = v.lock().unwrap();
         let printer = configs(&vg).unwrap().remove(0);
-        let f = Finished { key: "Benchy|1".into(), name: "Benchy".into(), file: String::new(), result: "failure".into(), error: Some("0300-4000".into()), started_at: Some(now_ms() - 600_000), ended_at: now_ms(), late: false };
+        let f = Finished { key: "Benchy|1".into(), name: "Benchy".into(), file: String::new(), result: "failure".into(), error: Some("0300-4000".into()), started_at: Some(now_ms() - 600_000), ended_at: now_ms(), late: false, filaments: vec![] };
         assert!(record(&vg, &printer, &f).unwrap());
         assert!(!record(&vg, &printer, &f).unwrap(), "same job again is ignored");
         assert_eq!(history_json(&vg, 10).unwrap().as_arr().unwrap()[0].get("projectId"), None);
