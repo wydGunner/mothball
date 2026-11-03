@@ -1133,6 +1133,12 @@ await step('Dashboard: project groups', async () => {
   await page.waitForTimeout(400);
   const after = await page.locator('.sidebar .navitem .label').allTextContents();
   if (before.join('|') !== after.join('|')) throw new Error('sidebar reordered: ' + before + ' -> ' + after);
+  // a grouped project still shows under Recent, so it's reachable with its group collapsed
+  await page.locator('.sidebar .sectionbtn').filter({ hasText: 'MW2 mods' }).click();
+  const labels = await page.locator('.sidebar .scroll .navitem .label').allTextContents();
+  if (!labels.includes('OMEN v2')) throw new Error('grouped project missing from Recent: ' + labels.join(', '));
+  if (shots) await page.screenshot({ path: join(shots, 'x-sidebar-recent.png') });
+  await page.locator('.sidebar .sectionbtn').filter({ hasText: 'MW2 mods' }).click();
 });
 
 await step('WoW addon: .toc panel and Lua functions', async () => {

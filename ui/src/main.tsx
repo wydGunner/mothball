@@ -144,10 +144,11 @@ function App() {
   }, [refreshProjects]);
 
   const favorites = projects.filter((p) => p.favorite).sort(byName);
-  // Groups list all their projects A→Z (collapsible); Recent covers the rest.
+  // Groups list all their projects A→Z (collapsible).
   const groupNames = [...new Set(projects.filter((p) => !p.favorite && p.group).map((p) => p.group))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-  // The 8 most recently opened projects, listed alphabetically so opening one doesn't reshuffle the list.
-  const recent = [...projects].filter((p) => p.lastOpenedAt && !p.favorite && !p.group).sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0)).slice(0, 8)
+  // The 8 most recently opened projects, grouped ones included (their group may be collapsed),
+  // listed alphabetically so opening one doesn't reshuffle the list. Favorites are always shown above.
+  const recent = [...projects].filter((p) => p.lastOpenedAt && !p.favorite).sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0)).slice(0, 8)
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
   const [sideClosed, setSideClosed] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pv.sideCollapsed') || '[]'); } catch { return []; } });
   const toggleSide = (g: string) => setSideClosed((c) => { const n = c.includes(g) ? c.filter((x) => x !== g) : [...c, g]; try { localStorage.setItem('pv.sideCollapsed', JSON.stringify(n)); } catch { /* ignore */ } return n; });
