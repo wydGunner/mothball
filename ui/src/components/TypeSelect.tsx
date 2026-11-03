@@ -22,6 +22,7 @@ export function TypeSelect({ value, onChange, keep }: { value: string; onChange:
   const [sub, setSub] = useState<string | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number; width: number; maxH: number } | null>(null);
   const [subPos, setSubPos] = useState<{ left: number; top: number } | null>(null);
+  const focusSub = useRef(false);
   const btn = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const flyout = useRef<HTMLDivElement>(null);
@@ -44,11 +45,12 @@ export function TypeSelect({ value, onChange, keep }: { value: string; onChange:
     const r = row.getBoundingClientRect();
     setSub(key);
     setSubPos({ left: r.right + 4, top: r.top - 5 });
-    if (focusFirst) setTimeout(() => moveFocus(flyout.current, 'first'), 0);
+    focusSub.current = focusFirst; // focused as soon as the submenu renders (see below), so a quick Enter lands in it
   };
   useLayoutEffect(() => {
     const f = flyout.current;
     if (!f || !subPos) return;
+    if (focusSub.current) { focusSub.current = false; moveFocus(f, 'first'); }
     const r = f.getBoundingClientRect();
     let { left, top } = subPos;
     if (r.right > window.innerWidth - 8) left = (menu.current?.getBoundingClientRect().left ?? left) - r.width - 4;
@@ -64,11 +66,17 @@ export function TypeSelect({ value, onChange, keep }: { value: string; onChange:
     };
     const scroll = (e: Event) => { if (!menu.current?.contains(e.target as Node) && !flyout.current?.contains(e.target as Node)) close(false); };
     const resize = () => close(false);
+    // while open, Escape belongs to the menu wherever focus is (never closes a dialog behind it)
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || flyout.current?.contains(document.activeElement)) return;
+      e.preventDefault(); e.stopImmediatePropagation(); close();
+    };
+    window.addEventListener('keydown', esc, true);
     window.addEventListener('mousedown', outside);
     window.addEventListener('scroll', scroll, true);
     window.addEventListener('resize', resize);
     setTimeout(() => (menu.current?.querySelector<HTMLButtonElement>('button.tm-item.on') || items(menu.current)[0])?.focus(), 0); // start at the current type
-    return () => { window.removeEventListener('mousedown', outside); window.removeEventListener('scroll', scroll, true); window.removeEventListener('resize', resize); };
+    return () => { window.removeEventListener('keydown', esc, true); window.removeEventListener('mousedown', outside); window.removeEventListener('scroll', scroll, true); window.removeEventListener('resize', resize); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 

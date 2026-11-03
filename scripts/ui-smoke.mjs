@@ -938,7 +938,14 @@ await step('GSC: functions list, go to definition, function search', async () =>
   await page.getByRole('button', { name: 'Edit file' }).click();
   const ed = page.locator('.pv-editor textarea').first();
   await ed.waitFor();
-  await ed.evaluate((ta) => { const i = ta.value.indexOf('::util') + 4; ta.focus(); ta.setSelectionRange(i, i); });
+  const monacoWord = page.locator('.pv-editor .monaco-editor .view-line span').filter({ hasText: /^util$/ });
+  if (await page.locator('.pv-editor .monaco-editor').count()) {
+    // Monaco: put the cursor in the word the way a person would, by clicking it
+    await monacoWord.first().waitFor();
+    await monacoWord.first().click();
+  } else {
+    await ed.evaluate((ta) => { const i = ta.value.indexOf('::util') + 4; ta.focus(); ta.setSelectionRange(i, i); });
+  }
   await page.keyboard.press('F12');
   await page.locator('.editor-pane .panehead b').filter({ hasText: '_util.gsc' }).waitFor();
   // uses of util() are listed from the defining file
