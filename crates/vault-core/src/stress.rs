@@ -113,7 +113,10 @@ impl World {
             let depth = self.rng.below(4);
             let mut parts: Vec<String> = (0..depth).map(|_| self.rng.pick(&["scripts", "mp", "Models", "deep dir", "ünï", "a b", "configs", "x"]).unwrap().to_string()).collect();
             if self.long_paths && self.rng.chance(5) {
-                parts.push("very long folder name ".repeat(12).trim().to_string()); // path well past 260 characters
+                // a path well past 260 characters, from ordinary folder names (each ≤ 255)
+                for i in 0..6 {
+                    parts.push(format!("long folder name number {i} with some more words"));
+                }
             }
             let base = self.rng.pick(NAMES).unwrap().to_string();
             let ext = self.rng.pick(EXTS).unwrap();
