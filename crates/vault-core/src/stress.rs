@@ -697,10 +697,17 @@ pub fn run(o: &Opts) -> R<()> {
 }
 
 /// Child for crash mode: does the same work, forever, until it's killed.
+/// Its own errors are reported but don't stop it: in crash mode the parent's
+/// checks after each kill are what's being tested, and a killed worker's
+/// leftovers (on Windows, a Recycle Bin helper finishing a delete) can change
+/// files under the next one.
 pub fn run_child(dir: &Path, seed: u64) -> R<()> {
     let mut w = setup(dir, seed, false)?;
     loop {
-        w.step()?;
+        if let Err(e) = w.step() {
+            eprintln!("worker: {e} (re-reading the folder)");
+            w = setup(dir, w.rng.next(), false)?;
+        }
     }
 }
 
@@ -723,6 +730,8 @@ pub fn crash(o: &Opts, exe: &Path) -> R<()> {
         }
         child.kill().map_err(|e| e.to_string())?;
         let _ = child.wait();
+        // helpers the worker started (on Windows, the Recycle Bin's PowerShell) outlive it briefly
+        std::thread::sleep(Duration::from_millis(if cfg!(windows) { 3000 } else { 200 }));
         // the vault must open, pass integrity checks, and every listed version must be intact
         let v = Vault::open(&dir.join("data")).map_err(|e| format!("kill {k}: the vault didn't open after the kill: {e}"))?;
         let chk = v.db.one("PRAGMA integrity_check", crate::p![]).map_err(|e| e.to_string())?.map(|r| r.vals[0].as_str().unwrap_or("").to_string()).unwrap_or_default();

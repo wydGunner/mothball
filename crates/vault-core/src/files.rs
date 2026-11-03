@@ -732,7 +732,8 @@ pub fn events(v: &Vault, file_id: &str, limit: i64) -> DbResult<Json> {
         let mut j = Json::obj().with("kind", r.s("kind")).with("detail", r.s("detail")).with("sha256", sha.clone()).with("at", r.i("at"));
         if r.s("kind") == "modified" {
             // before this change: the last content seen, or the last version stored before it
-            let before = last.clone().or_else(|| versions.iter().filter(|x| x.i("created_at") < r.i("at")).last().map(|x| x.s("sha256")));
+            // (a stored copy can share the change's millisecond; the new content itself is not "before")
+            let before = last.clone().or_else(|| versions.iter().filter(|x| x.i("created_at") <= r.i("at") && x.os("sha256") != sha).last().map(|x| x.s("sha256")));
             if let (Some(b), Some(a)) = (before, sha.clone()) {
                 if b != a {
                     j.set("from", b);
