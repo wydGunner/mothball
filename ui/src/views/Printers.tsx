@@ -176,7 +176,7 @@ export function PrinterSettings() {
             <div><b>{p.name}</b> <span className="small dim mono">{p.host} · {p.serial}</span></div>
             <div className={cx('small', p.state === 'error' ? 'bad-text' : 'muted')}>{printerLine(p)}</div>
           </div>
-          {p.certPinned && <button className="btn ghost sm" title="Use this if the printer's firmware was updated and it now presents a new certificate" onClick={async () => {
+          {p.certPinned && p.state === 'error' && /different security certificate/.test(p.message || '') && <button className="btn ghost sm" title="Use this if the printer's firmware was updated and it now presents a new certificate" onClick={async () => {
             if (await confirm({ title: 'Trust a new certificate?', body: 'The next certificate the printer presents will be remembered. Only do this if the printer\'s firmware was just updated or it was reset.', confirm: 'Trust new certificate' })) await act(() => call('printers.resetCertificate', { id: p.id }));
           }}><LuShieldCheck /> Trust new certificate</button>}
           <button className="btn ghost sm icon" title="Edit" aria-label={`Edit ${p.name}`} onClick={() => setForm({ id: p.id, name: p.name, host: p.host, serial: p.serial, accessCode: '' })}><LuPencil /></button>
