@@ -99,3 +99,26 @@ export function withType(module: Record<string, any> | undefined, key: string): 
   if (subtype) m.subtype = subtype; else delete m.subtype;
   return m;
 }
+
+export interface TypeMenuItem { key: string; label: string; children?: [string, string][] }
+/** The picker's menu: one row per built-in type; types with subtypes (or your
+ *  own types based on them) open a submenu. `keep` stays offered even if hidden. */
+export function typeMenu(keep?: string): TypeMenuItem[] {
+  const hidden = new Set(hiddenTypes());
+  const ok = (k: string) => !hidden.has(k) || k === keep;
+  const out: TypeMenuItem[] = [];
+  for (const [cat, label] of Object.entries(CATEGORY_LABELS)) {
+    const builtIn = SUBTYPES[cat] || [];
+    const kids: [string, string][] = [
+      ...builtIn.map((s) => [`${cat}:${s.id}`, s.label] as [string, string]),
+      ...customTypes.filter((t) => t.base === cat).map((t) => [`${cat}:custom:${t.id}`, t.name] as [string, string]),
+    ].filter(([k]) => ok(k) && (ok(cat) || k === keep));
+    if (!ok(cat) && !kids.length) continue;
+    if (!kids.length) { out.push({ key: cat, label }); continue; }
+    // a type with built-in subtypes is chosen through them; otherwise the plain type comes first
+    if (!builtIn.length && ok(cat)) kids.unshift([cat, label]);
+    else if (keep === cat) kids.unshift([cat, `${label} (not specified)`]);
+    out.push({ key: cat, label, children: kids });
+  }
+  return out;
+}

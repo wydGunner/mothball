@@ -777,3 +777,13 @@ input[type=checkbox] { accent-color: var(--accent); }
 .typegroup { display: flex; flex-direction: column; gap: 4px; break-inside: avoid; margin-bottom: 6px; }
 .typegrid:has(.typegroup) { display: block; columns: 2 260px; column-gap: 6px; }
 .typeopt.sub { margin-left: 22px; padding: 4px 10px; font-size: 13px; }
+/* project type picker (menu with submenus) */
+.typesel { display: flex; align-items: center; gap: 8px; text-align: left; cursor: pointer; }
+.typesel.open { border-color: var(--accent-line); }
+.tmenu { position: fixed; z-index: 90; background: var(--bg2); border: 1px solid var(--line2); border-radius: 10px; padding: 4px; box-shadow: 0 16px 40px #000c; overflow-y: auto; }
+.tm-sub { min-width: 220px; max-height: 70vh; }
+.tm-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 10px; border: 0; background: none; border-radius: 6px; text-align: left; cursor: pointer; color: var(--fg1); font: inherit; font-size: 13.5px; }
+.tm-item:hover, .tm-item:focus-visible, .tm-item.sub-open { background: var(--bg4); color: var(--fg0); outline: none; }
+.tm-item.on { color: var(--fg0); }
+.tm-item.on > span { font-weight: 500; }
+.tm-check { color: var(--accent); flex: none; }

@@ -810,10 +810,27 @@ await step('New project as a copy; attach a dependency, put it in place, put the
   await ed.getByText('Who needs it').waitFor();
   if (await ed.getByText('Saved variables').count()) throw new Error('WoW field shown for an IW4X mod');
   await ed.getByRole('button', { name: 'General' }).click();
-  const sel = ed.getByRole('combobox', { name: 'Project type' });
-  const groups = await sel.locator('optgroup').evaluateAll((g) => g.map((x) => x.label + ': ' + [...x.querySelectorAll('option')].map((o) => o.textContent).join(', ')));
-  if (!groups.some((g) => g.startsWith('Game addon / mod: World of Warcraft addon, IW4X / MW2 mod, Other game mod'))) throw new Error('subtypes not grouped: ' + JSON.stringify(groups));
-  await sel.selectOption({ label: 'World of Warcraft addon' });
+  // the type picker: a menu; Game addon / mod opens a submenu with its subtypes
+  await ed.getByRole('button', { name: 'Project type: IW4X / MW2 mod' }).click();
+  const tmenu = page.getByRole('menu', { name: 'Project type' });
+  await tmenu.getByRole('menuitem', { name: 'Game addon / mod' }).hover();
+  const flyout = page.getByRole('menu', { name: 'Game addon / mod' });
+  const subs = await flyout.getByRole('menuitemradio').allTextContents();
+  if (subs.join(', ') !== 'World of Warcraft addon, IW4X / MW2 mod, Other game mod') throw new Error('subtypes: ' + JSON.stringify(subs));
+  if ((await flyout.getByRole('menuitemradio', { name: 'IW4X / MW2 mod' }).getAttribute('aria-checked')) !== 'true') throw new Error('current subtype not marked');
+  if (shots) await page.screenshot({ path: join(shots, 'x-type-menu.png') });
+  // Escape closes only the menu, not the dialog
+  await page.keyboard.press('Escape');
+  await tmenu.waitFor({ state: 'detached' });
+  await ed.getByRole('button', { name: 'Project type: IW4X / MW2 mod' }).waitFor();
+  // keyboard: open, down to the addon row, right into the submenu, pick WoW
+  await ed.getByRole('button', { name: 'Project type: IW4X / MW2 mod' }).focus();
+  await page.keyboard.press('ArrowDown');
+  await tmenu.waitFor();
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-parent') === 'addon');
+  await page.keyboard.press('ArrowRight');
+  await flyout.waitFor();
+  await page.keyboard.press('Enter');
   await ed.getByRole('button', { name: /WoW addon details/ }).click();
   await ed.getByText('Saved variables').waitFor();
   if (await ed.getByText('IW4X client build').count()) throw new Error('IW4X field shown for a WoW addon');
@@ -837,7 +854,9 @@ await step('New project as a copy; attach a dependency, put it in place, put the
   await page.locator('.pcard').filter({ hasText: 'OMEN old' }).click();
   await page.locator('[data-panel=details]').getByRole('button', { name: 'Edit' }).click();
   await ed.getByRole('button', { name: 'General' }).click();
-  await sel.selectOption({ label: 'Plutonium T6 mod' });
+  await ed.getByRole('button', { name: /^Project type:/ }).click();
+  await page.getByRole('menu', { name: 'Project type' }).getByRole('menuitem', { name: 'Game addon / mod' }).click();
+  await page.getByRole('menu', { name: 'Game addon / mod' }).getByRole('menuitemradio', { name: 'Plutonium T6 mod' }).click();
   await ed.getByRole('button', { name: /Plutonium T6 mod details/ }).click();
   await ed.getByText('Server name').waitFor();
   await ed.locator('.field').filter({ hasText: 'Server name' }).locator('input').fill('Trickshot Lobby #1');
@@ -1274,8 +1293,12 @@ await step('Settings: hide project types from the pickers', async () => {
   if (await video.locator('input').isChecked()) throw new Error('unused type still on');
   if (shots) await page.screenshot({ path: join(shots, 'x-project-types.png') });
   await page.getByRole('button', { name: 'New project' }).first().click();
-  const opts = await page.locator('.modal select').first().locator('option').allTextContents();
+  await page.locator('.modal').getByRole('button', { name: /^Project type:/ }).click();
+  const tm = page.getByRole('menu', { name: 'Project type' });
+  const opts = [...(await tm.getByRole('menuitemradio').allTextContents()), ...(await tm.getByRole('menuitem').allTextContents())];
   if (opts.includes('Video editing') || !opts.includes('Software')) throw new Error('picker not filtered: ' + opts.join(', '));
+  if (shots) await page.screenshot({ path: join(shots, 'x-type-menu-filtered.png') });
+  await page.keyboard.press('Escape');
   await page.locator('.modal').getByRole('button', { name: 'Cancel' }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Show all' }).click();
