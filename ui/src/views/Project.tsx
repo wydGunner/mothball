@@ -13,7 +13,7 @@ import { NotesTab } from './Notes';
 import { TasksTab } from './Tasks';
 import { TimelineTab } from './Timeline';
 import { GitTab } from './Git';
-import { HistoryTab } from './History';
+import { HistoryTab, CheckpointButton } from './History';
 import { ImportDialog } from './Import';
 
 export type Tab = 'overview' | 'files' | 'notes' | 'tasks' | 'timeline' | 'backups' | 'git';
@@ -170,6 +170,7 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus, act
         <span className="small dim">{project.lastScanAt ? `Checked ${ago(project.lastScanAt)}` : ''}</span>
         <TimerChip projectId={project.id} tick={timerTick} />
         <DeployButtons project={project} />
+        {project.rootAvailable && <CheckpointButton projectId={project.id} rootPath={project.rootPath} scanTick={scanTick} onRestored={() => scan(true)} />}
         <button className="btn" onClick={() => scan(false)} disabled={scanning} title="Re-scan for external changes (F5)"><LuRefreshCw className={scanning ? 'spin' : ''} /> {scanning ? 'Scanning…' : 'Rescan'}</button>
         {isTauri && <button className="btn icon" title="Open folder in Explorer" onClick={() => act(() => revealPath(project.rootPath))}><LuFolderOpen /></button>}
       </div>

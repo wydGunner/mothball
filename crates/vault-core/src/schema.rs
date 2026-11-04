@@ -333,6 +333,13 @@ UPDATE files SET kind='config' WHERE kind='other' AND ext IN ('menu','inc','str'
 -- checked (by hash), so a binary file isn't re-read on every scan.
 CREATE TABLE text_sniff (sha256 TEXT PRIMARY KEY, is_text INTEGER NOT NULL);
 "#,
+), (
+    9,
+    r#"
+-- Temporary snapshots: a restore point for edits you're unsure of that
+-- deletes itself at this time (NULL = kept until you delete it).
+ALTER TABLE snapshots ADD COLUMN expires_at INTEGER;
+"#,
 )];
 
 pub fn current_version(db: &Db) -> DbResult<i64> {

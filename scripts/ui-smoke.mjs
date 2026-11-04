@@ -517,6 +517,72 @@ await step('Project snapshots: create, preview, restore', async () => {
   await page.locator('[data-testid=snapshot-row]').filter({ hasText: 'Before restoring' }).waitFor();
 });
 
+await step('Temporary snapshots: quick checkpoint, keep, extend, and one that deletes itself', async () => {
+  // quick checkpoint: one click, deletes itself in a day
+  await page.getByRole('button', { name: 'Quick checkpoint' }).click();
+  const cp = page.locator('[data-testid=snapshot-row]').filter({ hasText: 'Checkpoint' }).first();
+  await cp.locator('.badge.temp').filter({ hasText: /deletes itself in (24 h|1 days?)/ }).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-checkpoint.png') });
+  await cp.getByRole('button', { name: '+1 day' }).click();
+  await cp.locator('.badge.temp').filter({ hasText: 'deletes itself in 2 days' }).waitFor();
+  await cp.getByRole('button', { name: 'Keep' }).click();
+  await cp.locator('.badge.temp').waitFor({ state: 'detached' });
+  // the dialog's "Keep it" choice
+  await page.getByRole('button', { name: 'Create snapshot…' }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Create a project snapshot' });
+  await m.getByPlaceholder('e.g. Working before animation rewrite').fill('Trying the new menu');
+  await m.getByRole('radio', { name: 'Custom' }).click();
+  await m.getByLabel('How long').fill('6');
+  await m.getByLabel('Unit').selectOption('hours');
+  await m.getByText(/Deletes itself .* unless you press Keep/).waitFor();
+  await m.getByRole('button', { name: 'Create snapshot' }).click();
+  await page.locator('[data-testid=snapshot-row]').filter({ hasText: 'Trying the new menu' }).locator('.badge.temp').filter({ hasText: 'in 6 h' }).waitFor();
+  // and one whose time is up: the background pass deletes it, the list updates
+  const pid = (await api('projects.list', {})).data.find((x) => x.name.startsWith('OMEN')).id;
+  await api('snapshots.create', { projectId: pid, name: 'Short lived', expiresAt: Date.now() + 1500 });
+  await page.getByRole('tab', { name: /Overview/ }).click();
+  await page.getByRole('tab', { name: /Backups/ }).click();
+  await page.locator('[data-testid=snapshot-row]').filter({ hasText: 'Short lived' }).waitFor();
+  const t0 = Date.now();
+  while ((await api('snapshots.list', { projectId: pid })).data.some((x) => x.name === 'Short lived')) {
+    if (Date.now() - t0 > 30000) throw new Error('expired snapshot was not deleted');
+    await page.waitForTimeout(500);
+  }
+  await page.locator('[data-testid=snapshot-row]').filter({ hasText: 'Short lived' }).waitFor({ state: 'detached', timeout: 40000 });
+});
+
+await step('Header checkpoint: snapshot the whole project, make a bad edit, go back, then delete it', async () => {
+  // start with no temporary snapshot active (the step before left a 6-hour one)
+  const opid = (await api('projects.list', {})).data.find((x) => x.name.startsWith('OMEN')).id;
+  for (const sn of (await api('snapshots.list', { projectId: opid })).data) if (sn.expiresAt) await api('snapshots.setExpiry', { id: sn.id, expiresAt: null });
+  await page.getByRole('tab', { name: /Overview/ }).click(); // re-load the header's list
+  await page.getByRole('tab', { name: /Backups/ }).click();
+  await page.evaluate(() => window.dispatchEvent(new Event('pv-snapshots')));
+  await page.getByRole('button', { name: 'Checkpoint', exact: true }).click();
+  const on = page.locator('.btn.cp-on');
+  await on.filter({ hasText: /Checkpoint · 24 h left/ }).waitFor();
+  // the Backups list shows it too, without a reload
+  await page.locator('[data-testid=snapshot-row]').filter({ hasText: 'Checkpoint' }).locator('.badge.temp').first().waitFor();
+  const f = join(omen, 'configs/weapons.json');
+  const good = readFileSync(f, 'utf8');
+  writeFileSync(f, '{"broken": true}\n');
+  await on.click();
+  const pop = page.locator('.cp-pop');
+  await pop.getByText(/The whole project, \d+ files/).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-header-checkpoint.png') });
+  await pop.getByRole('button', { name: 'Go back to it…' }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Restore snapshot' });
+  await m.getByRole('button', { name: /Restore \d+ file/ }).click();
+  await page.locator('.modal').filter({ hasText: 'Snapshot restored' }).getByRole('button', { name: 'Done' }).click();
+  if (readFileSync(f, 'utf8') !== good) throw new Error('going back to the checkpoint did not restore the file');
+  // the edits are sorted: delete it from the header
+  await on.click();
+  await pop.getByRole('button', { name: 'Delete' }).click();
+  await page.locator('.modal').getByRole('button', { name: 'Delete', exact: true }).click();
+  await on.waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: 'Checkpoint', exact: true }).waitFor();
+});
+
 await step('Import with preview, then Undo import', async () => {
   const src = join(tmp, 'incoming'); mkdirSync(src, { recursive: true });
   writeFileSync(join(src, 'loot_table.json'), '{"a":1}\n');

@@ -75,6 +75,7 @@ impl Vault {
         let v = Vault { db, data_dir: data_dir.to_path_buf() };
         projects::seed_statuses(&v)?;
         let _ = projects::infer_subtypes(&v);
+        let _ = snapshots::expire_due(&v);
         Ok(v)
     }
 

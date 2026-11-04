@@ -822,3 +822,13 @@ input[type=checkbox] { accent-color: var(--accent); }
 .att-suggest { border-left: 2px solid var(--accent-line); padding-left: 10px; }
 .att-sub { margin-left: 26px; }
 .att-sub .att-row { padding: 4px 0; }
+.badge.temp { display: inline-flex; align-items: center; gap: 4px; color: var(--accent-text); border-color: var(--accent-line); background: var(--accent-bg); }
+.badge.temp svg { width: 11px; height: 11px; }
+
+.cp-wrap { position: relative; }
+.btn.cp-on { border-color: var(--accent-line); color: var(--accent-text); background: var(--accent-bg); }
+.cp-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: 340px; padding: 12px; background: var(--bg2); border: 1px solid var(--line2); border-radius: 8px; box-shadow: 0 10px 30px #000a; }
+.snaprow { flex-wrap: wrap; }
+.snaprow > .grow { flex: 1 1 260px; }
+.badge.temp { white-space: nowrap; }
+.snapacts { gap: 4px; margin-left: auto; flex-wrap: nowrap; }

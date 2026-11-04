@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { LuSearch, LuGitCompareArrows, LuUndo2, LuDownload, LuFileSearch, LuCamera, LuTrash2, LuEye, LuShieldCheck, LuTag } from 'react-icons/lu';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { LuSearch, LuGitCompareArrows, LuUndo2, LuDownload, LuFileSearch, LuCamera, LuTrash2, LuEye, LuShieldCheck, LuTag, LuTimer, LuPin, LuHourglass } from 'react-icons/lu';
 import { call, pickFolder, isTauri, revealPath } from '../ipc';
 import { Modal, useAction, useConfirm, useLoad, useToast } from '../components/common';
 import { ago, bytes, cx, dateTime } from '../format';
@@ -7,7 +7,23 @@ import type { ProjectCtx } from './Project';
 import { CompareDialog, RestoreDialog, REASON, isNamed, type Version } from './Versions';
 
 interface BackupRow extends Version { fileId: string; fileName: string; currentPath: string; fileState: string; projectId: string; projectName: string }
-interface Snapshot { id: string; projectId: string; name: string; description: string; at: number; fileCount: number; bytes: number; skipped: { path: string; reason: string }[] }
+interface Snapshot { id: string; projectId: string; name: string; description: string; at: number; fileCount: number; bytes: number; skipped: { path: string; reason: string }[]; expiresAt?: number | null }
+
+const HOUR = 3_600_000;
+/** Snapshots changed somewhere (header checkpoint, Backups list): tell the others. */
+const SNAP_EVT = 'pv-snapshots';
+const snapsChanged = () => window.dispatchEvent(new Event(SNAP_EVT));
+function useSnapsReload(reload: () => void) {
+  useEffect(() => { window.addEventListener(SNAP_EVT, reload); return () => window.removeEventListener(SNAP_EVT, reload); }, [reload]);
+}
+/** "in 23 h" / "in 12 min" / "in 3 days" */
+const inTime = (t: number) => {
+  const d = t - Date.now();
+  if (d < 60_000) return 'in under a minute';
+  if (d < HOUR) return `in ${Math.round(d / 60_000)} min`;
+  if (d < 36 * HOUR) return `in ${Math.round(d / HOUR)} h`;
+  return `in ${Math.round(d / (24 * HOUR))} days`;
+};
 
 const DAY = 86_400_000;
 const toInput = (ms?: number) => (ms ? new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString().slice(0, 10) : '');
@@ -100,30 +116,48 @@ function BackupBrowser({ ctx }: { ctx: ProjectCtx }) {
 function Snapshots({ ctx }: { ctx: ProjectCtx }) {
   const pid = ctx.project.id;
   const list = useLoad(() => call<Snapshot[]>('snapshots.list', { projectId: pid }), [pid, ctx.scanTick]);
+  useSnapsReload(list.reload);
   const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState<Snapshot | null>(null);
   const [viewing, setViewing] = useState<Snapshot | null>(null);
+  // countdowns tick, and a snapshot that deleted itself drops off the list
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => { setTick((n) => n + 1); if ((list.data || []).some((x) => x.expiresAt && x.expiresAt <= Date.now())) snapsChanged(); }, 30_000);
+    return () => clearInterval(t);
+  }, [list.data]);
+  const checkpoint = async () => {
+    const r = await act(() => call('snapshots.create', { projectId: pid, name: `Checkpoint ${new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`, description: 'Temporary: before edits I was unsure of', maxFileMb: 200, expiresAt: Date.now() + 24 * HOUR }), 'Checkpoint saved — it deletes itself in a day unless you keep it');
+    if (r) { snapsChanged(); ctx.reload(); }
+  };
   const confirm = useConfirm();
   const act = useAction();
   return (
     <section className="card pad" style={{ marginBottom: 16 }}>
-      <div className="row"><h3 className="grow" style={{ margin: 0 }}><LuCamera /> Project snapshots</h3><button className="btn sm primary" onClick={() => setCreating(true)}><LuCamera /> Create snapshot…</button></div>
-      <p className="small dim">A restore point for every file in the project. Unchanged contents are shared with file backups, so snapshots are cheap.</p>
+      <div className="row"><h3 className="grow" style={{ margin: 0 }}><LuCamera /> Project snapshots</h3><button className="btn sm" title="A snapshot that deletes itself in a day unless you keep it — for edits you're unsure of" onClick={checkpoint}><LuTimer /> Quick checkpoint</button><button className="btn sm primary" onClick={() => setCreating(true)}><LuCamera /> Create snapshot…</button></div>
+      <p className="small dim">A restore point for every file in the project. Unchanged contents are shared with file backups, so snapshots are cheap. Trying something risky? A <b>quick checkpoint</b> lets you go back, and deletes itself after a day if you don't need it.</p>
       {list.error ? <div className="alert bad">{list.error}</div> : !list.data ? <div className="small muted">Loading…</div> : !list.data.length ? <div className="small muted">No snapshots yet.</div> :
         list.data.map((s) => (
           <div key={s.id} className="snaprow" data-testid="snapshot-row">
             <div className="grow" style={{ minWidth: 0 }}>
               <div className="row" style={{ gap: 6 }}><span className="kindtag snapshot">snapshot</span><b>{s.name}</b></div>
+              {s.expiresAt && <div style={{ margin: '3px 0' }}><span className="badge temp" title={`Deletes itself ${dateTime(s.expiresAt)} unless you keep it`}><LuHourglass /> deletes itself {inTime(s.expiresAt)}</span></div>}
               {s.description && <div className="small">{s.description}</div>}
               <div className="small dim">{dateTime(s.at)} ({ago(s.at)}) · {s.fileCount} {s.fileCount === 1 ? 'file' : 'files'} · {bytes(s.bytes)}{s.skipped.length ? ` · ${s.skipped.length} skipped` : ''}</div>
             </div>
+            <div className="row snapacts">
             <button className="btn ghost sm icon" title="Details" onClick={() => setViewing(s)}><LuEye /></button>
+            {s.expiresAt && <>
+              <button className="btn sm" title="Give it another day" onClick={async () => { await act(() => call('snapshots.setExpiry', { id: s.id, expiresAt: Math.max(s.expiresAt!, Date.now()) + 24 * HOUR })); snapsChanged(); }}>+1 day</button>
+              <button className="btn sm" title="Keep this snapshot until you delete it" onClick={async () => { await act(() => call('snapshots.setExpiry', { id: s.id, expiresAt: null }), 'Kept — it stays until you delete it'); snapsChanged(); }}><LuPin /> Keep</button>
+            </>}
             <button className="btn ghost sm" onClick={() => setRestoring(s)}><LuUndo2 /> Restore…</button>
-            <button className="btn ghost sm icon" title="Delete snapshot" onClick={async () => { if (await confirm({ title: 'Delete this snapshot?', danger: true, confirm: 'Delete snapshot', body: <>The restore point “<b>{s.name}</b>” is removed from backup storage. Your project files are not touched, and file backups are kept.</> })) { await act(() => call('snapshots.delete', { id: s.id }), 'Snapshot deleted'); list.reload(); } }}><LuTrash2 /></button>
+            <button className="btn ghost sm icon" title="Delete snapshot" onClick={async () => { if (await confirm({ title: 'Delete this snapshot?', danger: true, confirm: 'Delete snapshot', body: <>The restore point “<b>{s.name}</b>” is removed from backup storage. Your project files are not touched, and file backups are kept.</> })) { await act(() => call('snapshots.delete', { id: s.id }), 'Snapshot deleted'); snapsChanged(); } }}><LuTrash2 /></button>
+            </div>
           </div>
         ))}
-      {creating && <CreateSnapshot projectId={pid} onClose={() => setCreating(false)} onDone={() => { setCreating(false); list.reload(); ctx.reload(); }} />}
-      {restoring && <RestoreSnapshot s={restoring} root={ctx.project.rootPath} onClose={() => setRestoring(null)} onDone={() => { setRestoring(null); list.reload(); ctx.scan(true); }} />}
+      {creating && <CreateSnapshot projectId={pid} onClose={() => setCreating(false)} onDone={() => { setCreating(false); snapsChanged(); ctx.reload(); }} />}
+      {restoring && <RestoreSnapshot s={restoring} root={ctx.project.rootPath} onClose={() => setRestoring(null)} onDone={() => { setRestoring(null); snapsChanged(); ctx.scan(true); }} />}
       {viewing && <Modal title={`Snapshot · ${viewing.name}`} onClose={() => setViewing(null)}>
         <p className="small">{dateTime(viewing.at)} · {viewing.fileCount} {viewing.fileCount === 1 ? 'file' : 'files'} · {bytes(viewing.bytes)}</p>
         {viewing.description && <p>{viewing.description}</p>}
@@ -133,18 +167,84 @@ function Snapshots({ ctx }: { ctx: ProjectCtx }) {
   );
 }
 
+/** Project header: snapshot the whole project before edits you're unsure of.
+ *  While one is active it shows its time left, with Go back / Keep / Delete. */
+export function CheckpointButton({ projectId, rootPath, scanTick, onRestored }: { projectId: string; rootPath: string; scanTick: number; onRestored: () => void }) {
+  const list = useLoad(() => call<Snapshot[]>('snapshots.list', { projectId }), [projectId, scanTick]);
+  useSnapsReload(list.reload);
+  const act = useAction();
+  const confirm = useConfirm();
+  const [open, setOpen] = useState(false);
+  const [restoring, setRestoring] = useState<Snapshot | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [, setTick] = useState(0);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 30_000); return () => clearInterval(t); }, []);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', esc);
+    return () => { window.removeEventListener('mousedown', close); window.removeEventListener('keydown', esc); };
+  }, [open]);
+  const active = (list.data || []).filter((s) => s.expiresAt && s.expiresAt > Date.now()).sort((a, b) => b.at - a.at)[0];
+  const make = async () => {
+    setBusy(true);
+    const r = await act(() => call('snapshots.create', { projectId, name: `Checkpoint ${new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`, description: 'Temporary: before edits I was unsure of', maxFileMb: 200, expiresAt: Date.now() + 24 * HOUR }), 'Checkpoint saved — the whole project. It deletes itself in a day unless you keep it.');
+    setBusy(false);
+    if (r) { snapsChanged(); setOpen(false); }
+  };
+  if (!active) return <button className="btn" disabled={busy} onClick={make} title="Snapshot the whole project before edits you're unsure of. If you don't like them, go back; if you do, it deletes itself after a day."><LuTimer /> {busy ? 'Saving…' : 'Checkpoint'}</button>;
+  return (
+    <div className="cp-wrap" ref={box}>
+      <button className="btn cp-on" aria-expanded={open} onClick={() => setOpen(!open)} title={`Checkpoint from ${dateTime(active.at)}`}><LuHourglass /> Checkpoint · {inTime(active.expiresAt!).replace(/^in /, '')} left</button>
+      {open && <div className="cp-pop" role="dialog" aria-label="Checkpoint">
+        <div><b>{active.name}</b></div>
+        <div className="small dim">The whole project, {active.fileCount} files · taken {ago(active.at)}</div>
+        <div className="small" style={{ margin: '6px 0 10px' }}>Deletes itself {inTime(active.expiresAt!)} ({dateTime(active.expiresAt!)}) unless you keep it.</div>
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          <button className="btn sm primary" onClick={() => { setOpen(false); setRestoring(active); }}><LuUndo2 /> Go back to it…</button>
+          <button className="btn sm" onClick={async () => { await act(() => call('snapshots.setExpiry', { id: active.id, expiresAt: active.expiresAt! + 24 * HOUR })); snapsChanged(); }}>+1 day</button>
+          <button className="btn sm" onClick={async () => { await act(() => call('snapshots.setExpiry', { id: active.id, expiresAt: null }), 'Kept — find it under Backups → Project snapshots'); snapsChanged(); setOpen(false); }}><LuPin /> Keep</button>
+          <button className="btn sm" title="Delete it now — the edits worked out" onClick={async () => { if (await confirm({ title: 'Delete this checkpoint?', danger: true, confirm: 'Delete', body: <>“<b>{active.name}</b>” is removed. Your project files are not touched.</> })) { await act(() => call('snapshots.delete', { id: active.id }), 'Checkpoint deleted'); snapsChanged(); setOpen(false); } }}><LuTrash2 /> Delete</button>
+        </div>
+        <div className="row" style={{ marginTop: 10 }}><button className="btn sm ghost" disabled={busy} onClick={make}><LuTimer /> New checkpoint</button></div>
+      </div>}
+      {restoring && <RestoreSnapshot s={restoring} root={rootPath} onClose={() => setRestoring(null)} onDone={() => { setRestoring(null); snapsChanged(); onRestored(); }} />}
+    </div>
+  );
+}
+
 function CreateSnapshot({ projectId, onClose, onDone }: { projectId: string; onClose: () => void; onDone: () => void }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [maxMb, setMaxMb] = useState(200);
+  // how long it's kept: forever, or it deletes itself after this many hours
+  const [keep, setKeep] = useState<'forever' | '1' | '24' | '168' | 'custom'>('forever');
+  const [customN, setCustomN] = useState(3);
+  const [customUnit, setCustomUnit] = useState<'hours' | 'days'>('days');
+  const hours = keep === 'forever' ? 0 : keep === 'custom' ? customN * (customUnit === 'days' ? 24 : 1) : Number(keep);
   const [busy, setBusy] = useState(false);
   const act = useAction();
   return (
     <Modal title="Create a project snapshot" onClose={onClose} footer={<><button className="btn" onClick={onClose}>Cancel</button>
-      <button className="btn primary" disabled={!name.trim() || busy} onClick={async () => { setBusy(true); const r = await act(() => call('snapshots.create', { projectId, name: name.trim(), description, maxFileMb: maxMb }), 'Snapshot created'); setBusy(false); if (r) onDone(); }}>{busy ? 'Saving…' : 'Create snapshot'}</button></>}>
+      <button className="btn primary" disabled={!name.trim() || busy} onClick={async () => { setBusy(true); const r = await act(() => call('snapshots.create', { projectId, name: name.trim(), description, maxFileMb: maxMb, ...(hours > 0 ? { expiresAt: Date.now() + hours * HOUR } : {}) }), 'Snapshot created'); setBusy(false); if (r) onDone(); }}>{busy ? 'Saving…' : 'Create snapshot'}</button></>}>
       <p className="small muted" style={{ marginTop: 0 }}>The project is rescanned, then the contents of every tracked file are stored.</p>
       <div className="field"><label>Name</label><input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Working before animation rewrite" /></div>
       <div className="field"><label>Description (optional)</label><textarea className="input" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} /></div>
+      <div className="field"><label>Keep it</label>
+        <div className="seg" role="radiogroup" aria-label="Keep it">
+          {([['forever', 'Until I delete it'], ['1', '1 hour'], ['24', '1 day'], ['168', '1 week'], ['custom', 'Custom']] as const).map(([k, l]) => (
+            <button key={k} role="radio" aria-checked={keep === k} className={cx(keep === k && 'on')} onClick={() => setKeep(k)}>{l}</button>
+          ))}
+        </div>
+        {keep === 'custom' && <div className="row" style={{ gap: 6, marginTop: 6 }}>
+          <input className="input" type="number" min={1} style={{ width: 80 }} value={customN} onChange={(e) => setCustomN(Math.max(1, Number(e.target.value) || 1))} aria-label="How long" />
+          <select className="input" style={{ width: 100 }} value={customUnit} onChange={(e) => setCustomUnit(e.target.value as 'hours' | 'days')} aria-label="Unit"><option value="hours">hours</option><option value="days">days</option></select>
+        </div>}
+        {hours > 0 && <div className="small dim" style={{ marginTop: 6 }}>Deletes itself {dateTime(Date.now() + hours * HOUR)} unless you press Keep. You can still delete it sooner, or give it more time.</div>}
+      </div>
       <div className="field"><label>Skip files larger than (MB)</label><input className="input" type="number" min={1} style={{ width: 120 }} value={maxMb} onChange={(e) => setMaxMb(Math.max(1, Number(e.target.value) || 1))} /></div>
     </Modal>
   );

@@ -12,6 +12,16 @@ use crate::util::{new_id, now_ms, safe_join, sha256_file};
 use crate::{files, p, projects, timeline, versions, Vault};
 
 pub fn create(v: &Vault, project_id: &str, name: &str, description: &str, max_file_mb: f64) -> DbResult<Json> {
+    create_expiring(v, project_id, name, description, max_file_mb, None)
+}
+
+/// A snapshot that deletes itself at `expires_at` (ms, UTC) unless kept.
+pub fn create_expiring(v: &Vault, project_id: &str, name: &str, description: &str, max_file_mb: f64, expires_at: Option<i64>) -> DbResult<Json> {
+    if let Some(t) = expires_at {
+        if t <= now_ms() {
+            return Err("The time a temporary snapshot deletes itself has to be in the future".into());
+        }
+    }
     versions::check_storage(v)?;
     let rep = files::scan(v, project_id)?;
     if !rep.errors.is_empty() && rep.total == 0 {
@@ -49,8 +59,8 @@ pub fn create(v: &Vault, project_id: &str, name: &str, description: &str, max_fi
     let name = if name.trim().is_empty() { format!("Snapshot {}", crate::util::iso_utc(now_ms())) } else { name.trim().to_string() };
     v.db.tx(|db| {
         db.exec(
-            "INSERT INTO snapshots(id,project_id,name,description,created_at,file_count,total_bytes,skipped_json) VALUES (?,?,?,?,?,?,?,?)",
-            p![id.clone(), project_id, name.clone(), description.trim(), now_ms(), included.len() as i64, total, Json::Arr(skipped.clone()).to_string()],
+            "INSERT INTO snapshots(id,project_id,name,description,created_at,file_count,total_bytes,skipped_json,expires_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            p![id.clone(), project_id, name.clone(), description.trim(), now_ms(), included.len() as i64, total, Json::Arr(skipped.clone()).to_string(), expires_at],
         )?;
         for (fid, rel, sha, size) in &included {
             db.exec("INSERT INTO snapshot_files(snapshot_id,file_id,rel_path,sha256,size) VALUES (?,?,?,?,?)", p![id.clone(), fid.clone(), rel.clone(), sha.clone(), *size])?;
@@ -59,7 +69,11 @@ pub fn create(v: &Vault, project_id: &str, name: &str, description: &str, max_fi
     })?;
     write_manifest(v, &id)?;
     crate::search::index(v, "snapshot", &id, project_id, &name, &format!("{} snapshot {} files", description, included.len()))?;
-    timeline::add(v, project_id, "snapshot", &format!("Snapshot created: {name}"), &format!("{} files, {} skipped", included.len(), skipped.len()), None, false)?;
+    let when = match expires_at {
+        Some(t) => format!(", deletes itself {}", crate::util::iso_utc(t)),
+        None => String::new(),
+    };
+    timeline::add(v, project_id, "snapshot", &format!("Snapshot created: {name}"), &format!("{} files, {} skipped{when}", included.len(), skipped.len()), None, false)?;
     get(v, &id)
 }
 
@@ -98,6 +112,7 @@ fn snap_json(r: &crate::db::Row) -> Json {
         .with("fileCount", r.i("file_count"))
         .with("bytes", r.i("total_bytes"))
         .with("skipped", Json::parse(&r.s("skipped_json")).unwrap_or(Json::Arr(vec![])))
+        .with("expiresAt", r.oi("expires_at"))
 }
 
 pub fn get(v: &Vault, id: &str) -> DbResult<Json> {
@@ -196,7 +211,44 @@ pub fn restore(v: &Vault, id: &str) -> DbResult<Json> {
     Ok(Json::obj().with("restored", Json::Arr(restored)).with("errors", Json::Arr(errors)).with("undoSnapshot", undo))
 }
 
+/// Keep a temporary snapshot (None) or change when it deletes itself.
+pub fn set_expiry(v: &Vault, id: &str, expires_at: Option<i64>) -> DbResult<Json> {
+    if let Some(t) = expires_at {
+        if t <= now_ms() {
+            return Err("Pick a time in the future".into());
+        }
+    }
+    let n = v.db.exec("UPDATE snapshots SET expires_at=? WHERE id=?", p![expires_at, id])?;
+    if n == 0 {
+        return Err("Snapshot not found".into());
+    }
+    get(v, id)
+}
+
+/// Deletes temporary snapshots whose time is up. Runs when the vault opens
+/// and on every watcher pass. Returns how many were removed.
+pub fn expire_due(v: &Vault) -> DbResult<usize> {
+    let due = v.db.query("SELECT id, project_id, name FROM snapshots WHERE expires_at IS NOT NULL AND expires_at<=?", p![now_ms()])?;
+    for s in &due {
+        delete(v, &s.s("id"))?;
+        timeline::add(v, &s.s("project_id"), "snapshot", &format!("Temporary snapshot “{}” deleted itself", s.s("name")), "Its time was up", None, false)?;
+    }
+    Ok(due.len())
+}
+
 pub fn delete(v: &Vault, id: &str) -> DbResult<()> {
+    // its portable manifest goes too, so temporary snapshots don't leave files behind
+    if let Some(s) = v.db.one("SELECT p.name AS pname, s.project_id FROM snapshots s JOIN projects p ON p.id=s.project_id WHERE s.id=?", p![id])? {
+        let dir = versions::storage_root(v).join("snapshots").join(format!("{}-{}", crate::util::slugify(&s.s("pname")), &s.s("project_id")[..8]));
+        let tail = format!("_{}.json", &id[..8.min(id.len())]);
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for e in rd.flatten() {
+                if e.file_name().to_string_lossy().ends_with(&tail) {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+    }
     v.db.exec("DELETE FROM snapshots WHERE id=?", p![id])?;
     crate::search::unindex(v, "snapshot", id)?;
     versions::gc(v)?;
@@ -209,6 +261,41 @@ mod tests {
     use crate::projects::{create as cp, NewProject};
     use crate::testutil::*;
     use std::fs;
+    /// User request: snapshot before edits you're unsure of; it deletes
+    /// itself after a while unless you keep it.
+    #[test]
+    fn temporary_snapshots_delete_themselves_unless_kept() {
+        let (t, v) = vault();
+        let d = t.path().join("p");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("menu.gsc"), "before risky edit").unwrap();
+        let pid = cp(&v, NewProject { name: "P".into(), description: "".into(), category: "software".into(), status: "".into(), link_path: Some(d.clone()), module: Json::obj() }).unwrap().str_of("id").unwrap();
+        assert!(create_expiring(&v, &pid, "x", "", 100.0, Some(now_ms() - 1)).is_err(), "expiry in the past is refused");
+        let day = now_ms() + 86_400_000;
+        let a = create_expiring(&v, &pid, "before menu rework", "", 100.0, Some(day)).unwrap();
+        let b = create_expiring(&v, &pid, "keep this one", "", 100.0, Some(day)).unwrap();
+        let forever = create(&v, &pid, "release 1", "", 100.0).unwrap();
+        assert_eq!(a.get("expiresAt").and_then(|x| x.as_i64()), Some(day));
+        assert_eq!(forever.get("expiresAt").and_then(|x| x.as_i64()), None);
+        let manifests = || fs::read_dir(versions::storage_root(&v).join("snapshots")).unwrap().flatten().flat_map(|d| fs::read_dir(d.path()).unwrap().flatten()).count();
+        assert_eq!(manifests(), 3);
+        // the risky edit went fine
+        fs::write(d.join("menu.gsc"), "after risky edit").unwrap();
+        assert_eq!(expire_due(&v).unwrap(), 0, "not due yet");
+        set_expiry(&v, &b.str_of("id").unwrap(), None).unwrap(); // "Keep"
+        // a day later
+        v.db.exec("UPDATE snapshots SET expires_at=? WHERE expires_at IS NOT NULL", p![now_ms() - 1]).unwrap();
+        assert_eq!(expire_due(&v).unwrap(), 1);
+        let names: Vec<String> = list(&v, &pid).unwrap().as_arr().unwrap().iter().map(|s| s.str_of("name").unwrap()).collect();
+        assert_eq!(names.len(), 2);
+        assert!(!names.contains(&"before menu rework".to_string()));
+        assert_eq!(manifests(), 2, "its manifest file is removed too");
+        // the content the kept snapshots need is still stored and restorable
+        fs::write(d.join("menu.gsc"), "broken").unwrap();
+        restore(&v, &b.str_of("id").unwrap()).unwrap();
+        assert_eq!(fs::read_to_string(d.join("menu.gsc")).unwrap(), "before risky edit");
+    }
+
     #[test]
     fn snapshot_restore_roundtrip() {
         let (t, v) = vault();

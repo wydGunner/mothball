@@ -202,6 +202,8 @@ where
         if dbg {
             eprintln!("[watch] lock after {:?} at {}", lock_t.elapsed(), now_ms());
         }
+        // temporary snapshots whose time is up (also when watching is off)
+        let _ = crate::snapshots::expire_due(v);
         on = enabled(v);
         wait = interval(v);
         if on {
