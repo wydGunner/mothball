@@ -4,7 +4,6 @@ import { call, pickFolder, isTauri, revealPath } from '../ipc';
 import { Modal, TagInput, useAction, useConfirm, useLoad, useToast } from '../components/common';
 import { MonacoDiff } from '../components/CodeEditor';
 import { ago, bytes, cx, dateTime } from '../format';
-import { ChangeDiff, type CompareReq } from './Timeline';
 
 export interface Version { id: string; sha256: string; size: number; path: string; reason: string; note: string; name: string; tags: string[]; at: number; isCurrent: boolean }
 
@@ -242,15 +241,13 @@ const EVENT_LABEL: Record<string, string> = {
 };
 
 /** Per-file timeline. Every entry is labelled with where it came from; reasons are never inferred. */
-export function FileTimeline({ fileId, fileName, absPath, path, projectId, present, refreshKey, onRestored, openFile }: { fileId: string; fileName: string; absPath?: string; path: string; projectId: string; present: boolean; refreshKey?: string; onRestored: () => void; openFile?: (id: string) => void }) {
+export function FileTimeline({ fileId, fileName, absPath, path, projectId, present, refreshKey, onRestored, onShowChanges }: { fileId: string; fileName: string; absPath?: string; path: string; projectId: string; present: boolean; refreshKey?: string; onRestored: () => void; onShowChanges?: (at: number) => void }) {
   const hist = useLoad(() => call<HistEntry[]>('versions.history', { fileId }), [fileId, refreshKey]);
   const vers = useLoad(() => call<Version[]>('versions.list', { fileId }), [fileId, refreshKey]);
   const git = useLoad(() => call<any[]>('git.log', { projectId, path, limit: 50 }).catch(() => []), [projectId, path, refreshKey]);
   const [compare, setCompare] = useState<string | null>(null);
   const [restoreV, setRestoreV] = useState<Version | null>(null);
   const [src, setSrc] = useState('');
-  const [openDiff, setOpenDiff] = useState<string | null>(null);
-  const [cmpReq, setCmpReq] = useState<CompareReq | null>(null);
   const entries = useMemo(() => {
     const out: HistEntry[] = [...(hist.data || [])];
     for (const c of git.data || []) out.push({ source: 'git', kind: 'commit', title: c.subject, description: `${c.short} · ${c.author}`, at: c.time, restorable: false, commit: c.hash });
@@ -271,12 +268,8 @@ export function FileTimeline({ fileId, fileName, absPath, path, projectId, prese
         {shown.map((e, i) => {
           const v = e.versionId ? vers.data?.find((x) => x.id === e.versionId) : undefined;
           const title = e.source === 'filesystem' || e.source === 'project-vault' ? (EVENT_LABEL[e.kind] || e.kind) : e.source === 'auto-version' || (e.source === 'backup' && e.title === e.kind) ? (REASON[e.kind] || e.kind) : e.title;
-          const diffKey = e.from && e.to ? `${e.at}:${e.to}` : '';
-          // the newest outside change starts open, like the Activity tab
-          const diffOpen = diffKey && (openDiff === null ? shown.findIndex((x) => x.from && x.to) === i : openDiff === diffKey);
           return (
-            <div key={i}>
-            <div className={cx('tl-row', `src-${e.source}`)}>
+            <div key={i} className={cx('tl-row', `src-${e.source}`)}>
               <span className={cx('srcbadge', `src-${e.source}`)}>{SOURCE_LABEL[e.source] || e.source}</span>
               <div className="grow" style={{ minWidth: 0 }}>
                 <div><b className={cx(e.source === 'backup' && 'mono')}>{title}</b>{(e.source === 'filesystem' || e.source === 'project-vault') && e.title && <span className="small dim"> — {e.title}</span>}</div>
@@ -288,17 +281,13 @@ export function FileTimeline({ fileId, fileName, absPath, path, projectId, prese
                 {!v.isCurrent && <button className="btn ghost sm" onClick={() => setRestoreV(v)}><LuUndo2 /> Restore</button>}
                 {v.isCurrent && <span className="badge ok">matches current file</span>}
               </div>}
-              {diffKey && <button className="btn ghost sm" onClick={() => setOpenDiff(diffOpen ? '' : diffKey)}>{diffOpen ? 'Hide changes' : 'Show changes'}</button>}
-            </div>
-            {diffOpen && <ChangeDiff fileId={fileId} from={e.from!} to={e.to!} title={fileName} openFile={openFile || (() => {})} onCompare={setCmpReq} />}
-            {e.kind === 'modified' && e.source === 'filesystem' && !diffKey && <div className="small dim tl-diffnote">What this file looked like before this change wasn’t stored, so the change can’t be shown.{vers.data?.length ? ' A copy is kept now, so later changes will show what changed.' : ' Your version settings decide which files get copies.'}</div>}
+              {e.from && e.to && onShowChanges && <button className="btn ghost sm" title="See what changed, in the Activity tab" onClick={() => onShowChanges(e.at)}>Show changes</button>}
             </div>
           );
         })}
       </div>
       <p className="small dim">Activity entries record that something happened; they don’t hold file contents and can’t be restored. Backups and auto versions can.</p>
       {compare && <CompareDialog fileId={fileId} title={fileName} old={compare} new="current" onClose={() => setCompare(null)} />}
-      {cmpReq && <CompareDialog fileId={cmpReq.fileId} title={cmpReq.title} old={cmpReq.old} new={cmpReq.new} onClose={() => setCmpReq(null)} />}
       {restoreV && <RestoreDialog v={restoreV} fileName={fileName} absPath={absPath} present={present} onClose={() => setRestoreV(null)} onDone={() => { setRestoreV(null); hist.reload(); vers.reload(); onRestored(); }} />}
     </div>
   );

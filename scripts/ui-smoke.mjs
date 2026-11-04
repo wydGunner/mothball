@@ -186,7 +186,7 @@ await step('Detect external modification', async () => {
   // the outside change shows what changed, like an edit made in Mothball
   await page.getByRole('button', { name: 'Activity', exact: true }).click();
   const act = page.locator('.doc .row').filter({ hasText: 'Content changed outside Mothball' }).first();
-  await act.getByRole('button', { name: 'Hide changes' }).waitFor(); // the latest change starts open
+  await act.getByRole('button', { name: 'Show changes' }).click(); // collapsed until asked
   await page.locator('.doc .tl-diff').getByText('// tweak').first().waitFor();
   await page.locator('.doc .tl-diff .tl-add').filter({ hasText: '+2' }).waitFor();
   if (shots) await page.screenshot({ path: join(shots, 'x-outside-change-diff.png') });
@@ -205,9 +205,13 @@ await step('Outside edit to a .menu file shows its diff in the Timeline, and vN 
   await row.locator('.badge.warn').filter({ hasText: 'changed' }).waitFor(); // both, side by side
   await row.click();
   await page.getByRole('button', { name: 'Timeline', exact: true }).click();
-  await page.locator('.tline').getByRole('button', { name: 'Hide changes' }).first().waitFor(); // newest change starts open
-  await page.locator('.tline .tl-diff').getByText('itemDef password').first().waitFor();
-  await page.locator('.tline .tl-diff .tl-add').filter({ hasText: '+1' }).waitFor();
+  // the Timeline stays a list; Show changes opens that change in Activity
+  if (await page.locator('.tline .tl-diff').count()) throw new Error('Timeline should not show diffs inline');
+  await page.locator('.tline').getByRole('button', { name: 'Show changes' }).first().click();
+  await page.getByRole('button', { name: 'Activity', exact: true }).and(page.locator('.on')).waitFor();
+  await page.locator('.doc').getByRole('button', { name: 'Hide changes' }).waitFor();
+  await page.locator('.doc .tl-diff').getByText('itemDef password').first().waitFor();
+  await page.locator('.doc .tl-diff .tl-add').filter({ hasText: '+1' }).waitFor();
   if (shots) await page.screenshot({ path: join(shots, 'x-menu-timeline-diff.png') });
   await page.locator('.filerow').filter({ hasText: 'weapon_tuner.gsc' }).click();
 });
