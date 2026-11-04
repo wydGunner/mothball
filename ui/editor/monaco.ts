@@ -88,6 +88,14 @@ function defineTheme(p: { a1: string; a2: string; a3: string }) {
     ],
     colors: {
       'editor.background': '#000000',
+      // right-click menu: same look as the app's own menus
+      'menu.background': '#101010',
+      'menu.foreground': '#ededed',
+      'menu.border': '#2a2a2a',
+      'menu.selectionBackground': p.a1 + '22',
+      'menu.selectionForeground': '#ededed',
+      'menu.separatorBackground': '#1c1c1c',
+      'widget.shadow': '#000000aa',
       'editor.foreground': '#d4d4d4',
       'editorLineNumber.foreground': '#3a3a3a',
       'editorLineNumber.activeForeground': p.a1,
@@ -173,7 +181,17 @@ export function create(el: HTMLElement, o: EditorOptions): EditorHandle {
     });
   }
   return {
-    revealLine: (line) => { ed.revealLineInCenter(line); ed.setPosition({ lineNumber: line, column: 1 }); ed.focus(); },
+    revealLine: (line, sel) => {
+      if (sel) {
+        const r = { startLineNumber: sel.line, startColumn: sel.col, endLineNumber: sel.endLine, endColumn: sel.endCol };
+        ed.setSelection(r);
+        ed.revealRangeInCenter(r);
+      } else {
+        ed.revealLineInCenter(line);
+        ed.setPosition({ lineNumber: line, column: 1 });
+      }
+      ed.focus();
+    },
     getValue: () => ed.getValue(),
     setValue: (v) => ed.setValue(v),
     focus: () => ed.focus(),

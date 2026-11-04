@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine, LuImage, LuFileCode, LuUpload, LuCircleCheck, LuHistory } from 'react-icons/lu';
 import { call, pickFiles, pickFolder, revealPath, isTauri, type Project } from '../ipc';
-import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, useLoad, useConfirm, usePrompt } from '../components/common';
+import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, appContextMenu, useLoad, useConfirm, usePrompt } from '../components/common';
 import { ago, bytes, cx, hiddenTypes } from '../format';
 import type { Nav } from '../main';
 import { Welcome, ImportChoice } from './Welcome';
@@ -500,7 +500,7 @@ function ProjectCard({ p, colors, onOpen, onMenu, onFav, onPictureChanged, dropS
         </div>
         {p.progress > 0 && <div className="pc-progress" title={`${p.progress}% done`}><div style={{ width: `${p.progress}%` }} /></div>}
       </div>
-      {picking && <div onClick={(e) => e.stopPropagation()} onContextMenu={(e) => e.stopPropagation()}><PictureDialog p={p} onClose={() => setPicking(false)} onSaved={() => { setPicking(false); onPictureChanged(); }} /></div>}
+      {picking && <div onClick={(e) => e.stopPropagation()} onContextMenu={(e) => { e.stopPropagation(); appContextMenu(e.nativeEvent); }}><PictureDialog p={p} onClose={() => setPicking(false)} onSaved={() => { setPicking(false); onPictureChanged(); }} /></div>}
     </div>
   );
 }

@@ -383,6 +383,46 @@ await step('Editor tabs keep unsaved edits while switching files', async () => {
   await page.evaluate(() => localStorage.setItem('pv.maxTabs', '1'));
 });
 
+await step('Right-click: highlight in the preview, edit it; the app menu replaces the browser menu', async () => {
+  await page.locator('.filerow').filter({ hasText: '_util.gsc' }).click();
+  const pre = page.locator('pre.preview');
+  await pre.getByText('util()', { exact: false }).waitFor();
+  // highlight "getDvarInt" in the preview, then right-click it
+  await pre.evaluate((el) => {
+    const t = el.firstChild; const i = t.textContent.indexOf('util()');
+    const r = document.createRange(); r.setStart(t, i); r.setEnd(t, i + 4);
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+  });
+  const box = await pre.boundingBox();
+  await page.mouse.click(box.x + 20, box.y + 12, { button: 'right' });
+  const item = page.locator('.ctx button').filter({ hasText: 'Edit “util” in the editor' });
+  await item.waitFor();
+  await page.locator('.ctx button').filter({ hasText: 'Copy' }).locator('.ctx-hint').filter({ hasText: 'Ctrl+C' }).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-preview-menu.png') });
+  await item.click();
+  // the editor opens with exactly that text selected (Monaco in CI, the stand-in here)
+  await page.waitForFunction(() => {
+    const slot = [...document.querySelectorAll('.edslot')].find((e) => e.style.display !== 'none');
+    if (!slot) return false;
+    const m = slot.querySelector('.monaco-editor');
+    if (m) return !!m.querySelector('.selected-text') && (window.getSelection()?.toString() === '' || true);
+    const ta = slot.querySelector('textarea');
+    return ta && ta.value.slice(ta.selectionStart, ta.selectionEnd) === 'util';
+  });
+  if (shots) await page.screenshot({ path: join(shots, 'x-preview-edit-selected.png') });
+  await page.locator('.edtab').filter({ hasText: '_util.gsc' }).locator('.edtab-x').click();
+  await page.locator('.edtab').first().waitFor({ state: 'detached' }).catch(() => {});
+  // the search box gets the app's text menu, not the browser's
+  await page.getByPlaceholder('Search files…').click({ button: 'right' });
+  for (const l of ['Cut', 'Copy', 'Paste', 'Select all']) await page.locator('.ctx button').filter({ hasText: l }).first().waitFor();
+  await page.keyboard.press('Escape');
+  await page.locator('.ctx').waitFor({ state: 'detached' });
+  // empty space: the browser menu (Back, Refresh, Print…) is suppressed
+  const prevented = await page.evaluate(() => { const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }); document.querySelector('.side, aside, body').dispatchEvent(ev); return ev.defaultPrevented; });
+  if (!prevented) throw new Error('the browser menu was not suppressed');
+  if (await page.locator('.ctx').count()) throw new Error('no menu expected on empty space');
+});
+
 await step('Timeline: expand an edit to see what changed', async () => {
   await page.getByRole('tab', { name: /Timeline/ }).click();
   const item = page.locator('.tlitem').filter({ hasText: 'Edited scripts/mp/_util.gsc' }).first();

@@ -25,7 +25,7 @@ export type Route =
 
 /** What to show in a project. `action` + `nonce` let the same file be revealed/opened again. */
 /** What a project view should bring into view. type 'folder': id is the folder's relative path ('' = project root). action 'history': open the file's history, highlighting versionId when given. */
-export interface Focus { type: 'file' | 'note' | 'task' | 'folder'; id: string; action?: 'reveal' | 'edit' | 'history'; versionId?: string; /** with action 'edit': 1-based line to show */ line?: number; nonce?: number }
+export interface Focus { type: 'file' | 'note' | 'task' | 'folder'; id: string; action?: 'reveal' | 'edit' | 'history'; versionId?: string; /** with action 'edit': 1-based line to show */ line?: number; /** with action 'edit': text to select there */ sel?: { line: number; col: number; endLine: number; endCol: number }; nonce?: number }
 
 export interface Nav { go: (r: Route) => void; refreshProjects: () => void; projects: Project[] }
 

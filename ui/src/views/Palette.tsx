@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { LuPlus, LuLayoutDashboard, LuSearch, LuSettings, LuFolder, LuRefreshCw, LuNotebookPen, LuListTodo, LuHistory, LuGitBranch, LuFiles, LuShieldCheck, LuCamera, LuGitCompareArrows, LuUndo2, LuDownload, LuCopy, LuFileSearch, LuSquareFunction } from 'react-icons/lu';
 import { call, pickFolder, isTauri, revealPath } from '../ipc';
 import { cx, ago, dateTime } from '../format';
-import { KindIcon, useAction, useContextMenu, useContextMenuOpen, useToast, type MenuItem } from '../components/common';
+import { KindIcon, useAction, useContextMenu, appContextMenu, useContextMenuOpen, useToast, type MenuItem } from '../components/common';
 import { CompareDialog, RestoreDialog, REASON, type Version } from './Versions';
 import { useFileActions, TEXT_EDITABLE, type FileRef } from '../fileActions';
 import type { Nav, Route } from '../main';
@@ -90,7 +90,7 @@ export function CommandPalette({ nav, route, onClose, onNewProject }: { nav: Nav
     const link = (label: ReactNode, path: string, key: string) => (
       <span key={key} className="crumb" title={`Open ${path ? path + '/' : 'the project root'} in Files`}
         onClick={(e) => { e.stopPropagation(); if (e.button === 0) goFolder(projectId, path); }}
-        onContextMenu={(e) => e.stopPropagation()}>{label}</span>
+        onContextMenu={(e) => { e.stopPropagation(); appContextMenu(e.nativeEvent); }}>{label}</span>
     );
     return <>{link(<b>{projectName}</b>, '', 'root')}{segs.map((sg, i) => <Fragment key={i}>{' / '}{link(<Highlight text={sg} terms={terms} />, segs.slice(0, i + 1).join('/'), 'd' + i)}</Fragment>)}</>;
   };

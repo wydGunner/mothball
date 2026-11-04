@@ -1,3 +1,5 @@
+export interface TextSel { line: number; col: number; endLine: number; endCol: number }
+
 // Shared contract between the app and the separately bundled editor (monaco.js).
 export interface EditorOptions {
   value: string;
@@ -40,7 +42,8 @@ export interface DiffOptions {
 export interface DiffHandle { setSideBySide(v: boolean): void; dispose(): void }
 export interface EditorHandle {
   /** Scrolls to a 1-based line and puts the cursor there */
-  revealLine(line: number): void;
+  /** Scrolls to a 1-based line; with `sel`, selects that range (1-based columns, end exclusive). */
+  revealLine(line: number, sel?: TextSel): void;
   getValue(): string;
   setValue(v: string): void;
   focus(): void;

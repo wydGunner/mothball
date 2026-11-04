@@ -1,11 +1,11 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { CodeEditor } from '../components/CodeEditor';
-import type { EditorHandle } from '../../editor/api';
+import type { EditorHandle, TextSel } from '../../editor/api';
 import { ModelViewer } from '../components/ModelViewer';
 import { useFileActions, TEXT_EDITABLE, type FileRef } from '../fileActions';
 import {
   LuFolder, LuFolderOpen, LuChevronRight, LuChevronDown, LuSearch, LuExternalLink, LuFolderSearch, LuCopy, LuTriangleAlert,
-  LuUpload, LuEye, LuFilter, LuCode, LuSave, LuArrowLeft, LuMaximize2, LuMinimize2, LuTrash2, LuArchiveRestore, LuEllipsis, LuShieldCheck, LuPencil, LuLink2, LuX, LuHistory, LuGitCommitHorizontal, LuFileQuestion, LuCopyCheck, LuCircleCheck, LuPlus, LuImage, LuInfo,
+  LuUpload, LuEye, LuFilter, LuCode, LuTextSelect, LuSave, LuArrowLeft, LuMaximize2, LuMinimize2, LuTrash2, LuArchiveRestore, LuEllipsis, LuShieldCheck, LuPencil, LuLink2, LuX, LuHistory, LuGitCommitHorizontal, LuFileQuestion, LuCopyCheck, LuCircleCheck, LuPlus, LuImage, LuInfo,
 } from 'react-icons/lu';
 import { forgetEditor, markDirty } from '../unsaved';
 import { call, isTauri, openPath, pickFiles, revealPath, type FileDetail, type FileDocs, type VFile } from '../ipc';
@@ -111,7 +111,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
   // hide the file, opens its folder, selects it, and scrolls it into view.
   const pendingReveal = useRef<string | null>(null);
   const [highlightV, setHighlightV] = useState<string | undefined>(undefined);
-  const [gotoLine, setGotoLine] = useState<{ line: number; nonce: number; fileId: string } | undefined>(undefined);
+  const [gotoLine, setGotoLine] = useState<{ line: number; nonce: number; fileId: string; sel?: TextSel } | undefined>(undefined);
   useEffect(() => {
     const fc = ctx.focus;
     if (fc?.type === 'folder') {
@@ -126,7 +126,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
       setDir(fc.action === 'reveal' ? parent : '');
       setSelectedRaw(f.id);
       if (fc.action === 'edit' && f.state === 'present') openEditor(f.id, f.name); else setEditingRaw(null);
-      if (fc.action === 'edit' && fc.line) setGotoLine({ line: fc.line, nonce: Date.now(), fileId: f.id });
+      if (fc.action === 'edit' && fc.line) setGotoLine({ line: fc.line, nonce: Date.now(), fileId: f.id, sel: fc.sel });
       setHighlightV(fc.action === 'history' ? fc.versionId || '' : undefined);
       pendingReveal.current = f.id;
     }).catch(() => setSelectedRaw(fc.id));
@@ -466,7 +466,7 @@ function FileDetailPanel({ fileId, ctx, onChanged, onEdit, highlightVersion }: {
       {f.ext === 'toc' && f.state === 'present' && <TocInfo f={f} ctx={ctx} />}
       {SCRIPT_EXTS.has(f.ext) && f.state === 'present' && <ScriptOutline f={f} ctx={ctx} />}
 
-      <FilePreview f={f} />
+      <FilePreview f={f} ctx={ctx} />
 
       <div className="docsec">
         <h3>Details</h3>
@@ -594,9 +594,9 @@ function ScriptOutline({ f, ctx }: { f: FileDetail; ctx: ProjectCtx }) {
 
 const MODEL_EXTS = new Set(['stl', 'obj', '3mf']);
 
-function FilePreview({ f }: { f: FileDetail }) {
+function FilePreview({ f, ctx }: { f: FileDetail; ctx: ProjectCtx }) {
   if (MODEL_EXTS.has(f.ext) && f.state === 'present') return <ModelPreview f={f} />;
-  return <TextImagePreview f={f} />;
+  return <TextImagePreview f={f} ctx={ctx} />;
 }
 
 function ModelPreview({ f }: { f: FileDetail }) {
@@ -651,7 +651,53 @@ function PrintInfo({ f }: { f: FileDetail }) {
   );
 }
 
-function TextImagePreview({ f }: { f: FileDetail }) {
+/** Line/column (1-based) of a character offset in `text`. */
+function lineCol(text: string, off: number) {
+  const before = text.slice(0, off);
+  const line = before.split('\n').length;
+  return { line, col: off - (before.lastIndexOf('\n') + 1) + 1 };
+}
+
+/** Character offset inside `root` of a DOM position (the preview is one text node, but don't rely on it). */
+function offsetIn(root: Node, node: Node, off: number) {
+  const r = document.createRange();
+  r.setStart(root, 0);
+  r.setEnd(node, off);
+  return r.toString().length;
+}
+
+function TextImagePreview({ f, ctx }: { f: FileDetail; ctx: ProjectCtx }) {
+  const menu = useContextMenu();
+  const pre = useRef<HTMLPreElement>(null);
+  // Right-click in the preview: jump to the highlighted text (or the clicked line) in the editor, selected.
+  const previewMenu = (e: React.MouseEvent, text: string) => {
+    const root = pre.current;
+    if (!root) return;
+    const s = window.getSelection();
+    let sel: TextSel | undefined;
+    let picked = '';
+    if (s && s.rangeCount && !s.isCollapsed && root.contains(s.getRangeAt(0).commonAncestorContainer)) {
+      const r = s.getRangeAt(0);
+      const a = offsetIn(root, r.startContainer, r.startOffset), b = offsetIn(root, r.endContainer, r.endOffset);
+      const p = lineCol(text, a), q = lineCol(text, b);
+      sel = { line: p.line, col: p.col, endLine: q.line, endCol: q.col };
+      picked = s.toString();
+    }
+    let line = sel?.line;
+    if (!line) {
+      const doc = document as any;
+      const c = doc.caretRangeFromPoint?.(e.clientX, e.clientY);
+      const pos = c ? { node: c.startContainer, off: c.startOffset } : (() => { const p = doc.caretPositionFromPoint?.(e.clientX, e.clientY); return p ? { node: p.offsetNode, off: p.offset } : null; })();
+      line = pos && root.contains(pos.node) ? lineCol(text, offsetIn(root, pos.node, pos.off)).line : 1;
+    }
+    const edit = () => ctx.nav.go({ view: 'project', id: ctx.project.id, tab: 'files', focus: { type: 'file', id: f.id, action: 'edit', line, sel, nonce: Date.now() } });
+    const short = picked.length > 28 ? picked.slice(0, 26).trim() + '…' : picked.trim();
+    menu(e, [
+      ...(canEdit(f) ? [{ label: sel ? `Edit “${short.replace(/\s+/g, ' ')}” in the editor` : `Edit at line ${line}`, icon: <LuCode />, onClick: edit }] : []),
+      { label: 'Copy', icon: <LuCopy />, hint: 'Ctrl+C', disabled: !picked, onClick: () => { navigator.clipboard.writeText(picked).catch(() => {}); } },
+      { label: 'Select all', icon: <LuTextSelect />, hint: 'Ctrl+A', onClick: () => { const r = document.createRange(); r.selectNodeContents(root); s?.removeAllRanges(); s?.addRange(r); } },
+    ]);
+  };
   const [open, setOpen] = useState(() => f.kind !== 'image' && canEdit(f) && f.size <= 64 * 1024);
   const [content, setContent] = useState<{ text?: string; img?: string; binary?: boolean; truncated?: boolean; error?: string } | null>(null);
   useEffect(() => {
@@ -671,7 +717,7 @@ function TextImagePreview({ f }: { f: FileDetail }) {
         : content.error ? <div className="muted small">{content.error}</div>
         : content.img ? <div className="preview img"><img src={content.img} alt={f.name} /></div>
         : content.binary ? <div className="muted small">Binary file — no preview. Use “Open” to view it in its application.</div>
-        : <><pre className="preview">{content.text}</pre>{content.truncated && <div className="small dim">Showing the first 256 KB.</div>}</>)}
+        : <><pre className="preview" ref={pre} title={canEdit(f) ? 'Right-click to edit what you highlighted' : undefined} onContextMenu={(e) => previewMenu(e, content.text || '')}>{content.text}</pre>{content.truncated && <div className="small dim">Showing the first 256 KB.</div>}</>)}
     </div>
   );
 }
@@ -747,7 +793,7 @@ function ActivityList({ events, fileId, title, openFile }: { events: FileDetail[
 
 const SCRIPT_EXTS = new Set(['gsc', 'csc', 'gsh', 'lua']);
 
-function EditorPane({ fileId, ctx, onClose, onDetails, onSaved, onDirty, wide, onToggleWide, gotoLine }: { fileId: string; ctx: ProjectCtx; onClose: () => void; onDetails: () => void; onSaved: () => void; onDirty: (d: boolean) => void; wide: boolean; onToggleWide: () => void; gotoLine?: { line: number; nonce: number } }) {
+function EditorPane({ fileId, ctx, onClose, onDetails, onSaved, onDirty, wide, onToggleWide, gotoLine }: { fileId: string; ctx: ProjectCtx; onClose: () => void; onDetails: () => void; onSaved: () => void; onDirty: (d: boolean) => void; wide: boolean; onToggleWide: () => void; gotoLine?: { line: number; nonce: number; sel?: TextSel } }) {
   const doc = useLoad(() => call<any>('files.readText', { id: fileId }), [fileId]);
   const info = useLoad(() => call<FileDetail>('files.get', { id: fileId }), [fileId]);
   const [text, setText] = useState<string | null>(null);
@@ -772,10 +818,10 @@ function EditorPane({ fileId, ctx, onClose, onDetails, onSaved, onDirty, wide, o
   // keep typing after the Smart Save dialog closes
   const refocus = () => setTimeout(() => edHandle.current?.focus(), 0);
   // jump to a line once the editor exists (from search, go-to-definition, the function list)
-  const pendingLine = useRef<number | null>(null);
+  const pendingLine = useRef<{ line: number; sel?: TextSel } | null>(null);
   useEffect(() => {
     if (!gotoLine) return;
-    if (edHandle.current) edHandle.current.revealLine(gotoLine.line); else pendingLine.current = gotoLine.line;
+    if (edHandle.current) edHandle.current.revealLine(gotoLine.line, gotoLine.sel); else pendingLine.current = { line: gotoLine.line, sel: gotoLine.sel };
   }, [gotoLine]);
   const menu = useContextMenu();
   const isScript = SCRIPT_EXTS.has((info.data?.ext || doc.data?.path?.split('.').pop() || '').toLowerCase());
@@ -858,7 +904,7 @@ function EditorPane({ fileId, ctx, onClose, onDetails, onSaved, onDirty, wide, o
         <button className="btn ghost sm icon" title={wide ? 'Show file list' : 'Full width'} onClick={onToggleWide}>{wide ? <LuMinimize2 /> : <LuMaximize2 />}</button>
         <button className="btn primary sm" disabled={!dirty || saving || doc.data.readonly} onClick={requestSave}><LuSave /> Save</button>
       </div>
-      <CodeEditor value={text} ext={info.data?.ext || doc.data.path.split('.').pop() || ''} readOnly={doc.data.readonly} onChange={setText} onSave={requestSave} onReady={(h) => { edHandle.current = h; if (pendingLine.current) { h.revealLine(pendingLine.current); pendingLine.current = null; } }}
+      <CodeEditor value={text} ext={info.data?.ext || doc.data.path.split('.').pop() || ''} readOnly={doc.data.readonly} onChange={setText} onSave={requestSave} onReady={(h) => { edHandle.current = h; if (pendingLine.current) { h.revealLine(pendingLine.current.line, pendingLine.current.sel); pendingLine.current = null; } }}
         onGoToDefinition={isScript ? goToDefinition : undefined} onHover={isScript ? hover : undefined} onSaveWithBackup={() => { if (latest.current.text !== latest.current.saved) setSmart(true); }} />
       {smart && <SmartSaveDialog fileId={fileId} fileName={info.data?.name || doc.data.path.split('/').pop()} projectName={ctx.project.name} projectId={ctx.project.id}
         relDir={doc.data.path.includes('/') ? doc.data.path.slice(0, doc.data.path.lastIndexOf('/')) : ''} linesChanged={changedLines(saved, text)}

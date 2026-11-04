@@ -1,9 +1,10 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   LuFileCode, LuFileText, LuSettings2, LuImage, LuBox, LuShapes, LuPrinter, LuArchive, LuGamepad2, LuMusic, LuVideo,
   LuCpu, LuBinary, LuFile, LuX, LuCircleAlert, LuCircleCheck, LuInfo, LuFolderGit2, LuCode, LuWrench, LuPalette, LuFolder,
 } from 'react-icons/lu';
 import { renderMarkdown, parseInternalHref } from '../markdown';
+import { LuCopy, LuScissors, LuClipboardPaste, LuTextSelect } from 'react-icons/lu';
 import { LuChevronDown, LuCheck, LuClapperboard, LuSparkles, LuPenTool, LuCuboid, LuDraftingCompass, LuPuzzle, LuType } from 'react-icons/lu';
 import { cx } from '../format';
 
@@ -165,19 +166,32 @@ export function PromptProvider({ children }: { children: ReactNode }) {
 }
 
 // ---------------------------------------------------------------- context menu
-export interface MenuItem { label: string; icon?: ReactNode; onClick?: () => void; danger?: boolean; sep?: boolean; disabled?: boolean }
+export interface MenuItem { label: string; icon?: ReactNode; onClick?: () => void; danger?: boolean; sep?: boolean; disabled?: boolean; /** shortcut shown on the right, e.g. Ctrl+C */ hint?: string }
 const MenuCtx = createContext<(e: { clientX: number; clientY: number; preventDefault(): void }, items: MenuItem[]) => void>(() => {});
 export const useContextMenu = () => useContext(MenuCtx);
+let appMenuHandler: ((e: MouseEvent) => void) | null = null;
+/** The app's default right-click menu (text fields, selected text). Call it where
+ *  a handler stops propagation, so the browser's own menu doesn't show there. */
+export const appContextMenu = (e: MouseEvent) => appMenuHandler?.(e);
 const MenuOpenCtx = createContext<() => boolean>(() => false);
 /** Returns a function telling whether a context menu is currently open. */
 export const useContextMenuOpen = () => useContext(MenuOpenCtx);
 export function ContextMenuProvider({ children }: { children: ReactNode }) {
+  const toast = useToast();
   const [menu, setMenu] = useState<null | { x: number; y: number; items: MenuItem[] }>(null);
   const openRef = useRef(false);
   openRef.current = !!menu;
   const isOpen = useCallback(() => openRef.current, []);
   const menuEl = useRef<HTMLDivElement>(null);
   const returnFocus = useRef<Element | null>(null);
+  // wide menus (long labels, shortcut hints) stay inside the window
+  useLayoutEffect(() => {
+    const el = menuEl.current;
+    if (!el || !menu) return;
+    const r = el.getBoundingClientRect();
+    if (r.right > window.innerWidth - 4) el.style.left = `${Math.max(4, window.innerWidth - 4 - r.width)}px`;
+    if (r.bottom > window.innerHeight - 4) el.style.top = `${Math.max(4, window.innerHeight - 4 - r.height)}px`;
+  }, [menu]);
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
@@ -208,6 +222,46 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
     openRef.current = true;
     setMenu({ x, y, items });
   }, []);
+  // Replace the browser's own right-click menu (Back, Refresh, Print, Share…)
+  // everywhere. Menus the app already shows (file rows, Monaco's editor menu)
+  // have handled the event first. Text fields get Cut/Copy/Paste/Select all,
+  // selected text gets Copy, anything else gets no menu. Shift+right-click
+  // still gives the browser menu, for inspecting while developing.
+  useEffect(() => {
+    const onCtx = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.shiftKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.('.monaco-editor')) return;
+      const field = t?.closest?.('input, textarea, [contenteditable="true"]') as HTMLInputElement | HTMLTextAreaElement | HTMLElement | null;
+      const picked = window.getSelection()?.toString() || '';
+      const copy = (text: string) => navigator.clipboard.writeText(text).catch(() => document.execCommand('copy'));
+      if (field && !(field instanceof HTMLInputElement && ['checkbox', 'radio', 'range', 'button', 'submit', 'color', 'file'].includes(field.type))) {
+        const tf = field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement ? field : null;
+        const selected = tf ? tf.value.slice(tf.selectionStart ?? 0, tf.selectionEnd ?? 0) : picked;
+        const editable = tf ? !tf.readOnly && !tf.disabled : true;
+        const secret = field instanceof HTMLInputElement && field.type === 'password';
+        field.focus();
+        open(e, [
+          { label: 'Cut', icon: <LuScissors />, hint: 'Ctrl+X', disabled: !selected || !editable || secret, onClick: () => { copy(selected); field.focus(); document.execCommand('insertText', false, ''); } },
+          { label: 'Copy', icon: <LuCopy />, hint: 'Ctrl+C', disabled: !selected || secret, onClick: () => { copy(selected); } },
+          { label: 'Paste', icon: <LuClipboardPaste />, hint: 'Ctrl+V', disabled: !editable, onClick: () => {
+            navigator.clipboard.readText().then(
+              (text) => { field.focus(); document.execCommand('insertText', false, text); },
+              () => { field.focus(); if (!document.execCommand('paste')) toast('Press Ctrl+V to paste here — the clipboard could not be read.'); },
+            );
+          } },
+          { sep: true, label: '' },
+          { label: 'Select all', icon: <LuTextSelect />, hint: 'Ctrl+A', onClick: () => { field.focus(); if (tf) tf.select(); else document.execCommand('selectAll'); } },
+        ]);
+        return;
+      }
+      if (picked.trim()) { open(e, [{ label: 'Copy', icon: <LuCopy />, hint: 'Ctrl+C', onClick: () => { copy(picked); } }]); return; }
+      e.preventDefault();
+    };
+    appMenuHandler = onCtx;
+    window.addEventListener('contextmenu', onCtx);
+    return () => { window.removeEventListener('contextmenu', onCtx); appMenuHandler = null; };
+  }, [open, toast]);
   return (
     <MenuCtx.Provider value={open}><MenuOpenCtx.Provider value={isOpen}>
       {children}
@@ -215,7 +269,7 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
         <div className="ctx" role="menu" ref={menuEl} style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
           {menu.items.map((it, i) => it.sep ? <hr key={i} /> : (
             <button key={i} role="menuitem" disabled={it.disabled} style={it.danger ? { color: 'var(--bad)' } : undefined} onClick={() => { setMenu(null); it.onClick?.(); }}>
-              {it.icon}{it.label}
+              {it.icon}<span className="grow">{it.label}</span>{it.hint && <kbd className="ctx-hint">{it.hint}</kbd>}
             </button>
           ))}
         </div>

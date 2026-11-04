@@ -24,11 +24,13 @@ export function create(el: HTMLElement, o: EditorOptions): EditorHandle {
   });
   el.appendChild(ta);
   return {
-    revealLine: (line) => {
+    revealLine: (line, sel) => {
       const lines = ta.value.split('\n');
-      const off = lines.slice(0, Math.max(0, line - 1)).reduce((a, l) => a + l.length + 1, 0);
+      const at = (ln: number, col: number) => lines.slice(0, Math.max(0, ln - 1)).reduce((a, l) => a + l.length + 1, 0) + col - 1;
+      const off = at(line, 1);
       ta.focus();
-      ta.setSelectionRange(off, off + (lines[line - 1]?.length || 0));
+      if (sel) ta.setSelectionRange(at(sel.line, sel.col), at(sel.endLine, sel.endCol));
+      else ta.setSelectionRange(off, off + (lines[line - 1]?.length || 0));
       const lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
       ta.scrollTop = Math.max(0, (line - 4) * lh);
     },

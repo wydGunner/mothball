@@ -810,3 +810,9 @@ input[type=checkbox] { accent-color: var(--accent); }
 .btn.reveal .chev { color: var(--accent); transition: transform .15s; }
 .btn.reveal.on { background: var(--bg4); }
 .btn.reveal.on .chev { transform: rotate(180deg); }
+.ctx button .grow { flex: 1; }
+.ctx-hint { font: 11px var(--mono, ui-monospace, monospace); color: var(--fg2); background: none; border: 0; padding: 0; margin-left: 18px; }
+.ctx button svg { color: var(--accent); flex: none; }
+.ctx button:disabled svg { color: inherit; }
+.ctx { max-width: 380px; }
+.ctx button .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
