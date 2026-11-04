@@ -7,7 +7,7 @@
 //
 // Needs git on PATH. Exits non-zero on the first failed step.
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, renameSync, existsSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, renameSync, existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -1399,6 +1399,55 @@ await step('Background watching: outside changes appear without Rescan', async (
   await page.locator('.drawer .ds-row').filter({ hasText: 'Options.lua' }).waitFor({ timeout: 15000 });
   await page.keyboard.press('Escape');
   await page.locator('.drawer').waitFor({ state: 'detached' });
+});
+
+await step('Game output: IW4X demos suggestion, missing files grouped by folder, ignore folder', async () => {
+  const mod = join(tmp, 'iw4x-mod');
+  for (const d of ['demos', 'scripts', 'junk', 'players']) mkdirSync(join(mod, d), { recursive: true });
+  for (let i = 1; i <= 5; i++) writeFileSync(join(mod, `demos/auto_${i}.dm_13`), 'demo' + i);
+  for (let i = 1; i <= 4; i++) writeFileSync(join(mod, `junk/x${i}.tmp`), 'x' + i);
+  writeFileSync(join(mod, 'scripts/a.gsc'), 'init() {}\n');
+  writeFileSync(join(mod, 'players/config_mp.cfg'), 'bind x\n');
+  const pr = (await api('projects.create', { name: 'Demo Spam', category: 'addon', module: { subtype: 'iw4x' }, linkPath: mod })).data;
+  if (!/demos\//.test(pr.ignoreGlobs)) throw new Error('new IW4X project should ignore demos/: ' + pr.ignoreGlobs);
+  // like a project made before these defaults
+  await api('projects.update', { id: pr.id, patch: { ignoreGlobs: '' } });
+  await api('files.scan', { projectId: pr.id });
+  for (let i = 1; i <= 4; i++) rmSync(join(mod, `junk/x${i}.tmp`));
+  for (let i = 1; i <= 2; i++) rmSync(join(mod, `demos/auto_${i}.dm_13`));
+  await api('files.scan', { projectId: pr.id });
+  await page.goto(base + '/');
+  await page.getByText('Demo Spam', { exact: true }).first().click();
+  const att = page.locator('.ov2-sec.attention');
+  // the suggestion for game output
+  const sug = att.locator('.att-suggest');
+  await sug.getByText('Stop tracking game output?').waitFor();
+  await sug.locator('.mono').filter({ hasText: 'demos/' }).waitFor();
+  if (await sug.getByText('players/').count() !== 1) throw new Error('players/ should only be mentioned as kept');
+  // junk/: 4 missing files in one row
+  const grp = att.locator('.att-row').filter({ hasText: '4 files missing from disk' });
+  await grp.locator('.mono').filter({ hasText: 'junk/' }).waitFor();
+  if (await att.getByText('x1.tmp').count()) throw new Error('grouped files should start collapsed');
+  await grp.getByRole('button', { name: 'Show files' }).click();
+  await att.getByText('x3.tmp').waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-attention-grouped.png') });
+  // stop tracking the game output
+  await sug.getByRole('button', { name: 'Stop tracking' }).click();
+  await page.locator('.modal').getByRole('button', { name: 'Stop tracking' }).click();
+  await sug.waitFor({ state: 'detached' });
+  if (await att.getByText('auto_1.dm_13').count()) throw new Error('missing demos still listed');
+  // ignore junk/
+  await grp.getByRole('button', { name: 'Ignore folder' }).click();
+  await page.locator('.modal').getByRole('button', { name: 'Stop tracking' }).click();
+  await grp.waitFor({ state: 'detached' });
+  const files = (await api('files.list', { projectId: pr.id, limit: 100 })).data.map((f) => f.path).sort();
+  if (JSON.stringify(files) !== JSON.stringify(['players/config_mp.cfg', 'scripts/a.gsc'])) throw new Error('tracked after ignoring: ' + files.join(', '));
+  // and the next scan doesn't bring anything back as missing
+  writeFileSync(join(mod, 'demos/auto_9.dm_13'), 'new');
+  await api('files.scan', { projectId: pr.id });
+  if ((await api('files.list', { projectId: pr.id, state: 'missing', limit: 100 })).data.length) throw new Error('missing files after rescan');
+  await api('projects.remove', { id: pr.id });
+  await page.getByRole('button', { name: 'Dashboard' }).click();
 });
 
 await step('Dashboard: remove a managed project and delete its folder', async () => {

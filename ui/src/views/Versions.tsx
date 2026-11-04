@@ -303,8 +303,8 @@ export function FileTimeline({ fileId, fileName, absPath, path, projectId, prese
 }
 
 /** "Show changes" / "Hide changes": a real bordered button with a chevron, so it reads as clickable. */
-export function RevealButton({ open, onClick }: { open: boolean; onClick: () => void }) {
-  return <button className={cx('btn sm reveal', open && 'on')} aria-expanded={open} onClick={onClick}><LuChevronDown className="chev" /> {open ? 'Hide changes' : 'Show changes'}</button>;
+export function RevealButton({ open, onClick, label }: { open: boolean; onClick: () => void; label?: string }) {
+  return <button className={cx('btn sm reveal', open && 'on')} aria-expanded={open} onClick={onClick}><LuChevronDown className="chev" /> {label || (open ? 'Hide changes' : 'Show changes')}</button>;
 }
 
 export { LuSave };

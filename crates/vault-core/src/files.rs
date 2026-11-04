@@ -128,8 +128,10 @@ impl Ignore {
             if let Some(e) = l.strip_prefix("*.") {
                 ig.exts.insert(e.to_string());
             } else if let Some(d) = l.strip_suffix('/') {
+                // `/name/` is that folder at the project root only; `name/` is any folder with that name
+                let rooted = d.starts_with('/');
                 let d = d.trim_start_matches('/');
-                if d.contains('/') { ig.dir_paths.push(d.to_string()) } else { ig.dirs.insert(d.to_string()); }
+                if d.contains('/') || rooted { ig.dir_paths.push(d.to_string()) } else { ig.dirs.insert(d.to_string()); }
             } else if l.contains('/') {
                 ig.paths.insert(l.trim_start_matches('/').to_string());
             } else {
@@ -146,6 +148,17 @@ impl Ignore {
     pub(crate) fn skip_file(&self, name: &str, rel: &str) -> bool {
         let n = name.to_lowercase();
         self.paths.contains(&rel.to_lowercase()) || self.names.contains(&n) || self.exts.contains(&extension_of(&n)) || n.starts_with(".pv-tmp-")
+    }
+    /// Whether a project-relative file path is excluded by these rules,
+    /// directly or through one of its folders.
+    pub fn ignores_path(&self, rel: &str) -> bool {
+        let parts: Vec<&str> = rel.split('/').collect();
+        for i in 0..parts.len().saturating_sub(1) {
+            if self.skip_dir(parts[i], &parts[..=i].join("/")) {
+                return true;
+            }
+        }
+        self.skip_file(parts.last().copied().unwrap_or(""), rel)
     }
 }
 
@@ -247,6 +260,8 @@ pub struct ScanReport {
     pub errors: Vec<String>,
     pub hashed: usize,
     pub versioned: usize,
+    /// records dropped because an ignore rule now covers them
+    pub dropped_ignored: usize,
 }
 
 impl ScanReport {
@@ -334,8 +349,15 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
             let Some(r) = by_path.get(rel) else { continue };
             let fid = r.s("id");
             let was_missing = r.s("state") != "present"; // missing, or deleted earlier and now back
-            if !was_missing && r.i("size") == seen.size && r.i("mtime") == seen.mtime && r.os("sha256").is_some() {
-                continue; // unchanged: no write, keeps rescans of big trees cheap
+            // Unchanged (same size and modified time): no read, keeps rescans of big
+            // trees cheap. But only trust that when the file was last modified
+            // well before we last read it: a same-size edit in the same timestamp
+            // tick as that read would otherwise go unnoticed forever (Git's
+            // "racy timestamp" problem). last_seen is when we last read it; 2 s
+            // also covers FAT/exFAT drives, which store times in 2 s steps.
+            let settled = seen.mtime < r.i("last_seen") - 2000;
+            if !was_missing && r.i("size") == seen.size && r.i("mtime") == seen.mtime && r.os("sha256").is_some() && settled {
+                continue;
             }
             let h = hash(rel, &mut rep);
             let content_changed = h.is_some() && h != r.os("sha256");
@@ -442,6 +464,13 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
             if consumed_gone.contains(&gid) {
                 continue;
             }
+            // Gone because an ignore rule now covers it (not deleted): drop the
+            // record quietly unless it holds something of yours.
+            if ig.ignores_path(&g.s("rel_path")) && !has_user_data(db, &gid)? {
+                drop_record(v, db, &gid)?;
+                rep.dropped_ignored += 1;
+                continue;
+            }
             if g.s("state") == "present" {
                 db.exec("UPDATE files SET state='missing' WHERE id=?", p![gid.clone()])?;
                 event(v, project_id, &gid, "missing", &format!("No longer at {}", g.s("rel_path")), None)?;
@@ -507,6 +536,9 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
             rep.errors.extend(errs);
         }
         Err(e) => rep.errors.push(format!("Saving versions failed: {e}")),
+    }
+    if rep.dropped_ignored > 0 {
+        crate::versions::gc(v)?;
     }
     Ok(rep)
 }
@@ -585,6 +617,71 @@ pub fn resolve_review(v: &Vault, review_id: &str, accept: bool) -> DbResult<Json
 }
 
 /// Permanently forgets a missing file's record (and its documentation).
+/// Drops a file record (the file on disk is untouched), with its automatic
+/// copies' search entries; call versions::gc afterwards to free their data.
+fn drop_record(v: &Vault, db: &crate::db::Db, fid: &str) -> DbResult<()> {
+    for r in db.query("SELECT id FROM file_versions WHERE file_id=?", p![fid])? {
+        search::unindex(v, "backup", &r.s("id"))?;
+    }
+    search::unindex(v, "file", fid)?;
+    db.exec("DELETE FROM files WHERE id=?", p![fid])?;
+    Ok(())
+}
+
+/// Whether a file record holds anything the user made: notes, links, tags or
+/// a backup they made (named, or kept on save). Automatic copies don't count:
+/// Mothball made those itself. Records without any can be dropped without
+/// losing work.
+pub fn has_user_data(db: &crate::db::Db, fid: &str) -> DbResult<bool> {
+    Ok(db.scalar_i64(
+        "SELECT EXISTS(SELECT 1 FROM file_docs WHERE file_id=?1 AND (purpose!='' OR notes_md!='' OR warnings!='' OR custom_json NOT IN ('','{}')))
+             OR EXISTS(SELECT 1 FROM links WHERE (a_type='file' AND a_id=?1) OR (b_type='file' AND b_id=?1))
+             OR EXISTS(SELECT 1 FROM entity_tags WHERE entity_type='file' AND entity_id=?1)
+             OR EXISTS(SELECT 1 FROM file_versions WHERE file_id=?1 AND (name!='' OR note!='' OR reason IN ('manual','pre-save','post-save')))",
+        p![fid],
+    )? == 1)
+}
+
+/// "Ignore folder": stops tracking a whole folder. With `anywhere`, every
+/// folder with that name (`name/`); otherwise just this folder (`/a/b/`).
+/// Records under it that hold nothing of yours are dropped now; ones with
+/// notes, links, tags or backups are kept (and counted) so nothing you wrote
+/// disappears without you seeing it.
+pub fn ignore_folder(v: &Vault, project_id: &str, dir: &str, anywhere: bool) -> DbResult<Json> {
+    let dir = dir.replace('\\', "/").trim_matches('/').to_string();
+    if dir.is_empty() {
+        return Err("Pick a folder inside the project".into());
+    }
+    if anywhere && dir.contains('/') {
+        return Err("Only a single folder name can be ignored everywhere".into());
+    }
+    let rule = if anywhere { format!("{dir}/") } else { format!("/{dir}/") };
+    let rules = v.db.one("SELECT ignore_globs FROM projects WHERE id=?", p![project_id])?.ok_or("Project not found")?.s("ignore_globs");
+    if !rules.lines().any(|l| l.trim().eq_ignore_ascii_case(&rule)) {
+        let new_rules = if rules.trim().is_empty() { rule.clone() } else { format!("{}\n{rule}", rules.trim_end()) };
+        v.db.exec("UPDATE projects SET ignore_globs=? WHERE id=?", p![new_rules, project_id])?;
+    }
+    let ig = Ignore::parse(&rule);
+    let (mut dropped, mut kept) = (0i64, 0i64);
+    v.db.tx(|db| {
+        for f in db.query("SELECT id, rel_path FROM files WHERE project_id=? AND state IN ('present','missing')", p![project_id])? {
+            if !ig.ignores_path(&f.s("rel_path")) {
+                continue;
+            }
+            if has_user_data(db, &f.s("id"))? {
+                kept += 1;
+                continue;
+            }
+            drop_record(v, db, &f.s("id"))?;
+            dropped += 1;
+        }
+        Ok(())
+    })?;
+    crate::versions::gc(v)?;
+    timeline::add(v, project_id, "files", &format!("Stopped tracking {} ({} file{})", if anywhere { format!("every {dir}/ folder") } else { format!("{dir}/") }, dropped, if dropped == 1 { "" } else { "s" }), "", None, false)?;
+    Ok(Json::obj().with("rule", rule).with("dropped", dropped).with("kept", kept))
+}
+
 pub fn forget_missing(v: &Vault, file_id: &str) -> DbResult<()> {
     let r = v.db.one("SELECT state FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
     if r.s("state") != "missing" {
@@ -1771,6 +1868,87 @@ mod tests {
         assert_eq!(d.get("diff").unwrap().get("removed").and_then(|x| x.as_i64()), Some(1));
     }
 
+    /// User report: IW4X writes demos/auto_*.dm_13 (+ .json) on every match
+    /// and deletes old ones, flooding "Needs your attention" with missing files.
+    #[test]
+    fn ignoring_a_folder_stops_the_missing_file_flood_but_keeps_your_notes() {
+        let (t, v) = crate::testutil::vault();
+        let dir = t.0.join("P");
+        std::fs::create_dir_all(dir.join("demos")).unwrap();
+        std::fs::create_dir_all(dir.join("scripts/demos")).unwrap();
+        std::fs::write(dir.join("main.gsc"), "init() {}\n").unwrap();
+        std::fs::write(dir.join("scripts/demos/keep.gsc"), "x() {}\n").unwrap();
+        for i in 0..6 {
+            std::fs::write(dir.join(format!("demos/auto_{i}.dm_13")), [0u8, 1, 2, i]).unwrap();
+        }
+        std::fs::write(dir.join("demos/notes.txt"), "best clip").unwrap();
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "P").with("category", "addon").with("linkPath", dir.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        scan(&v, &pid).unwrap();
+        let noted = v.db.one("SELECT id FROM files WHERE rel_path='demos/notes.txt'", p![]).unwrap().unwrap().s("id");
+        docs_save(&v, &noted, &Json::obj().with("purpose", "the good one")).unwrap();
+        // the game rotates its demos: old ones gone, new ones in
+        for i in 0..3 {
+            std::fs::remove_file(dir.join(format!("demos/auto_{i}.dm_13"))).unwrap();
+        }
+        scan(&v, &pid).unwrap();
+        let missing = || v.db.scalar_i64("SELECT COUNT(*) FROM files WHERE project_id=? AND state='missing'", p![pid.as_str()]).unwrap();
+        assert_eq!(missing(), 3);
+
+        // "Ignore folder" on demos/ (this folder only)
+        let r = ignore_folder(&v, &pid, "demos", false).unwrap();
+        assert_eq!(r.str_of("rule").as_deref(), Some("/demos/"));
+        assert_eq!(r.get("dropped").and_then(|x| x.as_i64()), Some(6), "3 missing + 3 present demos");
+        assert_eq!(r.get("kept").and_then(|x| x.as_i64()), Some(1), "the file with notes");
+        std::fs::write(dir.join("demos/auto_9.dm_13"), b"new").unwrap();
+        scan(&v, &pid).unwrap();
+        assert_eq!(v.db.scalar_i64("SELECT COUNT(*) FROM files WHERE rel_path LIKE 'demos/auto_%'", p![]).unwrap(), 0, "new demos aren't picked up");
+        assert_eq!(missing(), 1, "only the file you documented is shown as gone");
+        assert!(v.db.one("SELECT 1 FROM files WHERE rel_path='scripts/demos/keep.gsc' AND state='present'", p![]).unwrap().is_some(), "/demos/ is only the root folder");
+    }
+
+    #[test]
+    fn adding_an_ignore_rule_by_hand_does_not_turn_files_into_missing() {
+        let (t, v) = crate::testutil::vault();
+        let dir = t.0.join("P");
+        std::fs::create_dir_all(dir.join("logs")).unwrap();
+        std::fs::write(dir.join("logs/a.log"), "x").unwrap();
+        std::fs::write(dir.join("main.gsc"), "init() {}\n").unwrap();
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "P").with("linkPath", dir.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        scan(&v, &pid).unwrap();
+        crate::api::dispatch(&v, "projects.update", &Json::obj().with("id", pid.as_str()).with("patch", Json::obj().with("ignoreGlobs", "logs/"))).unwrap();
+        scan(&v, &pid).unwrap();
+        assert_eq!(v.db.scalar_i64("SELECT COUNT(*) FROM files WHERE project_id=? AND state='missing'", p![pid.as_str()]).unwrap(), 0);
+        assert_eq!(v.db.scalar_i64("SELECT COUNT(*) FROM files WHERE project_id=?", p![pid.as_str()]).unwrap(), 1);
+    }
+
+    /// Found by the stress test: a same-size edit in the same timestamp tick
+    /// as the scan that read the file kept the old checksum forever.
+    #[test]
+    fn a_same_size_edit_in_the_same_timestamp_tick_is_still_noticed() {
+        let (t, v) = crate::testutil::vault();
+        let dir = t.0.join("P");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("a.bin");
+        std::fs::write(&f, b"AAAA").unwrap();
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "P").with("linkPath", dir.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        scan(&v, &pid).unwrap();
+        let mt = std::fs::metadata(&f).unwrap().modified().unwrap();
+        std::fs::write(&f, b"BBBB").unwrap(); // same size…
+        std::fs::File::options().write(true).open(&f).unwrap().set_modified(mt).unwrap(); // …same modified time
+        scan(&v, &pid).unwrap();
+        let sha = v.db.one("SELECT sha256 FROM files WHERE project_id=?", p![pid.as_str()]).unwrap().unwrap().s("sha256");
+        assert_eq!(sha, crate::util::sha256_bytes(b"BBBB"));
+    }
+
+    #[test]
+    fn rooted_folder_rules_match_only_that_folder() {
+        let ig = Ignore::parse("/demos/\nlogs/");
+        assert!(ig.ignores_path("demos/a.dm_13"));
+        assert!(!ig.ignores_path("mods/x/demos/a.dm_13"));
+        assert!(ig.ignores_path("mods/x/logs/console.log"));
+        assert!(!ig.ignores_path("demos.gsc"));
+    }
+
     #[test]
     fn text_sniffing() {
         assert!(looks_text(b"hello\r\nworld\t"));
@@ -1865,7 +2043,12 @@ mod tests {
         let wid = id_at(&v, &pid, "scripts/weapon_tuner.gsc");
         docs_save(&v, &wid, &Json::parse(r#"{"purpose":"Handles weapon tuning","notes":"- instashoot config","tags":["weapons"]}"#).unwrap()).unwrap();
 
-        // unchanged rescan: nothing hashed
+        // rescan right away: files written moments ago are read again once (racy
+        // timestamps), and found unchanged
+        let r = scan(&v, &pid).unwrap();
+        assert_eq!((r.hashed, r.added, r.modified), (2, 0, 0));
+        // once they've settled, an unchanged rescan reads nothing
+        v.db.exec("UPDATE files SET last_seen=last_seen+10000 WHERE project_id=?", p![pid.as_str()]).unwrap();
         let r = scan(&v, &pid).unwrap();
         assert_eq!((r.hashed, r.added, r.modified), (0, 0, 0));
 

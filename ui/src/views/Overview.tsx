@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   LuTriangleAlert, LuGitCompareArrows, LuPlus, LuTrash2, LuCircleCheck, LuCircleX, LuFileWarning, LuPencil,
   LuNotebookPen, LuListTodo, LuHistory, LuChevronRight, LuDiff, LuBug, LuImage, LuCode,
-  LuInfo, LuFileClock, LuSlidersHorizontal, LuClock, LuFolder, LuPlug,
+  LuInfo, LuFileClock, LuSlidersHorizontal, LuClock, LuFolder, LuFolderX, LuPlug,
 } from 'react-icons/lu';
 import { DepsBody, depsSummary, type Dep } from './Deps';
 import { SpoolChip } from './Printers';
@@ -10,7 +10,7 @@ import { call, type Project } from '../ipc';
 import { KindIcon, Modal, StatusPill, TagInput, useAction, useLoad, useConfirm, useToast } from '../components/common';
 import { PictureDialog, useThumb } from './Dashboard';
 import { ago, bytes, cx, dateTime } from '../format';
-import { CompareDialog } from './Versions';
+import { CompareDialog, RevealButton } from './Versions';
 import { Retention } from './History';
 import { TimeCard, fmtHM } from './TimeCard';
 import { PanelBoard } from '../components/Panels';
@@ -126,11 +126,26 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const p = ctx.project;
   const act = useAction();
   const confirm = useConfirm();
+  const toast = useToast();
   const [editing, setEditing] = useState<null | 'general' | 'details' | 'files'>(null);
   const [compare, setCompare] = useState<{ fileId: string; name: string } | null>(null);
   const reviews = useLoad(() => call<any[]>('files.reviews', { projectId: p.id }), [p.id, ctx.scanTick]);
   const changed = useLoad(() => call<any[]>('files.list', { projectId: p.id, changedOnly: true, limit: 50 }), [p.id, ctx.scanTick]);
-  const missing = useLoad(() => call<any[]>('files.list', { projectId: p.id, state: 'missing', limit: 50 }), [p.id, ctx.scanTick]);
+  const missing = useLoad(() => call<any[]>('files.list', { projectId: p.id, state: 'missing', limit: 5000 }), [p.id, ctx.scanTick]);
+  // folders this mod type's game writes on its own (demos, logs…), for projects not ignoring them yet
+  const ignoreSug = useLoad(() => call<{ subtype: string; folders: { rule: string; folder: string; files: number; missing: number }[] }>('projects.ignoreSuggestions', { id: p.id }), [p.id, ctx.scanTick]);
+  const sugFolders = ignoreSug.data?.folders || [];
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  // missing files grouped by folder: 3+ in one folder collapse into one row
+  const missingGroups = useMemo(() => {
+    const by = new Map<string, any[]>();
+    for (const f of missing.data || []) {
+      const d = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
+      if (!by.has(d)) by.set(d, []);
+      by.get(d)!.push(f);
+    }
+    return [...by.entries()].map(([dir, files]) => ({ dir, files })).sort((a, b) => b.files.length - a.files.length || a.dir.localeCompare(b.dir));
+  }, [missing.data]);
   const groups = useLoad(() => call<any[]>('files.groups', { projectId: p.id }), [p.id, ctx.scanTick]);
   const tasks = useLoad(() => call<any[]>('tasks.list', { projectId: p.id }), [p.id]);
   const notes = useLoad(() => call<any[]>('notes.tree', { projectId: p.id }), [p.id]);
@@ -147,7 +162,23 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const custom = Object.entries((p.module?.custom || {}) as Record<string, string>).filter(([, v]) => v);
   const printLog: any[] = p.module?.printLog || [];
   const nextTasks = (tasks.data || []).filter((t) => t.status !== 'done').slice(0, 5);
-  const attention = (reviews.data?.length || 0) + (changed.data?.length || 0) + (missing.data?.length || 0);
+  const attention = (reviews.data?.length || 0) + (changed.data?.length || 0) + (missing.data?.length || 0) + (sugFolders.length ? 1 : 0);
+  const ignoreFolders = async (dirs: { dir: string; anywhere: boolean }[], title: string, body: ReactNode) => {
+    if (!(await confirm({ title, confirm: 'Stop tracking', body }))) return;
+    let kept = 0, done = false;
+    await act(async () => {
+      for (const d of dirs) kept += (await call<{ kept: number }>('files.ignoreFolder', { projectId: p.id, dir: d.dir, anywhere: d.anywhere })).kept;
+      done = true;
+    });
+    if (done) toast(kept ? `No longer tracked. ${kept} file${kept === 1 ? '' : 's'} with your notes or backups ${kept === 1 ? 'was' : 'were'} kept; forget ${kept === 1 ? 'it' : 'them'} yourself if not needed.` : 'No longer tracked', 'success');
+    missing.reload(); ignoreSug.reload(); ctx.reload();
+  };
+  const forgetMany = async (files: any[], where: string) => {
+    const noted = files.filter((f) => f.hasDocs).length;
+    if (await confirm({ title: `Forget ${files.length} missing files?`, danger: true, confirm: 'Forget all', body: <>The records for the {files.length} missing files in <span className="mono">{where}</span>{noted ? <>, including notes on {noted} of them,</> : ''} are removed from the vault. Nothing on disk changes. New files there will still be tracked.</> })) {
+      await act(() => call('files.forgetMissingMany', { ids: files.map((f) => f.id) })); missing.reload(); ctx.reload();
+    }
+  };
   const recentNotes = [...(notes.data || [])].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
   const openCount = (tasks.data || []).filter((t) => t.status !== 'done').length;
   const timeSum = useLoad(() => call<{ totalMs: number }>('time.summary', { projectId: p.id, since: Date.now() }), [p.id, ctx.scanTick]);
@@ -201,7 +232,41 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
                 <button className="btn sm ghost" onClick={async () => { await act(() => call('files.markReviewed', { ids: [f.id] })); changed.reload(); ctx.reload(); }}>Dismiss</button>
               </div>
             ))}
-            {(missing.data || []).map((f) => (
+            {sugFolders.length > 0 && (
+              <div className="att-row att-suggest">
+                <LuFolderX />
+                <div className="grow small">
+                  <div><b>Stop tracking game output?</b> {typeLabel(tkey)} writes {sugFolders.map((f, i) => <span key={f.rule}>{i ? ', ' : ''}<span className="mono">{f.folder}/</span></span>)} on its own ({sugFolders.reduce((n, f) => n + f.files, 0)} files{sugFolders.some((f) => f.missing) ? `, ${sugFolders.reduce((n, f) => n + f.missing, 0)} already gone` : ''}).</div>
+                  <div className="dim">Match demos, logs, crash dumps and screenshots come and go as you play. Your binds and settings in <span className="mono">players/</span> stay tracked.</div>
+                </div>
+                <button className="btn sm" onClick={() => ignoreFolders(sugFolders.map((f) => ({ dir: f.folder, anywhere: true })), 'Stop tracking game output?',
+                  <>Mothball stops tracking every {sugFolders.map((f, i) => <span key={f.rule}>{i ? ', ' : ''}<span className="mono">{f.folder}/</span></span>)} folder in this project. Nothing on disk changes, and files with your notes or backups are kept. To undo it, remove the rule under “Folders and file types to skip” when editing the project.</>)}><LuFolderX /> Stop tracking</button>
+                <button className="btn sm ghost" onClick={async () => { await act(() => call('projects.declineIgnoreSuggestions', { id: p.id, rules: sugFolders.map((f) => f.rule) })); ignoreSug.reload(); }}>Keep tracking</button>
+              </div>
+            )}
+            {missingGroups.filter((g) => g.files.length >= 3).map((g) => {
+              const where = g.dir ? `${g.dir}/` : 'the project folder';
+              const isOpen = openGroup === g.dir;
+              return (
+                <div key={'g:' + g.dir}>
+                  <div className="att-row">
+                    <LuTriangleAlert />
+                    <div className="grow small"><span className="mono">{where}</span> <span className="dim">{g.files.length} files missing from disk</span></div>
+                    <RevealButton open={isOpen} onClick={() => setOpenGroup(isOpen ? null : g.dir)} label={isOpen ? 'Hide files' : 'Show files'} />
+                    <button className="btn sm" onClick={() => forgetMany(g.files, where)}>Forget all</button>
+                    {g.dir && <button className="btn sm" title="Stop tracking this folder: its files won't show up here again" onClick={() => ignoreFolders([{ dir: g.dir, anywhere: false }], `Stop tracking ${where}?`,
+                      <>Mothball stops tracking <span className="mono">{where}</span> and everything in it, including files added there later. Nothing on disk changes, and files with your notes or backups are kept. To undo it, remove the rule under “Folders and file types to skip” when editing the project.</>)}><LuFolderX /> Ignore folder</button>}
+                  </div>
+                  {isOpen && <div className="att-sub">{g.files.map((f) => (
+                    <div key={f.id} className="att-row small">
+                      <span className="mono grow">{f.name}</span>
+                      <button className="btn sm ghost" onClick={() => ctx.openFile(f.id)}>Open</button>
+                    </div>
+                  ))}</div>}
+                </div>
+              );
+            })}
+            {missingGroups.filter((g) => g.files.length < 3).flatMap((g) => g.files).map((f) => (
               <div key={f.id} className="att-row">
                 <LuTriangleAlert />
                 <div className="grow small"><span className="mono">{f.path}</span> <span className="dim">is missing from disk</span>{f.hasDocs && <span className="dim">; its notes are kept</span>}</div>
@@ -400,7 +465,7 @@ export function EditProjectDialog({ ctx, initialTab, onClose }: { ctx: ProjectCt
         </>}
         <div style={{ margin: '10px 0' }}><Retention projectId={p.id} onDone={() => stats.reload()} /></div>
         <h3 style={{ margin: '16px 0 6px' }}>Folders and file types to skip</h3>
-        <p className="small dim" style={{ marginTop: 0 }}>One per line: <code>Library/</code> (folder anywhere), <code>Assets/Generated/</code> (folder path), <code>*.tmp</code>, or a file name. .git and node_modules are always skipped.</p>
+        <p className="small dim" style={{ marginTop: 0 }}>One per line: <code>Library/</code> (folder anywhere), <code>/demos/</code> (that folder at the top only), <code>Assets/Generated/</code> (folder path), <code>*.tmp</code>, or a file name. .git and node_modules are always skipped.</p>
         <textarea className="input code" rows={5} value={f.ignoreGlobs} onChange={(e) => setF({ ...f, ignoreGlobs: e.target.value })} />
       </>}
     </Modal>

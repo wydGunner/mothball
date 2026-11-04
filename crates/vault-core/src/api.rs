@@ -112,6 +112,18 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "files.reviews" => files::reviews(v, &s(a, "projectId")?),
         "files.resolveReview" => files::resolve_review(v, &s(a, "id")?, a.get("accept").and_then(|x| x.as_bool()).unwrap_or(false)),
         "files.forgetMissing" => files::forget_missing(v, &s(a, "id")?).and_then(|_| ok()),
+        "files.forgetMissingMany" => {
+            let mut n = 0;
+            for id in strs(a, "ids") {
+                if files::forget_missing(v, &id).is_ok() {
+                    n += 1;
+                }
+            }
+            Ok(Json::obj().with("forgotten", n as i64))
+        }
+        "files.ignoreFolder" => files::ignore_folder(v, &s(a, "projectId")?, &s(a, "dir")?, a.get("anywhere").and_then(|x| x.as_bool()).unwrap_or(false)),
+        "projects.ignoreSuggestions" => projects::ignore_suggestions(v, &s(a, "id")?),
+        "projects.declineIgnoreSuggestions" => projects::decline_ignore_suggestions(v, &s(a, "id")?, &strs(a, "rules")).and_then(|_| ok()),
         "files.markReviewed" => files::mark_reviewed(v, &strs(a, "ids")).and_then(|_| ok()),
         "files.duplicates" => files::duplicates(v, &s(a, "projectId")?),
         "files.groups" => files::groups(v, &s(a, "projectId")?),

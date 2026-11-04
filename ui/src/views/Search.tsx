@@ -49,7 +49,7 @@ export function SearchView({ nav, initial }: { nav: Nav; initial?: string }) {
   }, [q, type, project]);
 
   return (
-    <div className="page" style={{ maxWidth: 1000 }}>
+    <div className="page narrow" style={{ maxWidth: 1100 }}>
       <div className="row"><LuSearch size={18} /><input ref={input} className="input" style={{ fontSize: 15, padding: '9px 12px' }} placeholder="Search projects, file names & paths, file documentation, notes, tasks, bugs, journal…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
       <div className="toolbar">
         <div className="seg">{TYPES.map(([k, l]) => <button key={k} className={cx(type === k && 'on')} onClick={() => setType(k)}>{l}</button>)}</div>

@@ -42,6 +42,60 @@ pub fn default_ignores(category: &str) -> &'static str {
     }
 }
 
+/// Folders a game writes and deletes on its own, by mod type: match demos,
+/// logs, crash dumps, screenshots. `players/` (binds and settings) is left
+/// tracked on purpose.
+pub fn subtype_ignores(subtype: &str) -> &'static [&'static str] {
+    match subtype {
+        "iw4x" => &["demos/", "logs/", "minidumps/", "screenshots/"],
+        _ => &[],
+    }
+}
+
+/// For a project whose mod type has game-output folders it isn't ignoring
+/// yet (made before these defaults, or the type was set later): the folders
+/// it actually has files in, unless the user said to keep tracking them.
+pub fn ignore_suggestions(v: &Vault, id: &str) -> DbResult<Json> {
+    let pr = v.db.one("SELECT module_json, ignore_globs FROM projects WHERE id=?", p![id])?.ok_or("Project not found")?;
+    let sub = Json::parse(&pr.s("module_json")).ok().and_then(|m| m.str_of("subtype")).unwrap_or_default();
+    let declined = v.db.one("SELECT value FROM meta WHERE key=?", p![format!("ignore-declined:{id}")])?.map(|r| r.s("value")).unwrap_or_default();
+    let have: Vec<String> = pr.s("ignore_globs").lines().map(|l| l.trim().to_lowercase()).collect();
+    let files = v.db.query("SELECT rel_path, state FROM files WHERE project_id=? AND state IN ('present','missing')", p![id])?;
+    let mut out = Vec::new();
+    for rule in subtype_ignores(&sub) {
+        if have.iter().any(|h| h == rule) || declined.lines().any(|d| d == *rule) {
+            continue;
+        }
+        let ig = crate::files::Ignore::parse(rule);
+        let (mut n, mut gone) = (0i64, 0i64);
+        for f in &files {
+            if ig.ignores_path(&f.s("rel_path")) {
+                n += 1;
+                if f.s("state") == "missing" {
+                    gone += 1;
+                }
+            }
+        }
+        if n > 0 {
+            out.push(Json::obj().with("rule", *rule).with("folder", rule.trim_end_matches('/')).with("files", n).with("missing", gone));
+        }
+    }
+    Ok(Json::obj().with("subtype", sub).with("folders", Json::Arr(out)))
+}
+
+/// "Keep tracking": don't suggest these folders for this project again.
+pub fn decline_ignore_suggestions(v: &Vault, id: &str, rules: &[String]) -> DbResult<()> {
+    let key = format!("ignore-declined:{id}");
+    let mut cur: Vec<String> = v.db.one("SELECT value FROM meta WHERE key=?", p![key.clone()])?.map(|r| r.s("value")).unwrap_or_default().lines().map(String::from).collect();
+    for r in rules {
+        if !cur.contains(r) {
+            cur.push(r.clone());
+        }
+    }
+    v.db.exec("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)", p![key, cur.join("\n")])?;
+    Ok(())
+}
+
 pub struct NewProject {
     pub name: String,
     pub description: String,
@@ -95,7 +149,12 @@ pub fn create(v: &Vault, np: NewProject) -> DbResult<Json> {
                 mode,
                 root.to_string_lossy().to_string(),
                 np.module.to_string(),
-                default_ignores(&category),
+                {
+                    let sub = np.module.str_of("subtype").unwrap_or_default();
+                    let mut rules: Vec<&str> = default_ignores(&category).lines().filter(|l| !l.is_empty()).collect();
+                    rules.extend(subtype_ignores(&sub).iter().copied());
+                    rules.join("\n")
+                },
                 now,
                 now,
                 now
@@ -852,6 +911,34 @@ mod custom_type_tests {
         assert_eq!(again.as_arr().unwrap()[0].str_of("id"), t.str_of("id"));
         assert_eq!(custom_types(&v).unwrap(), again);
         assert!(save_custom_types(&v, &Json::Arr(vec![Json::obj().with("name", "x").with("base", "nope")])).is_err());
+    }
+
+    #[test]
+    fn iw4x_projects_ignore_game_output_and_older_ones_get_a_suggestion() {
+        let (t, v) = crate::testutil::vault();
+        let dir = t.0.join("M");
+        std::fs::create_dir_all(dir.join("demos")).unwrap();
+        std::fs::create_dir_all(dir.join("players")).unwrap();
+        std::fs::write(dir.join("demos/auto_1.dm_13"), b"d").unwrap();
+        std::fs::write(dir.join("players/config_mp.cfg"), b"bind x").unwrap();
+        // new IW4X project: the defaults are in from the start; players/ stays tracked
+        let m = Json::obj().with("subtype", "iw4x");
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "M").with("category", "addon").with("module", m).with("linkPath", dir.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        crate::files::scan(&v, &pid).unwrap();
+        let paths: Vec<String> = v.db.query("SELECT rel_path FROM files WHERE project_id=?", p![pid.as_str()]).unwrap().iter().map(|r| r.s("rel_path")).collect();
+        assert_eq!(paths, vec!["players/config_mp.cfg".to_string()]);
+        let sug = ignore_suggestions(&v, &pid).unwrap();
+        assert_eq!(sug.get("folders").and_then(|x| x.as_arr()).map(|a| a.len()), Some(0), "nothing to suggest");
+
+        // an older project (made before the defaults): suggested once, until declined
+        v.db.exec("UPDATE projects SET ignore_globs='' WHERE id=?", p![pid.as_str()]).unwrap();
+        crate::files::scan(&v, &pid).unwrap();
+        let sug = ignore_suggestions(&v, &pid).unwrap();
+        let f = sug.get("folders").and_then(|x| x.as_arr()).unwrap();
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].str_of("rule").as_deref(), Some("demos/"));
+        decline_ignore_suggestions(&v, &pid, &["demos/".to_string()]).unwrap();
+        assert_eq!(ignore_suggestions(&v, &pid).unwrap().get("folders").and_then(|x| x.as_arr()).map(|a| a.len()), Some(0));
     }
 
     #[test]

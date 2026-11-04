@@ -57,7 +57,7 @@ export function TimelineTab({ ctx }: { ctx: ProjectCtx }) {
     else if (e.refType === 'file' && e.refId) ctx.openFile(e.refId);
   };
   return (
-    <div className="page" style={{ maxWidth: 900 }}>
+    <div className="page narrow" style={{ maxWidth: 1100 }}>
       <div className="card pad" style={{ marginBottom: 16 }}>
         <h2 style={{ marginBottom: 8 }}>Journal entry</h2>
         <input className="input" placeholder="What did you do / decide / learn?" value={summary} onChange={(e) => setSummary(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && summary.trim() && add()} />
