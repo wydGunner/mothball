@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import { LuSave, LuChevronDown, LuGitCompareArrows, LuUndo2, LuTrash2, LuColumns2, LuRows3, LuSearch, LuDownload, LuPencilLine, LuShieldCheck, LuTag } from 'react-icons/lu';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { LuSave, LuChevronDown, LuChevronUp, LuGitCompareArrows, LuUndo2, LuTrash2, LuColumns2, LuRows3, LuSearch, LuDownload, LuPencilLine, LuShieldCheck, LuTag } from 'react-icons/lu';
 import { call, pickFolder, isTauri, revealPath } from '../ipc';
 import { Modal, TagInput, useAction, useConfirm, useLoad, useToast } from '../components/common';
 import { MonacoDiff } from '../components/CodeEditor';
+import type { DiffHandle } from '../../editor/api';
 import { ago, bytes, cx, dateTime } from '../format';
 import { ChangeDiff, type CompareReq } from './Timeline';
+import { WhyNote } from '../components/WhyNote';
 
 export interface Version { id: string; sha256: string; size: number; path: string; reason: string; note: string; name: string; tags: string[]; at: number; isCurrent: boolean }
 
@@ -141,7 +143,7 @@ export function RestoreDialog({ v, fileName, absPath, present, onClose, onDone }
 }
 
 /** Compare two sides of a file. Without explicit sides: previous version vs current. */
-export function CompareDialog({ fileId, title, old, new: nw, onClose }: { fileId: string; title: string; old?: string; new?: string; onClose: () => void; onRestored?: () => void }) {
+export function CompareDialog({ fileId, title, old, new: nw, onClose, why }: { fileId: string; title: string; old?: string; new?: string; onClose: () => void; onRestored?: () => void; why?: string }) {
   const [sides, setSides] = useState<{ old: string; new: string } | null>(old && nw ? { old, new: nw } : null);
   const [err, setErr] = useState('');
   useEffect(() => {
@@ -156,17 +158,36 @@ export function CompareDialog({ fileId, title, old, new: nw, onClose }: { fileId
   const [noMonaco, setNoMonaco] = useState(false);
   const setM = (m: 'unified' | 'split') => { setMode(m); localStorage.setItem('pv.diffmode', m); };
   const r = res.data;
+  const diffH = useRef<DiffHandle | null>(null);
+  const [nChanges, setNChanges] = useState(0);
+  const [atChange, setAtChange] = useState(0);
+  const lines = (n: number) => `${n} line${n === 1 ? '' : 's'}`;
   return (
     <Modal wide title={<>Changes in <span className="mono">{title}</span></>} onClose={onClose}>
       {err ? <div className="muted">{err}</div> : res.error ? <div className="alert bad">{res.error}</div> : !r ? <div className="muted">Comparing…</div> : <>
-        <div className="row small" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
-          <span className="pill del" title={r.old.sha256}>{r.old.label}</span>→<span className="pill add" title={r.new.sha256}>{r.new.label}</span>
-          {r.kind === 'text' && !r.diff.identical && !r.diff.tooLarge && <span className="grow"><span style={{ color: 'var(--accent)' }}>+{r.diff.added}</span> <span style={{ color: 'var(--accent3)' }}>−{r.diff.removed}</span> lines</span>}
-          {r.kind === 'text' && <div className="seg right"><button className={cx(mode === 'split' && 'on')} onClick={() => setM('split')}><LuColumns2 /> Side by side</button><button className={cx(mode === 'unified' && 'on')} onClick={() => setM('unified')}><LuRows3 /> Unified</button></div>}
+        {why && <div className="cmp-why"><span className="why-label">Why</span> {why}</div>}
+        <div className="cmp-head">
+          <div className="cmp-sides small">
+            <span><span className="cmp-key del" /> <b>Before</b> {r.old.label !== 'Stored copy' && <span className="dim" title={r.old.sha256}>{r.old.label}</span>}</span>
+            <span><span className="cmp-key add" /> <b>After</b> {r.new.label !== 'Stored copy' && <span className="dim" title={r.new.sha256}>{r.new.label}</span>}</span>
+          </div>
+          {r.kind === 'text' && !r.diff.identical && !r.diff.tooLarge && <div className="cmp-sum">
+            <span className="tl-add">{lines(r.diff.added)} added</span>, <span className="tl-del">{lines(r.diff.removed)} removed</span>
+            {nChanges > 0 && <span className="dim"> in {nChanges} place{nChanges === 1 ? '' : 's'}</span>}
+            {!noMonaco && <span className="dim"> · unchanged code is folded: click a fold to expand it</span>}
+          </div>}
+          <div className="row small" style={{ gap: 6 }}>
+            {r.kind === 'text' && !noMonaco && nChanges > 1 && <div className="btngroup">
+              <button className="btn sm" title="Previous change" onClick={() => setAtChange(diffH.current?.prev() || 0)}><LuChevronUp /> Prev</button>
+              <button className="btn sm" title="Next change" onClick={() => setAtChange(diffH.current?.next() || 0)}><LuChevronDown /> Next</button>
+            </div>}
+            {atChange > 0 && <span className="dim">change {atChange} of {nChanges}</span>}
+            {r.kind === 'text' && <div className="seg right"><button className={cx(mode === 'split' && 'on')} onClick={() => setM('split')}><LuColumns2 /> Side by side</button><button className={cx(mode === 'unified' && 'on')} onClick={() => setM('unified')}><LuRows3 /> One column</button></div>}
+          </div>
         </div>
         {r.kind === 'text'
           ? (r.diff.identical ? <div className="muted">The two versions are identical.</div>
-            : !noMonaco ? <MonacoDiff original={r.oldText} modified={r.newText} ext={r.ext || ''} sideBySide={mode === 'split'} onUnavailable={() => setNoMonaco(true)} />
+            : !noMonaco ? <MonacoDiff original={r.oldText} modified={r.newText} ext={r.ext || ''} sideBySide={mode === 'split'} onUnavailable={() => setNoMonaco(true)} handleRef={diffH} onChanges={(n) => { setNChanges(n); setAtChange(0); }} />
             : r.diff.tooLarge ? <div className="muted">The files differ in too many places to show line by line.</div>
             : <StructuredDiff hunks={r.diff.hunks} mode={mode} />)
           : <BinaryCompare r={r} />}
@@ -231,7 +252,7 @@ export function StructuredDiff({ hunks, mode }: { hunks: { lines: DLine[] }[]; m
   );
 }
 
-interface HistEntry { source: string; kind: string; title: string; description?: string; versionId?: string; at: number; sha256?: string; restorable: boolean; commit?: string; from?: string; to?: string }
+interface HistEntry { source: string; kind: string; title: string; description?: string; versionId?: string; at: number; sha256?: string; restorable: boolean; commit?: string; from?: string; to?: string; eventId?: string; note?: string }
 
 export const SOURCE_LABEL: Record<string, string> = {
   backup: 'Backup', 'auto-version': 'Auto version', filesystem: 'Detected on disk', 'project-vault': 'Mothball action', git: 'Git commit', notes: 'Notes',
@@ -275,12 +296,13 @@ export function FileTimeline({ fileId, fileName, absPath, path, projectId, prese
           const diffOpen = !!diffKey && openDiff === diffKey; // collapsed until asked
           return (
             <div key={i}>
-            <div className={cx('tl-row', `src-${e.source}`)}>
+            <div className={cx('tl-row why-host', `src-${e.source}`)} title={e.note ? `Why: ${e.note}` : undefined}>
               <span className={cx('srcbadge', `src-${e.source}`)}>{SOURCE_LABEL[e.source] || e.source}</span>
               <div className="grow" style={{ minWidth: 0 }}>
                 <div><b className={cx(e.source === 'backup' && 'mono')}>{title}</b>{(e.source === 'filesystem' || e.source === 'project-vault') && e.title && <span className="small dim"> — {e.title}</span>}</div>
                 {e.description && <div className="small" style={{ whiteSpace: 'pre-wrap' }}>{e.description}</div>}
                 <div className="small dim" title={dateTime(e.at)}>{dateTime(e.at)} · {ago(e.at)}{e.restorable ? ' · contents stored' : ''}</div>
+                {e.eventId && <WhyNote note={e.note} onSave={async (n) => { await call('files.setEventNote', { id: e.eventId, note: n }); hist.reload(); }} />}
               </div>
               {e.restorable && v && <div className="row" style={{ gap: 2 }}>
                 {!v.isCurrent && present && <button className="btn sm" onClick={() => setCompare(v.id)}><LuGitCompareArrows /> vs now</button>}
@@ -289,14 +311,14 @@ export function FileTimeline({ fileId, fileName, absPath, path, projectId, prese
               </div>}
               {diffKey && <RevealButton open={diffOpen} onClick={() => setOpenDiff(diffOpen ? '' : diffKey)} />}
             </div>
-            {diffOpen && <ChangeDiff fileId={fileId} from={e.from!} to={e.to!} title={fileName} openFile={openFile || (() => {})} onCompare={setCmpReq} />}
+            {diffOpen && <ChangeDiff fileId={fileId} from={e.from!} to={e.to!} title={fileName} openFile={openFile || (() => {})} onCompare={setCmpReq} why={e.note} />}
             </div>
           );
         })}
       </div>
       <p className="small dim">Activity entries record that something happened; they don’t hold file contents and can’t be restored. Backups and auto versions can.</p>
       {compare && <CompareDialog fileId={fileId} title={fileName} old={compare} new="current" onClose={() => setCompare(null)} />}
-      {cmpReq && <CompareDialog fileId={cmpReq.fileId} title={cmpReq.title} old={cmpReq.old} new={cmpReq.new} onClose={() => setCmpReq(null)} />}
+      {cmpReq && <CompareDialog fileId={cmpReq.fileId} title={cmpReq.title} old={cmpReq.old} new={cmpReq.new} why={cmpReq.why} onClose={() => setCmpReq(null)} />}
       {restoreV && <RestoreDialog v={restoreV} fileName={fileName} absPath={absPath} present={present} onClose={() => setRestoreV(null)} onDone={() => { setRestoreV(null); hist.reload(); vers.reload(); onRestored(); }} />}
     </div>
   );

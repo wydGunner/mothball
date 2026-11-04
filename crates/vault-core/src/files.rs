@@ -682,6 +682,18 @@ pub fn ignore_folder(v: &Vault, project_id: &str, dir: &str, anywhere: bool) -> 
     Ok(Json::obj().with("rule", rule).with("dropped", dropped).with("kept", kept))
 }
 
+/// Your "why" for one change to a file (shown in its History). Empty clears it.
+pub fn set_event_note(v: &Vault, id: &str, note: &str) -> DbResult<Json> {
+    let note = note.trim();
+    if note.chars().count() > 2000 {
+        return Err("Keep the note under 2000 characters".into());
+    }
+    if v.db.exec("UPDATE file_events SET note=? WHERE id=?", p![note, id])? == 0 {
+        return Err("Change not found".into());
+    }
+    Ok(Json::obj().with("id", id).with("note", note))
+}
+
 pub fn forget_missing(v: &Vault, file_id: &str) -> DbResult<()> {
     let r = v.db.one("SELECT state FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;
     if r.s("state") != "missing" {
@@ -867,7 +879,7 @@ pub fn events(v: &Vault, file_id: &str, limit: i64) -> DbResult<Json> {
     let mut out: Vec<Json> = Vec::new();
     for r in &rows {
         let sha = r.os("sha256");
-        let mut j = Json::obj().with("kind", r.s("kind")).with("detail", r.s("detail")).with("sha256", sha.clone()).with("at", r.i("at"));
+        let mut j = Json::obj().with("id", r.s("id")).with("kind", r.s("kind")).with("detail", r.s("detail")).with("sha256", sha.clone()).with("at", r.i("at")).with("note", r.s("note"));
         if matches!(r.s("kind").as_str(), "modified" | "restored-version") {
             // before this change: the last content seen, or the last version stored before it
             // (a stored copy can share the change's millisecond; the new content itself is not "before")
@@ -1938,6 +1950,42 @@ mod tests {
         scan(&v, &pid).unwrap();
         let sha = v.db.one("SELECT sha256 FROM files WHERE project_id=?", p![pid.as_str()]).unwrap().unwrap().s("sha256");
         assert_eq!(sha, crate::util::sha256_bytes(b"BBBB"));
+    }
+
+    /// User request: history says what changed but not why. A "why" note on
+    /// a project activity entry and on a single file change.
+    #[test]
+    fn why_notes_on_activity_entries_and_file_changes() {
+        let (t, v) = crate::testutil::vault();
+        let dir = t.0.join("P");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("connect.menu"), "menuDef {}\n").unwrap();
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "P").with("linkPath", dir.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        scan(&v, &pid).unwrap();
+        std::fs::write(dir.join("connect.menu"), "menuDef { rect 0 0 640 480 }\n").unwrap();
+        scan(&v, &pid).unwrap();
+        // the project activity entry for that scan
+        let tl = crate::timeline::list(&v, &pid, 10, None).unwrap();
+        let e = tl.as_arr().unwrap().iter().find(|x| x.str_of("summary").unwrap_or_default().contains("modified")).cloned().expect("scan entry");
+        crate::api::dispatch(&v, "timeline.setNote", &Json::obj().with("id", e.str_of("id").unwrap()).with("note", "  LLM fix for the back button overlap ")).unwrap();
+        let tl = crate::timeline::list(&v, &pid, 10, None).unwrap();
+        let e2 = tl.as_arr().unwrap().iter().find(|x| x.str_of("id") == e.str_of("id")).cloned().unwrap();
+        assert_eq!(e2.str_of("note").as_deref(), Some("LLM fix for the back button overlap"));
+        let hits = crate::api::dispatch(&v, "search", &Json::obj().with("query", "overlap")).unwrap();
+        assert!(hits.to_string().contains("back button overlap"), "the note is searchable: {}", hits.to_string());
+        // clearing it removes it from search
+        crate::api::dispatch(&v, "timeline.setNote", &Json::obj().with("id", e.str_of("id").unwrap()).with("note", "")).unwrap();
+        assert!(!crate::api::dispatch(&v, "search", &Json::obj().with("query", "overlap")).unwrap().to_string().contains("overlap"));
+
+        // the file's own change
+        let fid = v.db.one("SELECT id FROM files WHERE project_id=?", p![pid.as_str()]).unwrap().unwrap().s("id");
+        let ev = events(&v, &fid, 10).unwrap();
+        let m = ev.as_arr().unwrap().iter().find(|x| x.str_of("kind").as_deref() == Some("modified")).cloned().unwrap();
+        crate::api::dispatch(&v, "files.setEventNote", &Json::obj().with("id", m.str_of("id").unwrap()).with("note", "widened the menu for 16:9")).unwrap();
+        let ev = events(&v, &fid, 10).unwrap();
+        assert_eq!(ev.as_arr().unwrap().iter().find(|x| x.str_of("kind").as_deref() == Some("modified")).unwrap().str_of("note").as_deref(), Some("widened the menu for 16:9"));
+        let h = crate::versions::history(&v, &fid).unwrap();
+        assert!(h.as_arr().unwrap().iter().any(|x| x.str_of("note").as_deref() == Some("widened the menu for 16:9") && x.str_of("eventId").is_some()), "the file Timeline shows it too");
     }
 
     #[test]

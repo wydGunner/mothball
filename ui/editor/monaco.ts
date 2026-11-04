@@ -120,8 +120,13 @@ function defineTheme(p: { a1: string; a2: string; a3: string }) {
       'minimap.background': '#000000',
       'diffEditor.insertedTextBackground': p.a1 + '33',
       'diffEditor.insertedLineBackground': p.a1 + '1a',
-      'diffEditor.removedTextBackground': p.a3 + '33',
-      'diffEditor.removedLineBackground': p.a3 + '1a',
+      // removed = grey, so it never looks like an addition in one-accent themes
+      'diffEditor.removedTextBackground': '#ffffff1f',
+      'diffEditor.removedLineBackground': '#ffffff0d',
+      'diffEditorGutter.removedLineBackground': '#ffffff14',
+      'diffEditorGutter.insertedLineBackground': p.a1 + '33',
+      'diffEditor.unchangedRegionBackground': '#0a0a0a',
+      'diffEditor.unchangedRegionForeground': '#8a8a8a',
       'diffEditor.diagonalFill': '#ffffff10',
     },
   });
@@ -208,10 +213,28 @@ export function createDiff(el: HTMLElement, o: DiffOptions): DiffHandle {
   const d = monaco.editor.createDiffEditor(el, {
     theme: 'pv-black', readOnly: true, originalEditable: false, automaticLayout: true, renderSideBySide: o.sideBySide,
     fontFamily: "'Cascadia Code', 'JetBrains Mono', Consolas, monospace", fontSize: 12.5, minimap: { enabled: false }, scrollBeyondLastLine: false,
+    // only the changes and a few lines around them; the rest folds into "N hidden lines"
+    hideUnchangedRegions: { enabled: true, contextLineCount: 3, minimumLineCount: 4, revealLineCount: 20 },
+    renderOverviewRuler: true,
   });
   d.setModel({ original, modified });
+  const changes = () => d.getLineChanges() || [];
+  d.onDidUpdateDiff(() => o.onChanges?.(changes().length));
+  let at = -1;
+  const go = (dir: 1 | -1) => {
+    const cs = changes();
+    if (!cs.length) return 0;
+    at = (at + dir + cs.length) % cs.length;
+    const c = cs[at];
+    const line = c.modifiedEndLineNumber ? c.modifiedStartLineNumber : Math.max(1, c.modifiedStartLineNumber);
+    d.getModifiedEditor().revealLineInCenter(line);
+    d.getModifiedEditor().setPosition({ lineNumber: line, column: 1 });
+    return at + 1;
+  };
   return {
     setSideBySide: (v) => d.updateOptions({ renderSideBySide: v }),
+    next: () => go(1),
+    prev: () => go(-1),
     dispose: () => { d.dispose(); original.dispose(); modified.dispose(); },
   };
 }

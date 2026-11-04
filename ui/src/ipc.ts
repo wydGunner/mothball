@@ -84,7 +84,7 @@ export interface LinkRef { linkId: string; type: 'file' | 'note' | 'task'; id: s
 export interface FileDocs { purpose: string; notes: string; warnings: string; custom: Record<string, string>; updatedAt?: number; fileChangedSinceDoc: boolean }
 export interface FileDetail extends VFile {
   projectId: string; absPath: string; tags: string[]; docs: FileDocs;
-  events: { kind: string; detail: string; at: number; sha256?: string; /** content changes: before and after, for a diff */ from?: string; to?: string }[]; links: LinkRef[];
+  events: { id: string; kind: string; detail: string; at: number; /** your "why" */ note?: string; sha256?: string; /** content changes: before and after, for a diff */ from?: string; to?: string }[]; links: LinkRef[];
   duplicates: { id: string; path: string }[]; meshDimensionsMm?: number[];
 }
 export interface Note { id: string; projectId: string; parentId?: string; title: string; category: string; sort: number; createdAt: number; updatedAt: number; body?: string; links?: LinkRef[] }

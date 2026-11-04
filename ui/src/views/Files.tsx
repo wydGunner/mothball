@@ -19,6 +19,7 @@ import { ImportDialog } from './Import';
 import { SmartSaveDialog, changedLines, getLargeThreshold, getSaveMode, type SmartSaveChoice } from './SmartSave';
 import { DiffView } from './Git';
 import type { ProjectCtx } from './Project';
+import { WhyNote } from '../components/WhyNote';
 
 interface DirNode { path: string; name: string; files: number; children: DirNode[] }
 
@@ -772,10 +773,11 @@ function FileHistory({ f, ctx, highlight }: { f: FileDetail; ctx: ProjectCtx; hi
 function ActivityList({ events, fileId, title, openFile }: { events: FileDetail['events']; fileId: string; title: string; openFile: (id: string) => void }) {
   const [open, setOpen] = useState<number | null>(null); // collapsed until asked
   const [compare, setCompare] = useState<CompareReq | null>(null);
+  const [notes, setNotes] = useState<Record<string, string>>({}); // saved here, shown before the file reloads
   return (
     <>
       {events.map((e, i) => (
-        <div key={i}>
+        <div key={i} className="why-host" title={(notes[e.id] ?? e.note) ? `Why: ${notes[e.id] ?? e.note}` : undefined}>
           <div className="row small" style={{ padding: '3px 0' }}>
             <span className="pill" style={{ minWidth: 72, justifyContent: 'center' }}>{e.kind}</span>
             <span className="grow">{e.detail}</span>
@@ -783,10 +785,11 @@ function ActivityList({ events, fileId, title, openFile }: { events: FileDetail[
             {e.kind === 'modified' && !e.from && <span className="dim" title="What the file looked like before this change wasn’t stored, so the change can’t be shown. Later changes to text files will show.">no earlier copy</span>}
             <span className="dim" title={dateTime(e.at)}>{ago(e.at)}</span>
           </div>
-          {e.from && e.to && open === i && <ChangeDiff fileId={fileId} from={e.from} to={e.to} title={title} openFile={openFile} onCompare={setCompare} />}
+          {e.id && <div className="why-slot"><WhyNote note={notes[e.id] ?? e.note} onSave={async (n) => { await call('files.setEventNote', { id: e.id, note: n }); setNotes((m) => ({ ...m, [e.id]: n })); }} /></div>}
+          {e.from && e.to && open === i && <ChangeDiff fileId={fileId} from={e.from} to={e.to} title={title} openFile={openFile} onCompare={setCompare} why={notes[e.id] ?? e.note} />}
         </div>
       ))}
-      {compare && <CompareDialog fileId={compare.fileId} title={compare.title} old={compare.old} new={compare.new} onClose={() => setCompare(null)} />}
+      {compare && <CompareDialog fileId={compare.fileId} title={compare.title} old={compare.old} new={compare.new} why={compare.why} onClose={() => setCompare(null)} />}
     </>
   );
 }

@@ -340,6 +340,14 @@ CREATE TABLE text_sniff (sha256 TEXT PRIMARY KEY, is_text INTEGER NOT NULL);
 -- deletes itself at this time (NULL = kept until you delete it).
 ALTER TABLE snapshots ADD COLUMN expires_at INTEGER;
 "#,
+), (
+    10,
+    r#"
+-- "Why": your own note on an activity entry or a file change, so the
+-- history says why something changed, not just what.
+ALTER TABLE timeline ADD COLUMN note TEXT NOT NULL DEFAULT '';
+ALTER TABLE file_events ADD COLUMN note TEXT NOT NULL DEFAULT '';
+"#,
 )];
 
 pub fn current_version(db: &Db) -> DbResult<i64> {

@@ -748,7 +748,8 @@ pub fn history(v: &Vault, file_id: &str) -> DbResult<Json> {
                 _ => "filesystem",
             };
             let mut j = Json::obj().with("source", source).with("kind", kind.clone()).with("title", e.str_of("detail").unwrap_or_default())
-                .with("at", e.get("at").and_then(|x| x.as_i64()).unwrap_or(0)).with("sha256", e.str_of("sha256")).with("restorable", false);
+                .with("at", e.get("at").and_then(|x| x.as_i64()).unwrap_or(0)).with("sha256", e.str_of("sha256")).with("restorable", false)
+                .with("eventId", e.str_of("id")).with("note", e.str_of("note").unwrap_or_default());
             if let (Some(a), Some(b)) = (e.str_of("from"), e.str_of("to")) {
                 j.set("from", a);
                 j.set("to", b);

@@ -64,7 +64,7 @@ export function CodeEditor({ value, ext, readOnly, onChange, onSave, onSaveWithB
 }
 
 /** Monaco diff editor when available; returns false so callers can fall back. */
-export function MonacoDiff({ original, modified, ext, sideBySide, onUnavailable }: { original: string; modified: string; ext: string; sideBySide: boolean; onUnavailable: () => void }) {
+export function MonacoDiff({ original, modified, ext, sideBySide, onUnavailable, handleRef, onChanges }: { original: string; modified: string; ext: string; sideBySide: boolean; onUnavailable: () => void; handleRef?: { current: DiffHandle | null }; onChanges?: (n: number) => void }) {
   const el = useRef<HTMLDivElement>(null);
   const h = useRef<DiffHandle | null>(null);
   useEffect(() => {
@@ -73,9 +73,10 @@ export function MonacoDiff({ original, modified, ext, sideBySide, onUnavailable 
       if (gone || !el.current) return;
       if (!m.createDiff) { onUnavailable(); return; }
       const t = getTheme();
-      h.current = m.createDiff(el.current, { original, modified, language: languageFor(ext), sideBySide, palette: { a1: t.a1, a2: t.a2, a3: t.a3 } });
+      h.current = m.createDiff(el.current, { original, modified, language: languageFor(ext), sideBySide, palette: { a1: t.a1, a2: t.a2, a3: t.a3 }, onChanges });
+      if (handleRef) handleRef.current = h.current;
     }).catch(() => { if (!gone) onUnavailable(); });
-    return () => { gone = true; h.current?.dispose(); h.current = null; };
+    return () => { gone = true; h.current?.dispose(); h.current = null; if (handleRef) handleRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [original, modified, ext]);
   useEffect(() => { h.current?.setSideBySide(sideBySide); }, [sideBySide]);

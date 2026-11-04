@@ -5,10 +5,11 @@ import { Empty, useAction, useConfirm, useLoad, useToast } from '../components/c
 import { bytes, cx, day } from '../format';
 import type { ProjectCtx } from './Project';
 import { CompareDialog, StructuredDiff } from './Versions';
+import { WhyNote } from '../components/WhyNote';
 
 interface Change { change: 'added' | 'modified' | 'moved' | 'missing' | 'restored'; fileId: string; path: string; fromPath?: string; from?: string; to?: string }
 interface EntryData { changes?: Change[]; total?: number; fileId?: string; path?: string; from?: string; to?: string; saves?: number }
-interface Entry { id: string; kind: string; summary: string; detail: string; refType?: string; refId?: string; manual: boolean; at: number; data?: EntryData | null }
+interface Entry { id: string; kind: string; summary: string; detail: string; refType?: string; refId?: string; manual: boolean; at: number; data?: EntryData | null; note?: string }
 
 const CHANGE_LABEL: Record<Change['change'], string> = { added: 'Added', modified: 'Changed', moved: 'Moved', missing: 'Missing', restored: 'Back' };
 const expandable = (e: Entry) => !!(e.data && ((e.data.changes && e.data.changes.length) || (e.data.from && e.data.to)));
@@ -71,7 +72,7 @@ export function TimelineTab({ ctx }: { ctx: ProjectCtx }) {
           <div key={d}>
             <div className="tlday">{d}</div>
             {items.map((e) => (
-              <div key={e.id} className={`tlitem ${e.manual ? 'manual' : e.kind}`}>
+              <div key={e.id} className={`tlitem why-host ${e.manual ? 'manual' : e.kind}`} title={e.note ? `Why: ${e.note}` : undefined}>
                 <span className="time">{new Date(e.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span>
                 <div className="grow" style={{ minWidth: 0 }}>
                   {expandable(e)
@@ -80,11 +81,12 @@ export function TimelineTab({ ctx }: { ctx: ProjectCtx }) {
                       </button>
                     : <div style={{ cursor: e.refId ? 'pointer' : undefined }} onClick={() => open(e)}>{e.manual ? <b>{e.summary}</b> : e.summary}</div>}
                   {e.detail && <div className="small muted" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{e.detail}</div>}
+                  <WhyNote note={e.note} onSave={async (n) => { await call('timeline.setNote', { id: e.id, note: n }); tl.reload(); }} />
                   {openIds.has(e.id) && e.data && (
                     <div className="tl-detail">
                       {e.data.changes
                         ? <ChangeList changes={e.data.changes} total={e.data.total || e.data.changes.length} openFile={ctx.openFile} onCompare={setCompare} />
-                        : <ChangeDiff fileId={e.data.fileId!} from={e.data.from!} to={e.data.to!} title={e.data.path || ''} openFile={ctx.openFile} onCompare={setCompare} />}
+                        : <ChangeDiff fileId={e.data.fileId!} from={e.data.from!} to={e.data.to!} title={e.data.path || ''} openFile={ctx.openFile} onCompare={setCompare} why={e.note} />}
                     </div>
                   )}
                 </div>
@@ -99,13 +101,13 @@ export function TimelineTab({ ctx }: { ctx: ProjectCtx }) {
           </div>
         ))}
       </div>
-      {compare && <CompareDialog fileId={compare.fileId} title={compare.title} old={compare.old} new={compare.new} onClose={() => setCompare(null)} />}
+      {compare && <CompareDialog fileId={compare.fileId} title={compare.title} old={compare.old} new={compare.new} why={compare.why} onClose={() => setCompare(null)} />}
       {(tl.data?.length || 0) >= limit && <button className="btn" style={{ marginTop: 12 }} onClick={() => setLimit(limit + 200)}>Load older</button>}
     </div>
   );
 }
 
-export type CompareReq = { fileId: string; title: string; old: string; new: string };
+export type CompareReq = { fileId: string; title: string; old: string; new: string; why?: string };
 
 /** The files one scan found changed. Changed text files expand to their diff. */
 function ChangeList({ changes, total, openFile, onCompare }: { changes: Change[]; total: number; openFile: (id: string) => void; onCompare: (c: CompareReq) => void }) {
@@ -132,9 +134,9 @@ function ChangeList({ changes, total, openFile, onCompare }: { changes: Change[]
 }
 
 /** Inline diff between two stored contents of one file. */
-export function ChangeDiff({ fileId, from, to, title, openFile, onCompare }: { fileId: string; from: string; to: string; title: string; openFile: (id: string) => void; onCompare: (c: CompareReq) => void }) {
+export function ChangeDiff({ fileId, from, to, title, openFile, onCompare, why }: { fileId: string; from: string; to: string; title: string; openFile: (id: string) => void; onCompare: (c: CompareReq) => void; why?: string }) {
   const r = useLoad(() => call<any>('versions.compare', { fileId, old: `sha:${from}`, new: `sha:${to}` }), [fileId, from, to]);
-  const full = () => onCompare({ fileId, title, old: `sha:${from}`, new: `sha:${to}` });
+  const full = () => onCompare({ fileId, title, old: `sha:${from}`, new: `sha:${to}`, why });
   if (r.error) return <div className="small muted tl-diffnote">{String(r.error).replace(/^NOT_KEPT:/, '')}</div>;
   const d = r.data;
   if (!d) return <div className="small dim tl-diffnote">Loading changes…</div>;
@@ -144,7 +146,7 @@ export function ChangeDiff({ fileId, from, to, title, openFile, onCompare }: { f
         {d.kind === 'text'
           ? d.diff.identical ? <span className="muted">No text changes (only line endings or encoding).</span>
             : d.diff.tooLarge ? <span className="muted">Changed in too many places to list line by line.</span>
-            : <span><span className="tl-add">+{d.diff.added}</span> <span className="tl-del">−{d.diff.removed}</span> lines</span>
+            : <span><span className="tl-add">{d.diff.added} line{d.diff.added === 1 ? '' : 's'} added</span>, <span className="tl-del">{d.diff.removed} removed</span></span>
           : <span className="muted">Binary file · {bytes(d.old.size)} → {bytes(d.new.size)}</span>}
         <span className="right row" style={{ gap: 4 }}>
           <button className="btn ghost sm" onClick={full}>Side by side…</button>

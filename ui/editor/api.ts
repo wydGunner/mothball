@@ -38,8 +38,16 @@ export interface DiffOptions {
   language: string;
   sideBySide: boolean;
   palette: { a1: string; a2: string; a3: string };
+  /** how many separate changes there are, once the diff is computed */
+  onChanges?: (n: number) => void;
 }
-export interface DiffHandle { setSideBySide(v: boolean): void; dispose(): void }
+export interface DiffHandle {
+  setSideBySide(v: boolean): void;
+  /** jump to the next/previous change; returns its number (1-based), 0 if none */
+  next(): number;
+  prev(): number;
+  dispose(): void;
+}
 export interface EditorHandle {
   /** Scrolls to a 1-based line and puts the cursor there */
   /** Scrolls to a 1-based line; with `sel`, selects that range (1-based columns, end exclusive). */

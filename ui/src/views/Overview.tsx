@@ -14,6 +14,7 @@ import { CompareDialog, RevealButton } from './Versions';
 import { Retention } from './History';
 import { TimeCard, fmtHM } from './TimeCard';
 import { PanelBoard } from '../components/Panels';
+import { WhyNote } from '../components/WhyNote';
 import type { ProjectCtx } from './Project';
 import { customOf, splitKey, typeKeyOf, typeLabel, withType, useTypes } from '../types';
 import { TypeSelect } from '../components/TypeSelect';
@@ -350,7 +351,10 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
         </> },
         { id: 'activity', icon: <LuHistory />, summary: timeline.data?.[0] ? <>{timeline.data[0].summary} · {ago(timeline.data[0].at)}</> : undefined, title: 'Activity', actions: <button className="btn sm ghost" onClick={() => ctx.openTimeline()}>Timeline <LuChevronRight /></button>, body: <>
           {(timeline.data || []).map((e) => (
-            <div key={e.id} className="row small" style={{ padding: '3px 0', alignItems: 'baseline' }}><span className="grow" style={e.manual ? { fontWeight: 600 } : undefined}>{e.summary}</span><span className="dim" style={{ whiteSpace: 'nowrap' }}>{ago(e.at)}</span></div>
+            <div key={e.id} className="why-host small" style={{ padding: '3px 0' }} title={e.note ? `Why: ${e.note}` : undefined}>
+              <div className="row" style={{ alignItems: 'baseline' }}><span className="grow" style={e.manual ? { fontWeight: 600 } : undefined}>{e.summary}</span><span className="dim" style={{ whiteSpace: 'nowrap' }}>{ago(e.at)}</span></div>
+              <WhyNote note={e.note} onSave={async (n) => { await call('timeline.setNote', { id: e.id, note: n }); timeline.reload(); }} />
+            </div>
           ))}
         </> },
         { id: 'info', icon: <LuFolder />, summary: <span className="mono">{p.rootPath}</span>, title: 'Folder', className: 'small', body: <>

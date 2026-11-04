@@ -188,7 +188,7 @@ await step('Detect external modification', async () => {
   const act = page.locator('.doc .row').filter({ hasText: 'Content changed outside Mothball' }).first();
   await act.getByRole('button', { name: 'Show changes' }).click(); // collapsed until asked
   await page.locator('.doc .tl-diff').getByText('// tweak').first().waitFor();
-  await page.locator('.doc .tl-diff .tl-add').filter({ hasText: '+2' }).waitFor();
+  await page.locator('.doc .tl-diff .tl-add').filter({ hasText: '2 lines added' }).waitFor();
   if (shots) await page.screenshot({ path: join(shots, 'x-outside-change-diff.png') });
 });
 
@@ -210,8 +210,52 @@ await step('Outside edit to a .menu file shows its diff in the Timeline, and vN 
   if (await page.locator('.tline .tl-diff').count()) throw new Error('Timeline diff should start collapsed');
   await page.locator('.tline').getByRole('button', { name: 'Show changes' }).first().click();
   await page.locator('.tline .tl-diff').getByText('itemDef password').first().waitFor();
-  await page.locator('.tline .tl-diff .tl-add').filter({ hasText: '+1' }).waitFor();
+  await page.locator('.tline .tl-diff .tl-add').filter({ hasText: '1 line added' }).waitFor();
   if (shots) await page.screenshot({ path: join(shots, 'x-menu-timeline-diff.png') });
+  await page.locator('.filerow').filter({ hasText: 'weapon_tuner.gsc' }).click();
+});
+
+await step('Why notes: on a file change, on project activity, in the diff window and in search', async () => {
+  await page.locator('.filerow').filter({ hasText: 'weapon_tuner.gsc' }).click();
+  await page.getByRole('button', { name: 'Activity', exact: true }).click();
+  const row = page.locator('.doc .why-host').filter({ hasText: 'Content changed outside Mothball' }).first();
+  await row.hover();
+  await row.getByRole('button', { name: 'Add why' }).click();
+  await row.getByLabel('Why it changed').fill('Made instashoot read the dvar for LAN testing');
+  await page.keyboard.press('Enter');
+  await row.locator('.why-note').filter({ hasText: 'Made instashoot read the dvar for LAN testing' }).waitFor();
+  // shown at the top of the diff window too
+  await row.getByRole('button', { name: 'Show changes' }).click();
+  await page.locator('.doc .tl-diff').getByRole('button', { name: 'Side by side…' }).click();
+  await page.locator('.modal .cmp-why').filter({ hasText: 'Made instashoot read the dvar' }).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-diff-why.png') });
+  await page.keyboard.press('Escape');
+  await page.locator('.modal').waitFor({ state: 'detached' });
+  // edit it
+  await row.locator('.why-note').click();
+  await row.getByLabel('Why it changed').fill('Instashoot reads the dvar now (LAN testing)');
+  await page.keyboard.press('Enter');
+  await row.locator('.why-note').filter({ hasText: 'Instashoot reads the dvar now' }).waitFor();
+  // the file Timeline tab shows the same note
+  await page.getByRole('button', { name: 'Timeline', exact: true }).click();
+  await page.locator('.tline .why-note').filter({ hasText: 'Instashoot reads the dvar now' }).waitFor();
+  // project activity on the Overview
+  await page.getByRole('tab', { name: /Overview/ }).click();
+  const act = page.locator('.ov2-rail .why-host').filter({ hasText: /File changes detected/ }).first();
+  await act.hover();
+  await act.getByRole('button', { name: 'Add why' }).click();
+  await act.getByLabel('Why it changed').fill('Dropped in the tuned weapon files from the LLM');
+  await page.keyboard.press('Enter');
+  await act.locator('.why-note').filter({ hasText: 'Dropped in the tuned weapon files' }).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-activity-why.png') });
+  await page.getByRole('tab', { name: /Timeline/ }).click();
+  await page.locator('.tlitem .why-note').filter({ hasText: 'Dropped in the tuned weapon files' }).waitFor();
+  // and it's searchable
+  await page.keyboard.press('Control+K');
+  await page.locator('.palette input').fill('tuned weapon files');
+  await page.locator('.palette .item').filter({ hasText: 'Dropped in the tuned weapon files' }).first().waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('tab', { name: /Files/ }).click();
   await page.locator('.filerow').filter({ hasText: 'weapon_tuner.gsc' }).click();
 });
 
@@ -223,7 +267,11 @@ await step('Compare file versions (no Git needed)', async () => {
   await page.locator(added).first().waitFor();
   await page.locator('.modal').getByText('// tweak').first().waitFor();
   const monaco = (await page.locator('.modal .monaco-diff-editor').count()) > 0;
-  await page.locator('.modal').getByRole('button', { name: /Unified/ }).click();
+  // plain words: what's before/after, how much changed
+  await page.locator('.modal .cmp-sides').getByText('Before').waitFor();
+  await page.locator('.modal .cmp-sides').getByText('After').waitFor();
+  await page.locator('.modal .cmp-sum').getByText(/lines? added/).waitFor();
+  await page.locator('.modal').getByRole('button', { name: /One column/ }).click();
   if (monaco) { await page.locator('.modal .monaco-diff-editor .line-insert').first().waitFor(); await page.locator('.modal .monaco-diff-editor').getByText('// tweak').first().waitFor(); }
   else await page.locator('.modal .dl.add .tx').filter({ hasText: '// tweak' }).waitFor();
   await page.locator('.modal').getByRole('button', { name: /Side by side/ }).click();

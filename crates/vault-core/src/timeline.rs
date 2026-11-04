@@ -102,9 +102,30 @@ pub fn list(v: &Vault, project_id: &str, limit: i64, before: Option<i64>) -> DbR
                     .with("manual", r.b("manual"))
                     .with("at", r.i("at"))
                     .with("data", Json::parse(&r.s("data")).unwrap_or(Json::Null))
+                    .with("note", r.s("note"))
             })
             .collect(),
     ))
+}
+
+/// Your "why" for an activity entry. Searchable (as a journal hit, which
+/// opens the project Timeline). An empty note clears it.
+pub fn set_note(v: &Vault, id: &str, note: &str) -> DbResult<Json> {
+    let note = note.trim();
+    if note.chars().count() > 2000 {
+        return Err("Keep the note under 2000 characters".into());
+    }
+    let r = v.db.one("SELECT * FROM timeline WHERE id=?", p![id])?.ok_or("Activity entry not found")?;
+    v.db.exec("UPDATE timeline SET note=? WHERE id=?", p![note, id])?;
+    if r.b("manual") {
+        // journal entries are already indexed; the note joins their text
+        search::index(v, "journal", id, &r.s("project_id"), &r.s("summary"), &format!("{} {note}", r.s("detail")))?;
+    } else if note.is_empty() {
+        search::unindex(v, "journal", id)?;
+    } else {
+        search::index(v, "journal", id, &r.s("project_id"), note, &r.s("summary"))?;
+    }
+    Ok(Json::obj().with("id", id).with("note", note))
 }
 
 pub fn delete_manual(v: &Vault, id: &str) -> DbResult<()> {

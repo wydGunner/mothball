@@ -313,7 +313,9 @@ input[type=checkbox] { accent-color: var(--accent); }
 .verrow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; border: 1px solid transparent; }
 .verrow:hover { background: var(--bg1); }
 .verrow.sel { border-color: var(--accent); background: var(--accent-bg); }
-.pill.add { border-color: var(--accent-line); color: var(--accent-text); } .pill.del { border-color: color-mix(in srgb, var(--accent3) 40%, transparent); color: var(--accent3); }
+/* diffs: added = your accent, removed = grey, so the two never look alike */
+:root { --del: #8f8f8f; --del-bg: rgba(255, 255, 255, 0.05); --del-line: rgba(255, 255, 255, 0.16); }
+.pill.add { border-color: var(--accent-line); color: var(--accent-text); } .pill.del { border-color: var(--del-line); color: var(--del); }
 .sdiff { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); border-radius: 8px; overflow: auto; max-height: 62vh; background: var(--bg0); }
 .sdiff .hunksep { text-align: center; color: var(--fg3); background: var(--bg1); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 1px; }
 .dl { display: flex; white-space: pre; line-height: 1.55; min-width: max-content; }
@@ -321,7 +323,7 @@ input[type=checkbox] { accent-color: var(--accent); }
 .dl .mk { width: 16px; flex: none; color: var(--fg3); user-select: none; }
 .dl .tx { padding-right: 16px; }
 .dl.add, .half.add { background: var(--accent-bg); } .dl.add .mk { color: var(--ok); }
-.dl.del, .half.del { background: var(--bad-bg); } .dl.del .mk { color: var(--accent3); }
+.dl.del, .half.del { background: var(--del-bg); color: var(--fg2); } .dl.del .mk { color: var(--del); }
 .dl.sbs { min-width: 0; }
 .half { flex: 1 1 50%; display: flex; min-width: 0; overflow: hidden; border-right: 1px solid var(--line); }
 .half .tx { overflow: hidden; text-overflow: ellipsis; }
@@ -580,7 +582,7 @@ input[type=checkbox] { accent-color: var(--accent); }
 .tl-diff { margin: 6px 0 8px; }
 .tl-diff .sdiff { max-height: 320px; }
 .tl-diffnote { padding: 4px 0 6px; }
-.tl-add { color: var(--accent-text); font-weight: 600; } .tl-del { color: var(--accent3); font-weight: 600; }
+.tl-add { color: var(--accent-text); font-weight: 600; } .tl-del { color: var(--del); font-weight: 600; }
 .linklike { background: none; border: 0; padding: 0; color: var(--fg0); cursor: pointer; font: inherit; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .linklike.mono { font-family: var(--mono); font-size: 12.5px; }
 .linklike:hover:not(:disabled) { color: var(--accent-text); text-decoration: underline; }
@@ -832,3 +834,27 @@ input[type=checkbox] { accent-color: var(--accent); }
 .snaprow > .grow { flex: 1 1 260px; }
 .badge.temp { white-space: nowrap; }
 .snapacts { gap: 4px; margin-left: auto; flex-wrap: nowrap; }
+
+/* "why" notes */
+.why-host .why-add { opacity: 0; transition: opacity .12s; }
+.why-host:hover .why-add, .why-add:focus-visible { opacity: 1; }
+.why-add { display: inline-flex; align-items: center; gap: 4px; padding: 1px 0; background: none; border: 0; color: var(--fg2); font: inherit; font-size: 11.5px; cursor: pointer; }
+.why-add:hover { color: var(--accent-text); }
+.why-add svg { width: 12px; height: 12px; }
+.why-note { display: flex; align-items: baseline; gap: 6px; width: 100%; margin: 2px 0; padding: 3px 6px; background: var(--accent-bg); border: 0; border-left: 2px solid var(--accent); border-radius: 0 4px 4px 0; color: var(--fg0); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.why-note .why-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+.why-note .why-pen { width: 11px; height: 11px; color: var(--fg2); opacity: 0; flex: none; }
+.why-note:hover .why-pen { opacity: 1; }
+.why-label { font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent-text); flex: none; }
+.why-edit { margin: 2px 0; }
+.why-edit .input { width: 100%; height: 26px; font-size: 12px; padding: 3px 8px; }
+.why-slot { padding-left: 82px; }
+
+/* the diff window */
+.cmp-why { margin-bottom: 10px; padding: 6px 10px; background: var(--accent-bg); border-left: 2px solid var(--accent); border-radius: 0 6px 6px 0; }
+.cmp-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-bottom: 10px; }
+.cmp-sides { display: flex; flex-direction: column; gap: 2px; }
+.cmp-sum { flex: 1; min-width: 200px; font-size: 13px; }
+.cmp-key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
+.cmp-key.add { background: var(--accent); }
+.cmp-key.del { background: var(--del); }
