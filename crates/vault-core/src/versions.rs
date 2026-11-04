@@ -432,6 +432,15 @@ pub fn restore_opts(v: &Vault, version_id: &str, keep_current: bool) -> DbResult
     if sha256_file(&target).ok().as_deref() != Some(ver.s("sha256").as_str()) {
         return Err("The restored file does not match the backup after writing (another program may have changed it). Check the file and its History.".into());
     }
+    // Record the restored content on the file, as an in-app save does, so the
+    // next scan doesn't report the restore as a change made outside Mothball.
+    if let Ok(m) = std::fs::metadata(&target) {
+        let now = now_ms();
+        v.db.exec(
+            "UPDATE files SET size=?, mtime=?, sha256=?, state='present', last_seen=?, last_changed=? WHERE id=?",
+            p![m.len() as i64, m.modified().map(crate::util::system_time_ms).unwrap_or(0), ver.s("sha256"), now, now, fid.clone()],
+        )?;
+    }
     let what = if ver.s("name").is_empty() { format!("the version from {}", crate::util::iso_utc(ver.i("created_at"))) } else { format!("backup “{}”", ver.s("name")) };
     v.db.exec(
         "INSERT INTO file_events(id,project_id,file_id,kind,detail,sha256,at) VALUES (?,?,?,'restored-version',?,?,?)",

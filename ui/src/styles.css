@@ -804,3 +804,9 @@ input[type=checkbox] { accent-color: var(--accent); }
 .ptab:hover .ptab-x, .ptab.on .ptab-x { opacity: 1; }
 .ptab-x:hover { background: var(--bg4); color: var(--fg0); }
 .crumbs button.cur { color: var(--fg0); }
+
+/* Show/Hide changes: bordered in the accent so it reads as a button, chevron turns when open */
+.btn.reveal { border-color: var(--accent-line); color: var(--fg0); }
+.btn.reveal .chev { color: var(--accent); transition: transform .15s; }
+.btn.reveal.on { background: var(--bg4); }
+.btn.reveal.on .chev { transform: rotate(180deg); }

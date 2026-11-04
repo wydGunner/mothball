@@ -13,7 +13,7 @@ import { Dropdown, Empty, KindIcon, useConfirm, Markdown, SaveState, TagInput, u
 import { ago, bytes, cx, dateTime } from '../format';
 import { LinkPicker, LinkList } from './Links';
 import { CustomFields } from './Overview';
-import { VersionsPanel, FileTimeline, CompareDialog } from './Versions';
+import { VersionsPanel, FileTimeline, CompareDialog, RevealButton } from './Versions';
 import { ChangeDiff, type CompareReq } from './Timeline';
 import { ImportDialog } from './Import';
 import { SmartSaveDialog, changedLines, getLargeThreshold, getSaveMode, type SmartSaveChoice } from './SmartSave';
@@ -678,7 +678,6 @@ function TextImagePreview({ f }: { f: FileDetail }) {
 
 function FileHistory({ f, ctx, highlight }: { f: FileDetail; ctx: ProjectCtx; highlight?: string }) {
   const [tab, setTab] = useState<'timeline' | 'versions' | 'changes' | 'git' | 'revisions'>(highlight ? 'versions' : 'timeline');
-  const [focusAt, setFocusAt] = useState<number | null>(null); // Timeline → "Show changes" opens that change in Activity
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (highlight === undefined) return;
@@ -707,9 +706,9 @@ function FileHistory({ f, ctx, highlight }: { f: FileDetail; ctx: ProjectCtx; hi
         {tab === 'git' && 'Commits from the Git repository that touched this file (follows renames).'}
         {tab === 'revisions' && 'Earlier versions of this file’s documentation.'}
       </p>
-      {tab === 'timeline' && <FileTimeline fileId={f.id} fileName={f.name} absPath={f.absPath} path={f.path} projectId={ctx.project.id} present={f.state === 'present'} refreshKey={`${f.sha256}-${f.versions}-${ctx.scanTick}`} onRestored={() => ctx.scan(true)} onShowChanges={(at) => { setFocusAt(at); setTab('changes'); }} />}
+      {tab === 'timeline' && <FileTimeline fileId={f.id} fileName={f.name} absPath={f.absPath} path={f.path} projectId={ctx.project.id} present={f.state === 'present'} refreshKey={`${f.sha256}-${f.versions}-${ctx.scanTick}`} onRestored={() => ctx.scan(true)} openFile={ctx.openFile} />}
       {tab === 'versions' && <VersionsPanel fileId={f.id} fileName={f.name} absPath={f.absPath} present={f.state === 'present'} highlight={highlight} refreshKey={`${f.sha256}-${f.versions}-${ctx.scanTick}`} onRestored={() => ctx.scan(true)} />}
-      {tab === 'changes' && (f.events.length ? <ActivityList key={`${f.id}-${focusAt}`} events={f.events} fileId={f.id} title={f.path} openFile={ctx.openFile} focusAt={focusAt} />
+      {tab === 'changes' && (f.events.length ? <ActivityList key={f.id} events={f.events} fileId={f.id} title={f.path} openFile={ctx.openFile} />
         : <div className="small muted">No changes since it was first indexed ({dateTime(f.firstSeen)}).</div>)}
       {tab === 'git' && (git.error ? <div className="small muted">{git.error}</div> : !git.data ? <div className="small muted">Loading…</div> : git.data.length === 0 ? <div className="small muted">No commits for this file (or the project is not a Git repository).</div> :
         git.data.map((c) => (
@@ -724,9 +723,8 @@ function FileHistory({ f, ctx, highlight }: { f: FileDetail; ctx: ProjectCtx; hi
 }
 
 /** A file's activity; content changes (in Mothball or outside it) expand to their diff. */
-function ActivityList({ events, fileId, title, openFile, focusAt }: { events: FileDetail['events']; fileId: string; title: string; openFile: (id: string) => void; focusAt?: number | null }) {
-  // everything starts collapsed, except a change picked from the Timeline
-  const [open, setOpen] = useState<number | null>(() => { const i = events.findIndex((e) => e.at === focusAt && e.from); return i >= 0 ? i : null; });
+function ActivityList({ events, fileId, title, openFile }: { events: FileDetail['events']; fileId: string; title: string; openFile: (id: string) => void }) {
+  const [open, setOpen] = useState<number | null>(null); // collapsed until asked
   const [compare, setCompare] = useState<CompareReq | null>(null);
   return (
     <>
@@ -735,7 +733,7 @@ function ActivityList({ events, fileId, title, openFile, focusAt }: { events: Fi
           <div className="row small" style={{ padding: '3px 0' }}>
             <span className="pill" style={{ minWidth: 72, justifyContent: 'center' }}>{e.kind}</span>
             <span className="grow">{e.detail}</span>
-            {e.from && e.to && <button className="btn ghost sm" onClick={() => setOpen(open === i ? null : i)}>{open === i ? 'Hide changes' : 'Show changes'}</button>}
+            {e.from && e.to && <RevealButton open={open === i} onClick={() => setOpen(open === i ? null : i)} />}
             {e.kind === 'modified' && !e.from && <span className="dim" title="What the file looked like before this change wasn’t stored, so the change can’t be shown. Later changes to text files will show.">no earlier copy</span>}
             <span className="dim" title={dateTime(e.at)}>{ago(e.at)}</span>
           </div>

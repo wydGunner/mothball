@@ -205,13 +205,12 @@ await step('Outside edit to a .menu file shows its diff in the Timeline, and vN 
   await row.locator('.badge.warn').filter({ hasText: 'changed' }).waitFor(); // both, side by side
   await row.click();
   await page.getByRole('button', { name: 'Timeline', exact: true }).click();
-  // the Timeline stays a list; Show changes opens that change in Activity
-  if (await page.locator('.tline .tl-diff').count()) throw new Error('Timeline should not show diffs inline');
+  // the diff is in the Timeline but collapsed until asked
+  await page.locator('.tline').getByRole('button', { name: 'Show changes' }).first().waitFor();
+  if (await page.locator('.tline .tl-diff').count()) throw new Error('Timeline diff should start collapsed');
   await page.locator('.tline').getByRole('button', { name: 'Show changes' }).first().click();
-  await page.getByRole('button', { name: 'Activity', exact: true }).and(page.locator('.on')).waitFor();
-  await page.locator('.doc').getByRole('button', { name: 'Hide changes' }).waitFor();
-  await page.locator('.doc .tl-diff').getByText('itemDef password').first().waitFor();
-  await page.locator('.doc .tl-diff .tl-add').filter({ hasText: '+1' }).waitFor();
+  await page.locator('.tline .tl-diff').getByText('itemDef password').first().waitFor();
+  await page.locator('.tline .tl-diff .tl-add').filter({ hasText: '+1' }).waitFor();
   if (shots) await page.screenshot({ path: join(shots, 'x-menu-timeline-diff.png') });
   await page.locator('.filerow').filter({ hasText: 'weapon_tuner.gsc' }).click();
 });
@@ -427,6 +426,16 @@ await step('Version history: search, compare, restore', async () => {
   await page.locator('.seg button').filter({ hasText: 'Timeline' }).click();
   await page.locator('.srcbadge').filter({ hasText: 'Backup' }).first().waitFor();
   await page.locator('.srcbadge').filter({ hasText: 'Git commit' }).first().waitFor();
+  // a restore is a Mothball action, not an outside change, and shows what it changed
+  await page.getByRole('button', { name: 'Rescan' }).click();
+  await page.locator('.seg button').filter({ hasText: 'Activity' }).click();
+  const restoredRow = page.locator('.doc .row').filter({ hasText: /^restored-version/ }).first();
+  await restoredRow.waitFor();
+  const latest = await page.locator('.doc .row .pill').first().textContent();
+  if (latest !== 'restored-version') throw new Error('restore was followed by: ' + latest);
+  await restoredRow.getByRole('button', { name: 'Show changes' }).click();
+  await page.locator('.doc .tl-diff .tl-del').first().waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-restore-diff.png') });
 });
 
 await step('Global search finds backups (backup actions only)', async () => {

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { LuSave, LuGitCompareArrows, LuUndo2, LuTrash2, LuColumns2, LuRows3, LuSearch, LuDownload, LuPencilLine, LuShieldCheck, LuTag } from 'react-icons/lu';
+import { LuSave, LuChevronDown, LuGitCompareArrows, LuUndo2, LuTrash2, LuColumns2, LuRows3, LuSearch, LuDownload, LuPencilLine, LuShieldCheck, LuTag } from 'react-icons/lu';
 import { call, pickFolder, isTauri, revealPath } from '../ipc';
 import { Modal, TagInput, useAction, useConfirm, useLoad, useToast } from '../components/common';
 import { MonacoDiff } from '../components/CodeEditor';
 import { ago, bytes, cx, dateTime } from '../format';
+import { ChangeDiff, type CompareReq } from './Timeline';
 
 export interface Version { id: string; sha256: string; size: number; path: string; reason: string; note: string; name: string; tags: string[]; at: number; isCurrent: boolean }
 
@@ -241,13 +242,15 @@ const EVENT_LABEL: Record<string, string> = {
 };
 
 /** Per-file timeline. Every entry is labelled with where it came from; reasons are never inferred. */
-export function FileTimeline({ fileId, fileName, absPath, path, projectId, present, refreshKey, onRestored, onShowChanges }: { fileId: string; fileName: string; absPath?: string; path: string; projectId: string; present: boolean; refreshKey?: string; onRestored: () => void; onShowChanges?: (at: number) => void }) {
+export function FileTimeline({ fileId, fileName, absPath, path, projectId, present, refreshKey, onRestored, openFile }: { fileId: string; fileName: string; absPath?: string; path: string; projectId: string; present: boolean; refreshKey?: string; onRestored: () => void; openFile?: (id: string) => void }) {
   const hist = useLoad(() => call<HistEntry[]>('versions.history', { fileId }), [fileId, refreshKey]);
   const vers = useLoad(() => call<Version[]>('versions.list', { fileId }), [fileId, refreshKey]);
   const git = useLoad(() => call<any[]>('git.log', { projectId, path, limit: 50 }).catch(() => []), [projectId, path, refreshKey]);
   const [compare, setCompare] = useState<string | null>(null);
   const [restoreV, setRestoreV] = useState<Version | null>(null);
   const [src, setSrc] = useState('');
+  const [openDiff, setOpenDiff] = useState('');
+  const [cmpReq, setCmpReq] = useState<CompareReq | null>(null);
   const entries = useMemo(() => {
     const out: HistEntry[] = [...(hist.data || [])];
     for (const c of git.data || []) out.push({ source: 'git', kind: 'commit', title: c.subject, description: `${c.short} · ${c.author}`, at: c.time, restorable: false, commit: c.hash });
@@ -268,8 +271,11 @@ export function FileTimeline({ fileId, fileName, absPath, path, projectId, prese
         {shown.map((e, i) => {
           const v = e.versionId ? vers.data?.find((x) => x.id === e.versionId) : undefined;
           const title = e.source === 'filesystem' || e.source === 'project-vault' ? (EVENT_LABEL[e.kind] || e.kind) : e.source === 'auto-version' || (e.source === 'backup' && e.title === e.kind) ? (REASON[e.kind] || e.kind) : e.title;
+          const diffKey = e.from && e.to ? `${e.at}:${e.to}` : '';
+          const diffOpen = !!diffKey && openDiff === diffKey; // collapsed until asked
           return (
-            <div key={i} className={cx('tl-row', `src-${e.source}`)}>
+            <div key={i}>
+            <div className={cx('tl-row', `src-${e.source}`)}>
               <span className={cx('srcbadge', `src-${e.source}`)}>{SOURCE_LABEL[e.source] || e.source}</span>
               <div className="grow" style={{ minWidth: 0 }}>
                 <div><b className={cx(e.source === 'backup' && 'mono')}>{title}</b>{(e.source === 'filesystem' || e.source === 'project-vault') && e.title && <span className="small dim"> — {e.title}</span>}</div>
@@ -277,20 +283,28 @@ export function FileTimeline({ fileId, fileName, absPath, path, projectId, prese
                 <div className="small dim" title={dateTime(e.at)}>{dateTime(e.at)} · {ago(e.at)}{e.restorable ? ' · contents stored' : ''}</div>
               </div>
               {e.restorable && v && <div className="row" style={{ gap: 2 }}>
-                {!v.isCurrent && present && <button className="btn ghost sm" onClick={() => setCompare(v.id)}><LuGitCompareArrows /> vs now</button>}
-                {!v.isCurrent && <button className="btn ghost sm" onClick={() => setRestoreV(v)}><LuUndo2 /> Restore</button>}
+                {!v.isCurrent && present && <button className="btn sm" onClick={() => setCompare(v.id)}><LuGitCompareArrows /> vs now</button>}
+                {!v.isCurrent && <button className="btn sm" onClick={() => setRestoreV(v)}><LuUndo2 /> Restore</button>}
                 {v.isCurrent && <span className="badge ok">matches current file</span>}
               </div>}
-              {e.from && e.to && onShowChanges && <button className="btn ghost sm" title="See what changed, in the Activity tab" onClick={() => onShowChanges(e.at)}>Show changes</button>}
+              {diffKey && <RevealButton open={diffOpen} onClick={() => setOpenDiff(diffOpen ? '' : diffKey)} />}
+            </div>
+            {diffOpen && <ChangeDiff fileId={fileId} from={e.from!} to={e.to!} title={fileName} openFile={openFile || (() => {})} onCompare={setCmpReq} />}
             </div>
           );
         })}
       </div>
       <p className="small dim">Activity entries record that something happened; they don’t hold file contents and can’t be restored. Backups and auto versions can.</p>
       {compare && <CompareDialog fileId={fileId} title={fileName} old={compare} new="current" onClose={() => setCompare(null)} />}
+      {cmpReq && <CompareDialog fileId={cmpReq.fileId} title={cmpReq.title} old={cmpReq.old} new={cmpReq.new} onClose={() => setCmpReq(null)} />}
       {restoreV && <RestoreDialog v={restoreV} fileName={fileName} absPath={absPath} present={present} onClose={() => setRestoreV(null)} onDone={() => { setRestoreV(null); hist.reload(); vers.reload(); onRestored(); }} />}
     </div>
   );
+}
+
+/** "Show changes" / "Hide changes": a real bordered button with a chevron, so it reads as clickable. */
+export function RevealButton({ open, onClick }: { open: boolean; onClick: () => void }) {
+  return <button className={cx('btn sm reveal', open && 'on')} aria-expanded={open} onClick={onClick}><LuChevronDown className="chev" /> {open ? 'Hide changes' : 'Show changes'}</button>;
 }
 
 export { LuSave };

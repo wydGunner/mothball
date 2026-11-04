@@ -771,7 +771,7 @@ pub fn events(v: &Vault, file_id: &str, limit: i64) -> DbResult<Json> {
     for r in &rows {
         let sha = r.os("sha256");
         let mut j = Json::obj().with("kind", r.s("kind")).with("detail", r.s("detail")).with("sha256", sha.clone()).with("at", r.i("at"));
-        if r.s("kind") == "modified" {
+        if matches!(r.s("kind").as_str(), "modified" | "restored-version") {
             // before this change: the last content seen, or the last version stored before it
             // (a stored copy can share the change's millisecond; the new content itself is not "before")
             let before = last.clone().or_else(|| versions.iter().filter(|x| x.i("created_at") <= r.i("at") && x.os("sha256") != sha).last().map(|x| x.s("sha256")));
@@ -1743,6 +1743,32 @@ mod tests {
             assert_eq!(d.get("diff").unwrap().get("added").and_then(|x| x.as_i64()), Some(1), "{n}");
         }
         assert_eq!(nver("connect.menu"), 2);
+    }
+
+    /// User report: restoring a version was followed by "Content changed
+    /// outside Mothball", and the restore itself didn't show what it changed.
+    #[test]
+    fn restoring_a_version_is_not_an_outside_change_and_shows_its_diff() {
+        let (t, v) = crate::testutil::vault();
+        let dir = t.0.join("P");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.gsc"), "init()\n{\n}\n").unwrap();
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "P").with("category", "addon").with("linkPath", dir.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        scan(&v, &pid).unwrap();
+        let fid = v.db.one("SELECT id FROM files WHERE project_id=?", p![pid.as_str()]).unwrap().unwrap().s("id");
+        let first = v.db.one("SELECT id FROM file_versions WHERE file_id=?", p![fid.as_str()]).unwrap().unwrap().s("id");
+        std::fs::write(dir.join("a.gsc"), "init()\n{\n    level.x = 1;\n}\n").unwrap();
+        scan(&v, &pid).unwrap();
+        let mods = || v.db.scalar_i64("SELECT COUNT(*) FROM file_events WHERE file_id=? AND kind='modified'", p![fid.as_str()]).unwrap();
+        let before = mods();
+        crate::versions::restore(&v, &first).unwrap();
+        scan(&v, &pid).unwrap();
+        assert_eq!(mods(), before, "the restore isn't logged as an outside change");
+        let ev = events(&v, &fid, 10).unwrap();
+        let r = ev.as_arr().unwrap().iter().find(|e| e.str_of("kind").as_deref() == Some("restored-version")).cloned().unwrap();
+        let (a, b) = (r.str_of("from").expect("restore has before"), r.str_of("to").expect("and after"));
+        let d = crate::api::dispatch(&v, "versions.compare", &Json::obj().with("fileId", fid.as_str()).with("old", format!("sha:{a}")).with("new", format!("sha:{b}"))).unwrap();
+        assert_eq!(d.get("diff").unwrap().get("removed").and_then(|x| x.as_i64()), Some(1));
     }
 
     #[test]
