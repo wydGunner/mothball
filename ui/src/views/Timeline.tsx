@@ -51,7 +51,7 @@ export function TimelineTab({ ctx }: { ctx: ProjectCtx }) {
   }
   const [openIds, setOpenIds] = useState<Set<string>>(new Set());
   const toggle = (id: string) => setOpenIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const [compare, setCompare] = useState<null | { fileId: string; title: string; old: string; new: string }>(null);
+  const [compare, setCompare] = useState<null | CompareReq>(null);
   const open = (e: Entry) => {
     if (e.refType === 'note' && e.refId) ctx.openNote(e.refId);
     else if (e.refType === 'task' && e.refId) ctx.openTask(e.refId);
