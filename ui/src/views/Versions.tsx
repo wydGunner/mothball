@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { LuSave, LuChevronDown, LuChevronUp, LuGitCompareArrows, LuUndo2, LuTrash2, LuColumns2, LuRows3, LuSearch, LuDownload, LuPencilLine, LuShieldCheck, LuTag } from 'react-icons/lu';
 import { call, pickFolder, isTauri, revealPath } from '../ipc';
 import { Modal, TagInput, useAction, useConfirm, useLoad, useToast } from '../components/common';
@@ -299,10 +299,14 @@ export function FileTimeline({ fileId, fileName, absPath, path, projectId, prese
             <div className={cx('tl-row why-host', `src-${e.source}`)} title={e.note ? `Why: ${e.note}` : undefined}>
               <span className={cx('srcbadge', `src-${e.source}`)}>{SOURCE_LABEL[e.source] || e.source}</span>
               <div className="grow" style={{ minWidth: 0 }}>
-                <div><b className={cx(e.source === 'backup' && 'mono')}>{title}</b>{(e.source === 'filesystem' || e.source === 'project-vault') && e.title && <span className="small dim"> — {e.title}</span>}</div>
-                {e.description && <div className="small" style={{ whiteSpace: 'pre-wrap' }}>{e.description}</div>}
-                <div className="small dim" title={dateTime(e.at)}>{dateTime(e.at)} · {ago(e.at)}{e.restorable ? ' · contents stored' : ''}</div>
-                {e.eventId && <WhyNote note={e.note} onSave={async (n) => { await call('files.setEventNote', { id: e.eventId, note: n }); hist.reload(); }} />}
+                {(() => {
+                  const head = (add: ReactNode) => <>
+                    <div className="row" style={{ gap: 6, alignItems: 'baseline' }}><div className="grow" style={{ minWidth: 0 }}><b className={cx(e.source === 'backup' && 'mono')}>{title}</b>{(e.source === 'filesystem' || e.source === 'project-vault') && e.title && <span className="small dim"> — {e.title}</span>}</div>{add}</div>
+                    {e.description && <div className="small" style={{ whiteSpace: 'pre-wrap' }}>{e.description}</div>}
+                    <div className="small dim" title={dateTime(e.at)}>{dateTime(e.at)} · {ago(e.at)}{e.restorable ? ' · contents stored' : ''}</div>
+                  </>;
+                  return e.eventId ? <WhyNote note={e.note} onSave={async (n) => { await call('files.setEventNote', { id: e.eventId, note: n }); hist.reload(); }}>{head}</WhyNote> : head(null);
+                })()}
               </div>
               {e.restorable && v && <div className="row" style={{ gap: 2 }}>
                 {!v.isCurrent && present && <button className="btn sm" onClick={() => setCompare(v.id)}><LuGitCompareArrows /> vs now</button>}

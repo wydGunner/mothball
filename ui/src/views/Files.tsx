@@ -778,14 +778,15 @@ function ActivityList({ events, fileId, title, openFile }: { events: FileDetail[
     <>
       {events.map((e, i) => (
         <div key={i} className="why-host" title={(notes[e.id] ?? e.note) ? `Why: ${notes[e.id] ?? e.note}` : undefined}>
+          <WhyNote note={notes[e.id] ?? e.note} onSave={async (n) => { await call('files.setEventNote', { id: e.id, note: n }); setNotes((m) => ({ ...m, [e.id]: n })); }}>{(add) => (
           <div className="row small" style={{ padding: '3px 0' }}>
             <span className="pill" style={{ minWidth: 72, justifyContent: 'center' }}>{e.kind}</span>
             <span className="grow">{e.detail}</span>
+            {e.id && add}
             {e.from && e.to && <RevealButton open={open === i} onClick={() => setOpen(open === i ? null : i)} />}
             {e.kind === 'modified' && !e.from && <span className="dim" title="What the file looked like before this change wasn’t stored, so the change can’t be shown. Later changes to text files will show.">no earlier copy</span>}
             <span className="dim" title={dateTime(e.at)}>{ago(e.at)}</span>
-          </div>
-          {e.id && <div className="why-slot"><WhyNote note={notes[e.id] ?? e.note} onSave={async (n) => { await call('files.setEventNote', { id: e.id, note: n }); setNotes((m) => ({ ...m, [e.id]: n })); }} /></div>}
+          </div>)}</WhyNote>
           {e.from && e.to && open === i && <ChangeDiff fileId={fileId} from={e.from} to={e.to} title={title} openFile={openFile} onCompare={setCompare} why={notes[e.id] ?? e.note} />}
         </div>
       ))}

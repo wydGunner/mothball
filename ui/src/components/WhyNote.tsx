@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { LuMessageSquarePlus, LuPencil } from 'react-icons/lu';
 import { useToast } from './common';
 
@@ -9,7 +9,11 @@ import { useToast } from './common';
  * focus it with Tab). Click to write; Enter saves, Escape cancels, an empty
  * note removes it.
  */
-export function WhyNote({ note, onSave, placeholder = 'Why did this change? e.g. LLM fix for the back button overlap' }: { note?: string; onSave: (note: string) => Promise<unknown>; placeholder?: string }) {
+export function WhyNote({ note, onSave, placeholder = 'Why did this change? e.g. LLM fix for the back button overlap', children }: {
+  note?: string; onSave: (note: string) => Promise<unknown>; placeholder?: string;
+  /** Renders the entry's own line, given the small "add why" button to place in it (so it takes no extra line). */
+  children?: (add: ReactNode) => ReactNode;
+}) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(note || '');
   const [saving, setSaving] = useState(false);
@@ -23,18 +27,20 @@ export function WhyNote({ note, onSave, placeholder = 'Why did this change? e.g.
     setSaving(true);
     try { await onSave(text.trim()); setEditing(false); } catch (e: any) { toast(e?.message || String(e), 'error'); } finally { setSaving(false); }
   };
-  if (editing) return (
+  const addIcon = !note && !editing ? <button className="why-add icon" title="Add a note saying why this changed" aria-label="Add why" onClick={(e) => { e.stopPropagation(); setEditing(true); }}><LuMessageSquarePlus /></button> : null;
+  const body = editing ? (
     <div className="why-edit" onClick={(e) => e.stopPropagation()}>
       <input ref={input} className="input sm" value={text} maxLength={2000} placeholder={placeholder} aria-label="Why it changed"
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setEditing(false); } }}
         onBlur={save} disabled={saving} />
     </div>
-  );
-  if (note) return (
+  ) : note ? (
     <button className="why-note" title="Why it changed — click to edit" onClick={(e) => { e.stopPropagation(); setEditing(true); }}>
       <span className="why-label">Why</span><span className="why-text">{note}</span><LuPencil className="why-pen" />
     </button>
-  );
+  ) : null;
+  if (children) return <>{children(addIcon)}{body}</>;
+  if (body) return body;
   return <button className="why-add" title="Add a note saying why this changed" onClick={(e) => { e.stopPropagation(); setEditing(true); }}><LuMessageSquarePlus /> Add why</button>;
 }

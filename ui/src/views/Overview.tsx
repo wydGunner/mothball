@@ -353,8 +353,9 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
         { id: 'activity', icon: <LuHistory />, summary: timeline.data?.[0] ? <>{timeline.data[0].summary} · {ago(timeline.data[0].at)}</> : undefined, title: 'Activity', actions: <button className="btn sm ghost" onClick={() => ctx.openTimeline()}>Timeline <LuChevronRight /></button>, body: <>
           {(timeline.data || []).map((e) => (
             <div key={e.id} className="why-host small" style={{ padding: '3px 0' }} title={e.note ? `Why: ${e.note}` : undefined}>
-              <div className="row" style={{ alignItems: 'baseline' }}><span className="grow" style={e.manual ? { fontWeight: 600 } : undefined}>{e.summary}</span><span className="dim" style={{ whiteSpace: 'nowrap' }}>{ago(e.at)}</span></div>
-              <WhyNote note={e.note} onSave={async (n) => { await call('timeline.setNote', { id: e.id, note: n }); timeline.reload(); }} />
+              <WhyNote note={e.note} onSave={async (n) => { await call('timeline.setNote', { id: e.id, note: n }); timeline.reload(); }}>
+                {(add) => <div className="row" style={{ alignItems: 'baseline', gap: 6 }}><span className="grow" style={e.manual ? { fontWeight: 600 } : undefined}>{e.summary}</span>{add}<span className="dim" style={{ whiteSpace: 'nowrap' }}>{ago(e.at)}</span></div>}
+              </WhyNote>
             </div>
           ))}
         </> },
