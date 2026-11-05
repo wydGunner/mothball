@@ -131,7 +131,8 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const [editing, setEditing] = useState<null | 'general' | 'details' | 'files'>(null);
   const [compare, setCompare] = useState<{ fileId: string; name: string } | null>(null);
   const reviews = useLoad(() => call<any[]>('files.reviews', { projectId: p.id }), [p.id, ctx.scanTick]);
-  const changed = useLoad(() => call<any[]>('files.list', { projectId: p.id, changedOnly: true, limit: 50 }), [p.id, ctx.scanTick]);
+  // newest first: what you just did is on top
+  const changed = useLoad(() => call<any[]>('files.list', { projectId: p.id, changedOnly: true, sort: 'changed', limit: 50 }), [p.id, ctx.scanTick]);
   const missing = useLoad(() => call<any[]>('files.list', { projectId: p.id, state: 'missing', limit: 5000 }), [p.id, ctx.scanTick]);
   // folders this mod type's game writes on its own (demos, logs…), for projects not ignoring them yet
   const ignoreSug = useLoad(() => call<{ subtype: string; folders: { rule: string; folder: string; files: number; missing: number }[] }>('projects.ignoreSuggestions', { id: p.id }), [p.id, ctx.scanTick]);

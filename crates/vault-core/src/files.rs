@@ -344,6 +344,8 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
     let mut changes: Vec<Json> = Vec::new();
     let change = |kind: &str, fid: &str, path: &str| Json::obj().with("change", kind).with("fileId", fid).with("path", path);
     v.db.tx(|db| {
+        // content of files that came back or changed this scan -> which file
+        let mut came_back: HashMap<String, (String, String)> = HashMap::new();
         // 1. paths that exist both on disk and in the index
         for (rel, seen) in &w.files {
             let Some(r) = by_path.get(rel) else { continue };
@@ -368,17 +370,22 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
                  WHERE id=?",
                 p![seen.size, seen.mtime, h.clone(), now, content_changed, now, content_changed, fid.clone()],
             )?;
-            if was_missing {
-                rep.restored += 1;
-                event(v, project_id, &fid, "restored", "File is present again", h.as_deref())?;
-                changes.push(change("restored", &fid, rel));
+            if let (true, Some(hh)) = (was_missing || content_changed, h.as_ref()) {
+                came_back.insert(hh.clone(), (fid.clone(), rel.clone()));
             }
+            // the change first, then "present again": the change's "before" is
+            // the content it had when it went missing, so it can be diffed
             if content_changed {
                 rep.modified += 1;
                 event_m(v, project_id, &fid, "modified", "Content changed outside Mothball", h.as_deref(), Some(seen.mtime))?;
                 let mut c = change("modified", &fid, rel).with("to", h.clone().unwrap_or_default());
                 if let Some(old) = r.os("sha256") { c.set("from", old); }
                 changes.push(c);
+            }
+            if was_missing {
+                rep.restored += 1;
+                event(v, project_id, &fid, "restored", "File is present again", h.as_deref())?;
+                changes.push(change("restored", &fid, rel));
             }
         }
 
@@ -470,6 +477,23 @@ pub fn scan(v: &Vault, project_id: &str) -> DbResult<ScanReport> {
                 drop_record(v, db, &gid)?;
                 rep.dropped_ignored += 1;
                 continue;
+            }
+            // Renamed onto an older name: `a(1).gsc` disappeared and its exact
+            // content is now in `a.gsc`, which came back or changed this scan.
+            // Same file: its history lives on in a.gsc, so the temporary
+            // record goes instead of being reported missing (unless it holds
+            // notes, links, tags or backups of yours).
+            if g.s("state") == "present" {
+                if let Some((tid, trel)) = g.os("sha256").and_then(|h| came_back.get(&h)) {
+                    if *tid != gid && !has_user_data(db, &gid)? {
+                        drop_record(v, db, &gid)?;
+                        event(v, project_id, tid, "moved", &format!("Renamed from {} (onto its old name)", g.s("rel_path")), g.os("sha256").as_deref())?;
+                        changes.push(change("moved", tid, trel).with("from", g.s("rel_path")));
+                        rep.moved += 1;
+                        rep.dropped_ignored += 1; // its automatic copies are freed after the scan
+                        continue;
+                    }
+                }
             }
             if g.s("state") == "present" {
                 db.exec("UPDATE files SET state='missing' WHERE id=?", p![gid.clone()])?;
@@ -1986,6 +2010,34 @@ mod tests {
         assert_eq!(ev.as_arr().unwrap().iter().find(|x| x.str_of("kind").as_deref() == Some("modified")).unwrap().str_of("note").as_deref(), Some("widened the menu for 16:9"));
         let h = crate::versions::history(&v, &fid).unwrap();
         assert!(h.as_arr().unwrap().iter().any(|x| x.str_of("note").as_deref() == Some("widened the menu for 16:9") && x.str_of("eventId").is_some()), "the file Timeline shows it too");
+    }
+
+    /// User report: dropped in `_tips(1).gsc`, deleted `_tips.gsc`, renamed
+    /// `_tips(1).gsc` to `_tips.gsc`. _tips.gsc came back with its history
+    /// (good), but `_tips(1).gsc` stayed behind as "missing".
+    #[test]
+    fn renaming_a_dropped_in_copy_onto_the_old_name_leaves_nothing_missing() {
+        let (t, v) = crate::testutil::vault();
+        let dir = t.0.join("P");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("_tips.gsc"), "tips() { old(); }\n").unwrap();
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "P").with("linkPath", dir.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        scan(&v, &pid).unwrap();
+        let tips = v.db.one("SELECT id FROM files WHERE rel_path='_tips.gsc'", p![]).unwrap().unwrap().s("id");
+        std::fs::write(dir.join("_tips(1).gsc"), "tips() { new(); }\n").unwrap(); // dragged in
+        scan(&v, &pid).unwrap();
+        std::fs::remove_file(dir.join("_tips.gsc")).unwrap(); // old one deleted
+        scan(&v, &pid).unwrap();
+        std::fs::rename(dir.join("_tips(1).gsc"), dir.join("_tips.gsc")).unwrap(); // copy renamed onto the old name
+        scan(&v, &pid).unwrap();
+        let rows: Vec<(String, String)> = v.db.query("SELECT rel_path, state FROM files WHERE project_id=?", p![pid.as_str()]).unwrap().iter().map(|r| (r.s("rel_path"), r.s("state"))).collect();
+        assert_eq!(rows, vec![("_tips.gsc".to_string(), "present".to_string())], "nothing left missing");
+        // _tips.gsc kept its history, and the change can be shown
+        let ev = events(&v, &tips, 20).unwrap();
+        let kinds: Vec<String> = ev.as_arr().unwrap().iter().map(|e| e.str_of("kind").unwrap()).collect();
+        assert!(kinds.contains(&"modified".to_string()) && kinds.contains(&"moved".to_string()), "{kinds:?}");
+        let m = ev.as_arr().unwrap().iter().find(|e| e.str_of("kind").as_deref() == Some("modified")).cloned().unwrap();
+        assert!(m.str_of("from").is_some(), "old -> new diff available");
     }
 
     #[test]

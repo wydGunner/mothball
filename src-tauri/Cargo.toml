@@ -1,6 +1,6 @@
 [package]
 name = "mothball"
-version = "0.9.1"
+version = "0.9.2"
 description = "Mothball — local project, file and knowledge manager"
 edition = "2021"
 license = "GPL-3.0-or-later"
