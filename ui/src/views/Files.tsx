@@ -217,7 +217,14 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
       onHistory: () => { setEditingRaw(null); setSelectedRaw(f.id); setHighlightV(''); setTimeout(() => setHighlightV(undefined), 400); },
       onChanged: () => { files.reload(); dirs.reload(); ctx.reload(); },
       extra: [
-        { label: sel.length > 1 ? `Mark ${sel.length} files reviewed` : 'Mark reviewed', icon: <LuCircleCheck />, onClick: async () => { await act(() => call('files.markReviewed', { ids: sel.map((x) => x.id) })); files.reload(); ctx.reload(); } },
+        // only offered for files marked "changed": on anything else it had nothing to do
+        ...(() => {
+          const ch = sel.filter((x) => x.changedSinceReview);
+          if (!ch.length) return [];
+          return [{ label: ch.length > 1 ? `Mark ${ch.length} changed files reviewed` : 'Mark reviewed', icon: <LuCircleCheck />, onClick: async () => {
+            if (await act(() => call('files.markReviewed', { ids: ch.map((x) => x.id) }), ch.length > 1 ? `${ch.length} files marked reviewed` : `${ch[0].name} marked reviewed`)) { files.reload(); ctx.reload(); }
+          } }];
+        })(),
         ...(sel.length === 1 && f.state === 'present' && ['png', 'jpg', 'jpeg', 'webp', 'gif', '3mf'].includes(f.ext)
           ? [{ label: 'Use as the project picture', icon: <LuImage />, onClick: async () => { if (await act(() => call('projects.setThumbnail', { id: pid, thumb: { mode: 'file', fileId: f.id } }), 'Shown on the project card')) ctx.nav.refreshProjects(); } }] : []),
       ],

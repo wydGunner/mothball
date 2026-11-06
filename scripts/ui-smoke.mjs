@@ -899,9 +899,31 @@ await step('Files tab context menu still works', async () => {
   await page.getByRole('button', { name: /^Filter/ }).click();
   await page.locator('.dd-item').filter({ hasText: 'All files' }).click();
   await page.keyboard.press('Escape');
-  await page.locator('.filerow').filter({ hasText: 'weapons.json' }).click({ button: 'right' });
-  for (const l of ['Edit in Mothball', 'Copy relative path', 'Rename…', 'Delete file from disk…', 'Mark reviewed']) await page.locator('.ctx button').filter({ hasText: l }).waitFor();
+  const row = page.locator('.filerow').filter({ hasText: 'weapons.json' });
+  // start reviewed: Mark reviewed isn't offered when there's nothing to review
+  await row.waitFor();
+  const opid = (await api('projects.list', {})).data.find((x) => x.name.startsWith('OMEN')).id;
+  if ((await api('files.list', { projectId: opid, limit: 500 })).data.find((x) => x.name === 'weapons.json').changedSinceReview) {
+    await row.locator('.badge.warn').waitFor();
+    await row.click({ button: 'right' });
+    await page.locator('.ctx button').filter({ hasText: 'Mark reviewed' }).click();
+    await row.locator('.badge.warn').waitFor({ state: 'detached' });
+  }
+  await row.click({ button: 'right' });
+  for (const l of ['Edit in Mothball', 'Copy relative path', 'Rename…', 'Delete file from disk…']) await page.locator('.ctx button').filter({ hasText: l }).waitFor();
+  if (await page.locator('.ctx button').filter({ hasText: 'Mark reviewed' }).count()) throw new Error('Mark reviewed offered on a file with nothing to review');
   await page.keyboard.press('Escape');
+  // changed outside Mothball: offered, and it clears the badge with a confirmation
+  const f = join(omen, 'configs/weapons.json');
+  writeFileSync(f, readFileSync(f, 'utf8') + ' ');
+  execFileSync(process.execPath, ['-e', `require('fs').utimesSync(${JSON.stringify(f)}, new Date(), new Date(Date.now()+7000))`]);
+  await toastGone();
+  await page.getByRole('button', { name: 'Rescan' }).click();
+  await row.locator('.badge.warn').filter({ hasText: 'changed' }).waitFor();
+  await row.click({ button: 'right' });
+  await page.locator('.ctx button').filter({ hasText: 'Mark reviewed' }).click();
+  await page.locator('.toast').filter({ hasText: 'weapons.json marked reviewed' }).waitFor();
+  await row.locator('.badge.warn').waitFor({ state: 'detached' });
 });
 
 await step('Global search: clickable folder breadcrumbs', async () => {
