@@ -263,6 +263,7 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
             ok()
         }
         "timeline.setNote" => timeline::set_note(v, &s(a, "id")?, &os(a, "note").unwrap_or_default()),
+        "files.reviewWithNote" => files::review_with_note(v, &s(a, "id")?, &os(a, "note").unwrap_or_default()),
         "files.setEventNote" => files::set_event_note(v, &s(a, "id")?, &os(a, "note").unwrap_or_default()),
         "timeline.deleteJournal" => timeline::delete_manual(v, &s(a, "id")?).and_then(|_| ok()),
 

@@ -259,6 +259,33 @@ await step('Why notes: on a file change, on project activity, in the diff window
   await page.locator('.filerow').filter({ hasText: 'weapon_tuner.gsc' }).click();
 });
 
+await step('"Why?" in Needs your attention: say why, and it is dismissed', async () => {
+  const f = join(omen, 'configs/weapons.json');
+  writeFileSync(f, readFileSync(f, 'utf8') + '\n');
+  execFileSync(process.execPath, ['-e', `require('fs').utimesSync(${JSON.stringify(f)}, new Date(), new Date(Date.now()+9000))`]);
+  await toastGone();
+  await page.getByRole('button', { name: 'Rescan' }).click();
+  await page.getByRole('tab', { name: /Overview/ }).click();
+  const att = page.locator('.ov2-sec.attention');
+  const row = att.locator('.att-row').filter({ hasText: 'configs/weapons.json' });
+  await row.getByRole('button', { name: 'Why?' }).click();
+  await att.getByLabel('Why weapons.json changed').fill('Trailing newline from the LLM export');
+  if (shots) await page.screenshot({ path: join(shots, 'x-attention-why.png') });
+  await att.getByRole('button', { name: 'Save & dismiss' }).click();
+  await page.locator('.toast').filter({ hasText: 'Noted why weapons.json changed' }).waitFor();
+  await row.waitFor({ state: 'detached' });
+  // it's the why on that change, and finds the file in search
+  await page.keyboard.press('Control+K');
+  await page.locator('.palette input').fill('trailing newline');
+  await page.locator('.palette .item.fileitem').filter({ hasText: 'weapons.json' }).first().waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('tab', { name: /Files/ }).click();
+  await page.locator('.filerow').filter({ hasText: 'weapons.json' }).click();
+  await page.getByRole('button', { name: 'Activity', exact: true }).click();
+  await page.locator('.doc .why-note').filter({ hasText: 'Trailing newline from the LLM export' }).waitFor();
+  await page.locator('.filerow').filter({ hasText: 'weapon_tuner.gsc' }).click();
+});
+
 await step('Compare file versions (no Git needed)', async () => {
   await page.getByRole('button', { name: /^Backups & versions/ }).click();
   await page.locator('.verrow').nth(1).getByRole('button', { name: /vs now/ }).click();
@@ -366,6 +393,9 @@ await step('Edit a file in the built-in editor', async () => {
   const vs = (await api('versions.list', { fileId: fid })).data;
   const pre = vs.find((v) => v.reason === 'pre-save');
   if (!pre || !/instashoot.*_before\.gsc$/.test(pre.name) || !pre.note.includes('timing check')) throw new Error('pre-save backup missing: ' + JSON.stringify(vs));
+  // the save's note is the "why" of that change in the file's history
+  const evs = (await api('files.get', { id: fid })).data.events;
+  if (!evs.some((e) => e.detail === 'Edited in Mothball' && e.note === 'Instashoot fix: moved timing check before animation')) throw new Error('save note not on the change: ' + JSON.stringify(evs.slice(0, 3)));
   // external change while open -> conflict prompt, nothing overwritten silently
   writeFileSync(join(omen, 'scripts/mp/_util.gsc'), disk + '\n// external\n');
   await page.locator('.pv-editor textarea').first().focus();

@@ -128,6 +128,21 @@ pub fn set_note(v: &Vault, id: &str, note: &str) -> DbResult<Json> {
     Ok(Json::obj().with("id", id).with("note", note))
 }
 
+/// Adds a save's note to the activity entry for edits to this file (the one
+/// add_file_edit just made or folded the save into).
+pub fn note_file_edit(v: &Vault, file_id: &str, note: &str) -> DbResult<()> {
+    let note = note.trim();
+    if note.is_empty() {
+        return Ok(());
+    }
+    if let Some(r) = v.db.one("SELECT id, note FROM timeline WHERE kind='edit' AND ref_type='file' AND ref_id=? ORDER BY at DESC LIMIT 1", p![file_id])? {
+        let old = r.s("note");
+        let joined = if old.is_empty() || old.contains(note) { if old.is_empty() { note.to_string() } else { old } } else { format!("{old}; {note}") };
+        set_note(v, &r.s("id"), &joined)?;
+    }
+    Ok(())
+}
+
 pub fn delete_manual(v: &Vault, id: &str) -> DbResult<()> {
     let n = v.db.exec("DELETE FROM timeline WHERE id=? AND manual=1", p![id])?;
     if n == 0 {

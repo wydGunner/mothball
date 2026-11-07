@@ -82,7 +82,15 @@ struct World {
     stats: BTreeMap<&'static str, usize>,
     checks: usize,
     long_paths: bool,
+    /// whether the game-output folder is ignored yet
+    game_ignored: bool,
+    /// snapshots created as temporary (they may delete themselves)
+    temp_snaps: std::collections::HashSet<String>,
 }
+
+/// A folder a game writes into and deletes from on its own (like IW4X's
+/// demos/). It isn't part of `truth`: what's on disk there is the truth.
+const GAME: &str = "game output";
 
 type R<T> = Result<T, String>;
 
@@ -96,6 +104,10 @@ const NAMES: &[&str] = &[
 ];
 const EXTS: &[&str] = &["txt", "gsc", "lua", "json", "md", "stl", "3mf", "png", "bin", "blend", "cfg", ""];
 const TEXT_EXTS: &[&str] = &["txt", "gsc", "lua", "json", "md", "cfg"];
+
+fn in_game(rel: &str) -> bool {
+    rel.to_lowercase().starts_with(&format!("{GAME}/"))
+}
 
 impl World {
     fn v(&self) -> &Vault {
@@ -218,8 +230,43 @@ impl World {
             }
         }
         for rel in db.keys() {
-            if !self.truth.contains_key(rel) {
+            if !self.truth.contains_key(rel) && !in_game(rel) {
                 return Err(format!("database lists {rel} as present but it shouldn't exist"));
+            }
+        }
+        self.check_game()
+    }
+
+    /// The game-output folder: tracked like anything else until it's ignored;
+    /// after that, no record of it at all (not even "missing").
+    fn check_game(&mut self) -> R<()> {
+        self.checks += 1;
+        let rows = self.v().db.query("SELECT rel_path, state, sha256 FROM files WHERE project_id=? AND lower(rel_path) LIKE ?", crate::p![self.pid.as_str(), format!("{GAME}/%")]).map_err(|e| e.to_string())?;
+        if self.game_ignored {
+            if let Some(r) = rows.first() {
+                return Err(format!("{GAME}/ is ignored, but {} is still recorded ({})", r.s("rel_path"), r.s("state")));
+            }
+            return Ok(());
+        }
+        let dir = self.root.join(GAME);
+        let mut disk: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for e in rd.flatten() {
+                if let Ok(b) = std::fs::read(e.path()) {
+                    disk.insert(format!("{GAME}/{}", e.file_name().to_string_lossy()), b);
+                }
+            }
+        }
+        for (rel, b) in &disk {
+            match rows.iter().find(|r| r.s("rel_path") == *rel && r.s("state") == "present") {
+                None => return Err(format!("game output {rel} is on disk but not tracked as present")),
+                Some(r) if r.s("sha256") != sha256_bytes(b) => return Err(format!("game output {rel}: database checksum is stale")),
+                _ => {}
+            }
+        }
+        for r in rows.iter().filter(|r| r.s("state") == "present") {
+            if !disk.contains_key(&r.s("rel_path")) {
+                return Err(format!("database lists game output {} as present but it's gone", r.s("rel_path")));
             }
         }
         Ok(())
@@ -451,8 +498,16 @@ impl World {
     fn op_snapshot(&mut self) -> R<()> {
         self.scan()?;
         let name = format!("snap {}", self.rng.below(1000));
-        let r = call(self.v(), "snapshots.create", Json::obj().with("projectId", self.pid.as_str()).with("name", name).with("maxFileMb", 64.0))?;
+        let temp = self.rng.chance(35);
+        let mut a = Json::obj().with("projectId", self.pid.as_str()).with("name", name).with("maxFileMb", 64.0);
+        if temp {
+            a.set("expiresAt", crate::util::now_ms() + 3_600_000);
+        }
+        let r = call(self.v(), "snapshots.create", a)?;
         let id = r.str_of("id").ok_or(format!("snapshot returned no id: {}", r.to_string()))?;
+        if temp {
+            self.temp_snaps.insert(id.clone());
+        }
         self.snapshots.push((id, self.truth.clone()));
         self.bump("snapshot");
         Ok(())
@@ -573,11 +628,119 @@ impl World {
         Ok(())
     }
 
+    /// The game writes a few new uniquely named files and deletes old ones.
+    fn op_game_output(&mut self) -> R<()> {
+        let dir = self.root.join(GAME);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        for _ in 0..1 + self.rng.below(3) {
+            let n = self.rng.next() % 1_000_000_000;
+            let mut b = vec![0u8, 0x44, 0x4d]; // binary, like a demo
+            b.extend((0..16 + self.rng.below(200)).map(|_| (self.rng.next() & 0xff) as u8));
+            std::fs::write(dir.join(format!("auto_{n}.dm_13")), &b).map_err(|e| e.to_string())?;
+        }
+        let mut old: Vec<PathBuf> = std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten().map(|e| e.path()).collect();
+        old.sort();
+        while old.len() > 6 {
+            let p = old.remove(0);
+            std::fs::remove_file(&p).map_err(|e| format!("game deleting {}: {e}", p.display()))?;
+        }
+        self.bump("game output");
+        Ok(())
+    }
+
+    /// "Ignore folder" on the game output: its records go, nothing is reported missing.
+    fn op_ignore_game(&mut self) -> R<()> {
+        if self.game_ignored || !self.root.join(GAME).exists() {
+            return Ok(());
+        }
+        self.scan()?;
+        call(self.v(), "files.ignoreFolder", Json::obj().with("projectId", self.pid.as_str()).with("dir", GAME).with("anywhere", false))?;
+        self.game_ignored = true;
+        self.check_game()?;
+        self.bump("ignore game folder");
+        Ok(())
+    }
+
+    /// Drop in `x (1).ext`, delete `x.ext`, rename the copy onto `x.ext`: the
+    /// file keeps its record (and history), and nothing is left "missing".
+    fn op_rename_onto_old(&mut self) -> R<()> {
+        self.scan()?;
+        let Some(rel) = self.rng.pick(&self.present()).cloned() else { return Ok(()) };
+        let Some(id_before) = self.ids.get(&rel).cloned() else { return Ok(()) };
+        let ext = Self::ext_of(&rel);
+        let copy = match rel.rsplit_once('.') {
+            Some((stem, e)) if !stem.ends_with('/') && !e.contains('/') => format!("{stem} (1).{e}"),
+            _ => format!("{rel} (1)"),
+        };
+        let cl = copy.to_lowercase();
+        if self.truth.keys().any(|k| k.to_lowercase() == cl || k.to_lowercase().starts_with(&format!("{cl}/"))) {
+            return Ok(());
+        }
+        let bytes = self.content(&ext);
+        if Some(&bytes) == self.truth.get(&rel) {
+            return Ok(());
+        }
+        self.write(&copy, bytes.clone())?;
+        self.scan()?;
+        std::fs::remove_file(self.abs(&rel)).map_err(|e| format!("delete {rel}: {e}"))?;
+        self.truth.remove(&rel);
+        self.scan()?;
+        std::fs::rename(self.abs(&copy), self.abs(&rel)).map_err(|e| format!("rename {copy} → {rel}: {e}"))?;
+        self.truth.remove(&copy);
+        self.truth.insert(rel.clone(), bytes);
+        self.scan()?;
+        self.checks += 1;
+        match self.ids.get(&rel) {
+            Some(id) if *id == id_before => {}
+            other => return Err(format!("{rel} lost its record (and history) when a copy was renamed onto it: {other:?} vs {id_before}")),
+        }
+        let left = self.v().db.query("SELECT state FROM files WHERE project_id=? AND rel_path=?", crate::p![self.pid.as_str(), copy.as_str()]).map_err(|e| e.to_string())?;
+        if let Some(r) = left.first() {
+            // only kept if it holds something of the user's (the stress test gives it nothing)
+            return Err(format!("{copy} was renamed onto {rel} but is still recorded ({})", r.s("state")));
+        }
+        self.bump("rename onto old name");
+        Ok(())
+    }
+
+    /// Temporary snapshots' time runs out: exactly those are deleted, the
+    /// others stay and still restore exactly (op_restore_snapshot, later).
+    fn op_expire_snapshots(&mut self) -> R<()> {
+        if self.temp_snaps.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<String> = self.temp_snaps.drain().collect();
+        for id in &ids {
+            self.v().db.exec("UPDATE snapshots SET expires_at=? WHERE id=?", crate::p![crate::util::now_ms() - 1, id.as_str()]).map_err(|e| e.to_string())?;
+        }
+        let n = crate::snapshots::expire_due(self.v()).map_err(|e| e.to_string())?;
+        if n != ids.len() {
+            return Err(format!("{} temporary snapshots were due, {n} deleted themselves", ids.len()));
+        }
+        self.snapshots.retain(|(id, _)| !ids.contains(id));
+        let listed = call(self.v(), "snapshots.list", Json::obj().with("projectId", self.pid.as_str()))?;
+        let have: Vec<String> = listed.as_arr().cloned().unwrap_or_default().iter().filter_map(|x| x.str_of("id")).collect();
+        self.checks += 1;
+        for (id, _) in &self.snapshots {
+            if !have.contains(id) {
+                return Err(format!("snapshot {id} was kept, but it's gone"));
+            }
+        }
+        for id in &ids {
+            if have.contains(id) {
+                return Err(format!("expired snapshot {id} is still listed"));
+            }
+        }
+        self.bump("expire snapshots");
+        Ok(())
+    }
+
     fn step(&mut self) -> R<&'static str> {
         let ops: &[(&'static str, u64)] = &[
             ("create", 16), ("modify", 18), ("rename", 7), ("delete outside", 4), ("delete in app", 3), ("restore deleted", 3),
             ("editor save", 8), ("backup a file", 10), ("restore a version", 10), ("snapshot", 3), ("restore a snapshot", 3),
             ("backup + restore", 1), ("prune", 2), ("reopen", 2), ("scan", 10),
+            ("game output", 6), ("ignore game folder", 1), ("rename onto old name", 3), ("expire snapshots", 2),
         ];
         let total: u64 = ops.iter().map(|x| x.1).sum();
         let mut r = self.rng.next() % total;
@@ -601,6 +764,13 @@ impl World {
             "backup + restore" => self.op_backup_roundtrip(),
             "prune" => self.op_prune(),
             "reopen" => self.op_reopen(),
+            "game output" => self.op_game_output(),
+            "ignore game folder" => {
+                // not too early, so the folder is tracked (and churns) for a while first
+                if self.stats.get("game output").copied().unwrap_or(0) >= 8 { self.op_ignore_game() } else { Ok(()) }
+            }
+            "rename onto old name" => self.op_rename_onto_old(),
+            "expire snapshots" => self.op_expire_snapshots(),
             _ => { self.bump("scan"); self.scan() }
         }?;
         Ok(which)
@@ -650,10 +820,11 @@ fn setup(dir: &Path, seed: u64, long_paths: bool) -> R<World> {
     };
     // keep a version of every file type, so restores are exercised everywhere
     let _ = call(&v, "versions.setPolicy", Json::obj().with("projectId", pid.as_str()).with("policy", Json::obj().with("text", true).with("keyFiles", true).with("textMaxMb", 64.0).with("keyMaxMb", 64.0)));
-    let mut w = World { v: Some(v), data, root, scratch, pid, rng: Rng(seed.max(1)), truth: BTreeMap::new(), ids: HashMap::new(), versions: Vec::new(), snapshots: Vec::new(), deleted: HashMap::new(), stats: BTreeMap::new(), checks: 0, long_paths };
-    // pick up whatever is already in the folder (crash mode reuses it)
+    let game_ignored = v.db.one("SELECT ignore_globs FROM projects WHERE id=?", crate::p![pid.as_str()]).ok().flatten().map(|r| r.s("ignore_globs").contains(&format!("/{GAME}/"))).unwrap_or(false);
+    let mut w = World { v: Some(v), data, root, scratch, pid, rng: Rng(seed.max(1)), truth: BTreeMap::new(), ids: HashMap::new(), versions: Vec::new(), snapshots: Vec::new(), deleted: HashMap::new(), stats: BTreeMap::new(), checks: 0, long_paths, game_ignored, temp_snaps: Default::default() };
+    // pick up whatever is already in the folder (crash mode reuses it); the game's folder isn't modelled
     let walk = crate::files::walk(&w.root, &crate::files::Ignore::parse(""));
-    for rel in walk.files.keys() {
+    for rel in walk.files.keys().filter(|r| !in_game(r)) {
         if let Ok(b) = std::fs::read(w.root.join(rel)) {
             w.truth.insert(rel.clone(), b);
         }

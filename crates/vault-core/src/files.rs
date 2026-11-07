@@ -712,10 +712,42 @@ pub fn set_event_note(v: &Vault, id: &str, note: &str) -> DbResult<Json> {
     if note.chars().count() > 2000 {
         return Err("Keep the note under 2000 characters".into());
     }
-    if v.db.exec("UPDATE file_events SET note=? WHERE id=?", p![note, id])? == 0 {
-        return Err("Change not found".into());
-    }
+    let fid = v.db.one("SELECT file_id FROM file_events WHERE id=?", p![id])?.ok_or("Change not found")?.s("file_id");
+    v.db.exec("UPDATE file_events SET note=? WHERE id=?", p![note, id])?;
+    search::index_file(v, &fid)?; // notes on a file's changes find the file in search
     Ok(Json::obj().with("id", id).with("note", note))
+}
+
+/// Puts `note` on the file's latest content change (an outside edit, a save,
+/// a file that was added or came back). An existing note is kept and the new
+/// one added after it. Returns the change's id, if there is one.
+pub fn note_latest_change(v: &Vault, file_id: &str, note: &str) -> DbResult<Option<String>> {
+    let note = note.trim();
+    if note.is_empty() {
+        return Ok(None);
+    }
+    let Some(e) = v.db.one(
+        "SELECT id, note FROM file_events WHERE file_id=? AND kind IN ('modified','added','restored','relinked') ORDER BY at DESC, rowid DESC LIMIT 1",
+        p![file_id],
+    )?
+    else {
+        return Ok(None);
+    };
+    let old = e.s("note");
+    let joined = if old.is_empty() || old == note { note.to_string() } else { format!("{old}; {note}") };
+    set_event_note(v, &e.s("id"), &joined)?;
+    Ok(Some(e.s("id")))
+}
+
+/// "Why?" in Needs your attention: say why a file changed and dismiss it.
+pub fn review_with_note(v: &Vault, file_id: &str, note: &str) -> DbResult<Json> {
+    let note = note.trim();
+    if note.is_empty() {
+        return Err("Write why it changed, or use Dismiss".into());
+    }
+    let ev = note_latest_change(v, file_id, note)?.ok_or("This file has no change to note")?;
+    mark_reviewed(v, &[file_id.to_string()])?;
+    Ok(Json::obj().with("eventId", ev).with("note", note))
 }
 
 pub fn forget_missing(v: &Vault, file_id: &str) -> DbResult<()> {
@@ -2038,6 +2070,40 @@ mod tests {
         assert!(kinds.contains(&"modified".to_string()) && kinds.contains(&"moved".to_string()), "{kinds:?}");
         let m = ev.as_arr().unwrap().iter().find(|e| e.str_of("kind").as_deref() == Some("modified")).cloned().unwrap();
         assert!(m.str_of("from").is_some(), "old -> new diff available");
+    }
+
+    /// "Why?" in Needs your attention; Smart Save's note as the why; file
+    /// change notes searchable.
+    #[test]
+    fn why_from_review_and_from_smart_save_and_searchable() {
+        let (t, v) = crate::testutil::vault();
+        let dir = t.0.join("P");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("_binds.gsc"), "binds() {}\n").unwrap();
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "P").with("linkPath", dir.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        scan(&v, &pid).unwrap();
+        let fid = v.db.one("SELECT id FROM files WHERE project_id=?", p![pid.as_str()]).unwrap().unwrap().s("id");
+        // dropped in from an LLM
+        std::fs::write(dir.join("_binds.gsc"), "binds() { nudge(); }\n").unwrap();
+        scan(&v, &pid).unwrap();
+        assert!(crate::api::dispatch(&v, "files.reviewWithNote", &Json::obj().with("id", fid.as_str()).with("note", " ")).is_err(), "an empty why is refused");
+        crate::api::dispatch(&v, "files.reviewWithNote", &Json::obj().with("id", fid.as_str()).with("note", "Added the nudge bind from Claude")).unwrap();
+        let f = v.db.one("SELECT changed_since_review FROM files WHERE id=?", p![fid.as_str()]).unwrap().unwrap();
+        assert_eq!(f.i("changed_since_review"), 0, "dismissed");
+        let ev = events(&v, &fid, 10).unwrap();
+        let m = ev.as_arr().unwrap().iter().find(|e| e.str_of("kind").as_deref() == Some("modified")).cloned().unwrap();
+        assert_eq!(m.str_of("note").as_deref(), Some("Added the nudge bind from Claude"));
+        let hits = crate::api::dispatch(&v, "search", &Json::obj().with("query", "nudge bind")).unwrap().to_string();
+        assert!(hits.contains("_binds.gsc"), "the file is found by its change note: {}", hits);
+
+        // Smart Save with "What changed in this version?"
+        let sha = v.db.one("SELECT sha256 FROM files WHERE id=?", p![fid.as_str()]).unwrap().unwrap().s("sha256");
+        crate::versions::smart_save(&v, &fid, "binds() { nudge(); stuck(); }\n", &sha, "lf", false, &crate::versions::SmartSave { backup_before: true, backup_after: false, name: "", description: "Stuck bind for trickshot golf", tags: "" }).unwrap();
+        let ev = events(&v, &fid, 10).unwrap();
+        let last = ev.as_arr().unwrap().iter().find(|e| e.str_of("detail").as_deref() == Some("Edited in Mothball")).cloned().unwrap();
+        assert_eq!(last.str_of("note").as_deref(), Some("Stuck bind for trickshot golf"));
+        let tl = crate::timeline::list(&v, &pid, 20, None).unwrap();
+        assert!(tl.as_arr().unwrap().iter().any(|e| e.str_of("note").as_deref() == Some("Stuck bind for trickshot golf")), "and on the project activity entry");
     }
 
     #[test]

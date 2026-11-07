@@ -636,6 +636,12 @@ pub fn smart_save(v: &Vault, file_id: &str, text: &str, expected_sha: &str, eol:
     }
     let w = files::write_text(v, file_id, text, expected_sha, eol, bom)?;
     let new_sha = w.str_of("sha256").unwrap_or_default();
+    // "What changed in this version?" is the why of this edit: on the file's
+    // change and on the project's activity entry for it
+    if !o.description.trim().is_empty() && new_sha != expected_sha {
+        files::note_latest_change(v, file_id, o.description)?;
+        crate::timeline::note_file_edit(v, file_id, o.description)?;
+    }
     let mut after_id = None;
     if o.backup_after {
         let f2 = v.db.one("SELECT * FROM files WHERE id=?", p![file_id])?.ok_or("File not found")?;

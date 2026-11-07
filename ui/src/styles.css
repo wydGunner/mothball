@@ -861,3 +861,5 @@ input[type=checkbox] { accent-color: var(--accent); }
 /* the "add why" icon sits on the entry's own line and shows on hover: no extra line per entry */
 .why-add.icon { padding: 0 2px; line-height: 1; align-self: center; }
 .why-add.icon svg { width: 13px; height: 13px; }
+.att-why { display: flex; gap: 6px; margin: 0 0 8px 26px; }
+.att-why .input { flex: 1; height: 28px; font-size: 12.5px; }

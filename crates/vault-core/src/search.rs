@@ -54,12 +54,14 @@ pub fn index_file(v: &Vault, file_id: &str) -> DbResult<()> {
     )?;
     if let Some(r) = r {
         let body = format!(
-            "{} {} {} {} {}",
+            "{} {} {} {} {} {}",
             r.s("rel_path"),
             r.s("purpose"),
             r.s("notes_md"),
             r.s("warnings"),
-            tag_text(v, "file", file_id)?
+            tag_text(v, "file", file_id)?,
+            // your "why" notes on this file's changes
+            v.db.one("SELECT group_concat(note, ' ') AS n FROM file_events WHERE file_id=? AND note!=''", p![file_id])?.and_then(|x| x.os("n")).unwrap_or_default()
         );
         index(v, "file", file_id, &r.s("project_id"), &r.s("name"), &body)?;
     }

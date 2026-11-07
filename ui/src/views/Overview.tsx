@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   LuTriangleAlert, LuGitCompareArrows, LuPlus, LuTrash2, LuCircleCheck, LuCircleX, LuFileWarning, LuPencil,
   LuNotebookPen, LuListTodo, LuHistory, LuChevronRight, LuDiff, LuBug, LuImage, LuCode,
-  LuInfo, LuFileClock, LuSlidersHorizontal, LuClock, LuFolder, LuFolderX, LuPlug,
+  LuInfo, LuFileClock, LuSlidersHorizontal, LuClock, LuFolder, LuFolderX, LuPlug, LuMessageSquarePlus,
 } from 'react-icons/lu';
 import { DepsBody, depsSummary, type Dep } from './Deps';
 import { SpoolChip } from './Printers';
@@ -138,6 +138,8 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const ignoreSug = useLoad(() => call<{ subtype: string; folders: { rule: string; folder: string; files: number; missing: number }[] }>('projects.ignoreSuggestions', { id: p.id }), [p.id, ctx.scanTick]);
   const sugFolders = ignoreSug.data?.folders || [];
   const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const [whyFor, setWhyFor] = useState<string | null>(null); // "Why?" box open for this changed file
+  const [whyText, setWhyText] = useState('');
   // missing files grouped by folder: 3+ in one folder collapse into one row
   const missingGroups = useMemo(() => {
     const by = new Map<string, any[]>();
@@ -226,12 +228,26 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
               </div>
             ))}
             {(changed.data || []).map((f) => (
-              <div key={f.id} className="att-row">
-                <LuFileWarning />
-                <div className="grow small"><span className="mono">{f.path}</span> <span className="dim">changed {ago(f.lastChanged)}</span>{f.hasDocs && <span className="dim">, has notes: check they still apply</span>}</div>
-                {f.versions > 1 && <button className="btn sm" onClick={() => setCompare({ fileId: f.id, name: f.name })}><LuDiff /> What changed?</button>}
-                <button className="btn sm ghost" onClick={() => ctx.openFile(f.id)}>Open</button>
-                <button className="btn sm ghost" onClick={async () => { await act(() => call('files.markReviewed', { ids: [f.id] })); changed.reload(); ctx.reload(); }}>Dismiss</button>
+              <div key={f.id}>
+                <div className="att-row">
+                  <LuFileWarning />
+                  <div className="grow small"><span className="mono">{f.path}</span> <span className="dim">changed {ago(f.lastChanged)}</span>{f.hasDocs && <span className="dim">, has notes: check they still apply</span>}</div>
+                  {f.versions > 1 && <button className="btn sm" onClick={() => setCompare({ fileId: f.id, name: f.name })}><LuDiff /> What changed?</button>}
+                  <button className={cx('btn sm', whyFor === f.id && 'on')} title="Say why it changed: saved on the change, and dismisses it" onClick={() => { setWhyFor(whyFor === f.id ? null : f.id); setWhyText(''); }}><LuMessageSquarePlus /> Why?</button>
+                  <button className="btn sm ghost" onClick={() => ctx.openFile(f.id)}>Open</button>
+                  <button className="btn sm ghost" onClick={async () => { await act(() => call('files.markReviewed', { ids: [f.id] })); changed.reload(); ctx.reload(); }}>Dismiss</button>
+                </div>
+                {whyFor === f.id && (
+                  <form className="att-why" onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!whyText.trim()) return;
+                    if (await act(() => call('files.reviewWithNote', { id: f.id, note: whyText }), `Noted why ${f.name} changed`)) { setWhyFor(null); changed.reload(); ctx.reload(); }
+                  }}>
+                    <input className="input sm" autoFocus value={whyText} maxLength={2000} aria-label={`Why ${f.name} changed`} placeholder="Why did it change? e.g. LLM fix for the back button overlap"
+                      onChange={(e) => setWhyText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setWhyFor(null); } }} />
+                    <button className="btn sm primary" type="submit" disabled={!whyText.trim()}>Save &amp; dismiss</button>
+                  </form>
+                )}
               </div>
             ))}
             {sugFolders.length > 0 && (
