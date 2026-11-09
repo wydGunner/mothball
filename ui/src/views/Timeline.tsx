@@ -75,7 +75,8 @@ export function TimelineTab({ ctx }: { ctx: ProjectCtx }) {
               <div key={e.id} className={`tlitem why-host ${e.manual ? 'manual' : e.kind}`} title={e.note ? `Why: ${e.note}` : undefined}>
                 <span className="time">{new Date(e.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span>
                 <div className="grow" style={{ minWidth: 0 }}>
-                  <WhyNote note={e.note} onSave={async (n) => { await call('timeline.setNote', { id: e.id, note: n }); tl.reload(); }}>{(add) => <div className="row" style={{ gap: 6, alignItems: 'baseline' }}><div className="grow" style={{ minWidth: 0 }}>
+                  <WhyNote note={e.note} onSave={async (n) => { await call('timeline.setNote', { id: e.id, note: n }); tl.reload(); }}
+                    folded={expandable(e) && !openIds.has(e.id)} onUnfold={() => toggle(e.id)}>{(add) => <div className="row" style={{ gap: 6, alignItems: 'baseline' }}><div className="grow" style={{ minWidth: 0 }}>
                   {expandable(e)
                     ? <button className={cx('tl-toggle', openIds.has(e.id) && 'on')} aria-expanded={openIds.has(e.id)} onClick={() => toggle(e.id)} title={openIds.has(e.id) ? 'Hide what changed' : 'Show what changed'}>
                         <LuChevronRight className="chev" /><span>{e.summary}</span>{e.data?.saves && e.data.saves > 1 ? <span className="dim small">· {e.data.saves} saves</span> : null}

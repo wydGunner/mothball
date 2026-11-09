@@ -1,6 +1,6 @@
 [package]
 name = "vault-stress"
-version = "0.9.6"
+version = "0.9.7"
 edition = "2021"
 description = "Mothball's save/restore torture test, buildable on Windows (bundles SQLite)."
 license = "GPL-3.0-or-later"

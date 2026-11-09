@@ -249,7 +249,18 @@ await step('Why notes: on a file change, on project activity, in the diff window
   await act.locator('.why-note').filter({ hasText: 'Dropped in the tuned weapon files' }).waitFor();
   if (shots) await page.screenshot({ path: join(shots, 'x-activity-why.png') });
   await page.getByRole('tab', { name: /Timeline/ }).click();
-  await page.locator('.tlitem .why-note').filter({ hasText: 'Dropped in the tuned weapon files' }).waitFor();
+  // folded into the entry: a small "why" marker (note on hover); clicking it opens the entry
+  // (tooltips take the title off while hovered, so mark the entry for the steps below)
+  await page.locator('.tlitem[title*="Dropped in the tuned weapon files"]').first().evaluate((el) => el.setAttribute('data-t', 'why-entry'));
+  const ti = page.locator('.tlitem[data-t=why-entry]');
+  await ti.locator('.why-chip').waitFor();
+  if (await ti.locator('.why-note').count()) throw new Error('the why should stay folded until the entry is opened');
+  await ti.locator('.why-chip').click();
+  await ti.locator('.why-note').filter({ hasText: 'Dropped in the tuned weapon files' }).waitFor();
+  await ti.locator('.tl-detail').waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-timeline-why-open.png') });
+  await ti.locator('.tl-toggle').click();
+  await ti.locator('.why-note').waitFor({ state: 'detached' });
   // and it's searchable
   await page.keyboard.press('Control+K');
   await page.locator('.palette input').fill('tuned weapon files');
