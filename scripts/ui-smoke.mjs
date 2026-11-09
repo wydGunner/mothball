@@ -1480,6 +1480,44 @@ await step('Dashboard: project groups', async () => {
   await page.locator('.sidebar .sectionbtn').filter({ hasText: 'MW2 mods' }).click();
 });
 
+await step('Dashboard: drag groups to reorder them (sidebar follows)', async () => {
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  // a second group, so there's something to reorder: "Archive" sorts before "MW2 mods"
+  const other = page.locator('.pcard').filter({ hasNotText: 'OMEN v2' }).first();
+  const otherName = (await other.getAttribute('aria-label')).replace(/^Open /, '');
+  await other.click({ button: 'right' });
+  await page.locator('.ctx button').filter({ hasText: 'Add to a group…' }).click();
+  await page.locator('.modal input').fill('Archive');
+  await page.locator('.modal').getByRole('button', { name: 'Save' }).click();
+  const heads = () => page.locator('.pgroup-head').filter({ hasNot: page.getByText('Ungrouped') }).locator('b').allTextContents();
+  await page.locator('.pgroup-head').filter({ hasText: 'Archive' }).waitFor();
+  if ((await heads()).join('|') !== 'Archive|MW2 mods') throw new Error('expected A→Z before reordering: ' + (await heads()));
+  // drag "MW2 mods" above "Archive"
+  await page.locator('.pgroup-head').filter({ hasText: 'MW2 mods' }).dragTo(page.locator('.pgroup-head').filter({ hasText: 'Archive' }), { targetPosition: { x: 40, y: 3 } });
+  await page.waitForFunction(() => [...document.querySelectorAll('.pgroup-head b')].map((b) => b.textContent).join('|').startsWith('MW2 mods|Archive'));
+  const side = await page.locator('.sidebar .sectionbtn .label').allTextContents();
+  if (side.indexOf('MW2 mods') > side.indexOf('Archive')) throw new Error('sidebar did not follow: ' + side.join(', '));
+  if (shots) await page.screenshot({ path: join(shots, 'x-group-drag.png') });
+  // it survives a reload
+  await page.evaluate(() => location.reload());
+  await page.locator('.pgroup-head').filter({ hasText: 'Archive' }).waitFor();
+  if ((await heads()).join('|') !== 'MW2 mods|Archive') throw new Error('order not kept: ' + (await heads()));
+  // keyboard/mouse alternative: right-click → Move group down
+  await page.locator('.pgroup-head').filter({ hasText: 'MW2 mods' }).click({ button: 'right' });
+  await page.locator('.ctx button').filter({ hasText: 'Move group down' }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.pgroup-head b')].map((b) => b.textContent).join('|').startsWith('Archive|MW2 mods'));
+  // a renamed group keeps its place
+  await page.locator('.pgroup-head').filter({ hasText: 'Archive' }).click({ button: 'right' });
+  await page.locator('.ctx button').filter({ hasText: 'Rename group…' }).click();
+  await page.locator('.modal input').fill('Zz old stuff');
+  await page.locator('.modal').getByRole('button', { name: 'Rename' }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.pgroup-head b')].map((b) => b.textContent).join('|').startsWith('Zz old stuff|MW2 mods'));
+  // put things back for later steps
+  await api('projects.update', { id: (await api('projects.list', {})).data.find((x) => x.name === otherName).id, patch: { group: '' } });
+  await page.evaluate(() => location.reload());
+  await page.locator('.pgroup-head').filter({ hasText: 'MW2 mods' }).waitFor();
+});
+
 await step('WoW addon: .toc panel and Lua functions', async () => {
   const wl = join(tmp, 'WhatsLeft');
   mkdirSync(join(wl, 'Modules'), { recursive: true });

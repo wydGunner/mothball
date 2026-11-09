@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine, LuImage, LuFileCode, LuUpload, LuCircleCheck, LuHistory } from 'react-icons/lu';
+import { LuSearch, LuFilter, LuX, LuLayoutGrid, LuList, LuPlus, LuFolderOpen, LuFolderPlus, LuStar, LuTriangleAlert, LuHardDrive, LuFiles, LuListTodo, LuLink, LuDatabase, LuChevronDown, LuChevronRight, LuFolderInput, LuPencilLine, LuImage, LuFileCode, LuUpload, LuCircleCheck, LuHistory, LuArrowUp, LuArrowDown, LuGripVertical } from 'react-icons/lu';
+import { useGroupOrder, sortGroups, moveGroup, renameInGroupOrder, GROUP_DRAG } from '../groupOrder';
 import { call, pickFiles, pickFolder, revealPath, isTauri, type Project } from '../ipc';
 import { Dropdown, Empty, Modal, ProjectIcon, StatusPill, useAction, useContextMenu, appContextMenu, useLoad, useConfirm, usePrompt } from '../components/common';
 import { ago, bytes, cx, hiddenTypes } from '../format';
@@ -79,8 +80,11 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
     const dragged = nav.projects.find((p) => p.id === dragId);
     if (dragged && dragged.group !== target.group) setGroup([dragId], target.group);
   };
-  const allGroups = useMemo(() => [...new Set(nav.projects.map((p) => p.group).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })), [nav.projects]);
-  // sections: each group (A→Z), then ungrouped; a flat list when nothing is grouped
+  const groupOrder = useGroupOrder();
+  const allGroups = useMemo(() => sortGroups([...new Set(nav.projects.map((p) => p.group).filter(Boolean))], groupOrder), [nav.projects, groupOrder]);
+  // a group being dragged, and where it would land (before/after another group's header)
+  const [groupDrop, setGroupDrop] = useState<{ key: string; after: boolean } | null>(null);
+  // sections: each group (in your order, new ones A→Z), then ungrouped; a flat list when nothing is grouped
   const sections = useMemo(() => {
     if (!allGroups.length) return [{ key: '', label: '', items: list }];
     const out = allGroups.map((g) => ({ key: g, label: g, items: list.filter((p) => p.group === g) })).filter((x) => x.items.length);
@@ -99,7 +103,7 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
   };
   const renameGroup = async (g: string) => {
     const n = await prompt({ title: `Rename group “${g}”`, label: 'New name', value: g, confirm: 'Rename', validate: (v) => (!v.trim() ? 'Enter a name' : v.trim().length > 60 ? 'At most 60 characters' : null) });
-    if (n && n.trim() !== g) setGroup(nav.projects.filter((p) => p.group === g).map((p) => p.id), n.trim());
+    if (n && n.trim() !== g) { renameInGroupOrder(g, n.trim()); setGroup(nav.projects.filter((p) => p.group === g).map((p) => p.id), n.trim()); }
   };
   const ungroupAll = async (g: string) => {
     if (await confirm({ title: `Remove the group “${g}”?`, confirm: 'Remove group', body: <>The projects in it become ungrouped. Nothing else changes.</> })) setGroup(nav.projects.filter((p) => p.group === g).map((p) => p.id), '');
@@ -194,10 +198,33 @@ export function Dashboard({ nav, onNew }: { nav: Nav; onNew: () => void }) {
             onDragLeave={() => setDragOver(null)}
             onDrop={(e) => { const id = e.dataTransfer.getData('text/pv-project'); setDragOver(null); if (id && sec.label) setGroup([id], sec.key); }}>
             {sec.label && (
-              <div className="pgroup-head" onContextMenu={(e) => sec.key && menu(e, [
+              <div className={cx('pgroup-head', sec.key && 'gdrag', groupDrop?.key === sec.key && (groupDrop.after ? 'gdrop-after' : 'gdrop-before'))}
+                draggable={!!sec.key} title={sec.key ? 'Drag to move this group' : undefined}
+                onDragStart={(e) => { if (!sec.key) return; e.dataTransfer.setData(GROUP_DRAG, sec.key); e.dataTransfer.effectAllowed = 'move'; }}
+                onDragOver={(e) => {
+                  if (!sec.key || !e.dataTransfer.types.includes(GROUP_DRAG)) return;
+                  e.preventDefault(); e.stopPropagation();
+                  const r = e.currentTarget.getBoundingClientRect();
+                  const after = e.clientY > r.top + r.height / 2;
+                  if (groupDrop?.key !== sec.key || groupDrop.after !== after) setGroupDrop({ key: sec.key, after });
+                }}
+                onDragLeave={() => setGroupDrop(null)}
+                onDrop={(e) => {
+                  const g = e.dataTransfer.getData(GROUP_DRAG);
+                  if (!g || !sec.key) return;
+                  e.preventDefault(); e.stopPropagation();
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setGroupDrop(null);
+                  moveGroup(allGroups, g, sec.key, e.clientY > r.top + r.height / 2);
+                }}
+                onDragEnd={() => setGroupDrop(null)}
+                onContextMenu={(e) => sec.key && menu(e, [
                 { label: 'Rename group…', icon: <LuPencilLine />, onClick: () => renameGroup(sec.key) },
+                ...(allGroups.indexOf(sec.key) > 0 ? [{ label: 'Move group up', icon: <LuArrowUp />, onClick: () => moveGroup(allGroups, sec.key, allGroups[allGroups.indexOf(sec.key) - 1], false) }] : []),
+                ...(allGroups.indexOf(sec.key) < allGroups.length - 1 ? [{ label: 'Move group down', icon: <LuArrowDown />, onClick: () => moveGroup(allGroups, sec.key, allGroups[allGroups.indexOf(sec.key) + 1], true) }] : []),
                 { label: 'Remove group (ungroup its projects)…', onClick: () => ungroupAll(sec.key) },
               ])}>
+                {sec.key ? <LuGripVertical className="ggrip" aria-hidden="true" /> : <span className="ggrip" aria-hidden="true" />}
                 <button className="btn ghost sm" aria-expanded={!isCollapsed} onClick={() => toggleCollapsed(sec.key || '\u0000')}>{isCollapsed ? <LuChevronRight /> : <LuChevronDown />} <b>{sec.label}</b> <span className="dim">{sec.items.length}</span></button>
                 {sec.key && <button className="btn ghost sm icon" title="Rename group" onClick={() => renameGroup(sec.key)}><LuPencilLine /></button>}
               </div>

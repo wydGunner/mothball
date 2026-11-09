@@ -1,4 +1,5 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useGroupOrder, sortGroups, moveGroup, GROUP_DRAG } from './groupOrder';
 import { createRoot } from 'react-dom/client';
 import { LuLayoutDashboard, LuSearch, LuSettings, LuPanelLeftClose, LuPanelLeftOpen, LuStar, LuClock, LuPlus, LuChevronRight, LuChevronDown, LuX } from 'react-icons/lu';
 import { call, isTauri, type Project } from './ipc';
@@ -210,7 +211,9 @@ function App() {
 
   const favorites = projects.filter((p) => p.favorite).sort(byName);
   // Groups list all their projects A→Z (collapsible).
-  const groupNames = [...new Set(projects.filter((p) => !p.favorite && p.group).map((p) => p.group))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const groupOrder = useGroupOrder();
+  const groupNames = sortGroups([...new Set(projects.filter((p) => !p.favorite && p.group).map((p) => p.group))], groupOrder);
+  const [sideDrop, setSideDrop] = useState<{ g: string; after: boolean } | null>(null);
   // The 8 most recently opened projects, grouped ones included (their group may be collapsed),
   // listed alphabetically so opening one doesn't reshuffle the list. Favorites are always shown above.
   const recent = [...projects].filter((p) => p.lastOpenedAt && !p.favorite).sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0)).slice(0, 8)
@@ -240,7 +243,11 @@ function App() {
             const open = !sideClosed.includes(g);
             return (
               <div key={g}>
-                <button className="section sectionbtn" aria-expanded={open} onClick={() => toggleSide(g)} title={g}>{open ? <LuChevronDown size={10} /> : <LuChevronRight size={10} />} <span className="label">{g}</span></button>
+                <button className={cx('section sectionbtn', sideDrop?.g === g && (sideDrop.after ? 'gdrop-after' : 'gdrop-before'))} aria-expanded={open} onClick={() => toggleSide(g)} title={`${g}\nDrag to move this group`}
+                  draggable onDragStart={(e) => { e.dataTransfer.setData(GROUP_DRAG, g); e.dataTransfer.effectAllowed = 'move'; }}
+                  onDragOver={(e) => { if (!e.dataTransfer.types.includes(GROUP_DRAG)) return; e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2; if (sideDrop?.g !== g || sideDrop.after !== after) setSideDrop({ g, after }); }}
+                  onDragLeave={() => setSideDrop(null)} onDragEnd={() => setSideDrop(null)}
+                  onDrop={(e) => { const d = e.dataTransfer.getData(GROUP_DRAG); if (!d) return; e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setSideDrop(null); moveGroup(groupNames, d, g, e.clientY > r.top + r.height / 2); }}>{open ? <LuChevronDown size={10} /> : <LuChevronRight size={10} />} <span className="label">{g}</span></button>
                 {open && <nav>{projects.filter((p) => !p.favorite && p.group === g).sort(byName).map(projLink)}</nav>}
               </div>
             );
