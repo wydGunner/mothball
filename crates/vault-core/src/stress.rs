@@ -744,7 +744,7 @@ impl World {
     fn op_undo_batch(&mut self) -> R<()> {
         self.scan()?;
         let tl = call(self.v(), "timeline.list", Json::obj().with("projectId", self.pid.as_str()).with("limit", 30))?;
-        let Some(e) = tl.as_arr().cloned().unwrap_or_default().into_iter().find(|e| e.str_of("summary").unwrap_or_default().starts_with("File changes detected")) else { return Ok(()) };
+        let Some(e) = tl.as_arr().cloned().unwrap_or_default().into_iter().find(|e| { let s = e.str_of("summary").unwrap_or_default(); s.starts_with("File changes detected") || s.starts_with("Updated from") }) else { return Ok(()) };
         let eid = e.str_of("id").unwrap_or_default();
         let plan = match call(self.v(), "timeline.undoPlan", Json::obj().with("id", eid.as_str())) { Ok(p) => p, Err(_) => return Ok(()) };
         let items = plan.get("items").and_then(|x| x.as_arr()).cloned().unwrap_or_default();
@@ -798,12 +798,83 @@ impl World {
         Ok(())
     }
 
+    /// "Update the project from this": a download of the project (wrapped in
+    /// folders, sometimes zipped) with some files the same, some changed and
+    /// some new. Afterwards every file must be exactly the download's version
+    /// (or untouched if it wasn't in it).
+    fn op_update_from_download(&mut self) -> R<()> {
+        self.scan()?;
+        let present = self.present();
+        if present.is_empty() {
+            return Ok(());
+        }
+        let n = self.rng.next() % 1_000_000;
+        let dl = self.scratch.join(format!("dl{n}"));
+        let inner = dl.join(format!("Project-v{n}")).join("Project");
+        let mut expect: Vec<(String, Vec<u8>)> = Vec::new();
+        // a real download of the project contains some of its files
+        let always = self.rng.below(present.len());
+        for (i, rel) in present.iter().enumerate() {
+            if i != always && !self.rng.chance(40) {
+                continue;
+            }
+            let ext = Self::ext_of(rel);
+            let bytes = if self.rng.chance(50) { self.truth[rel].clone() } else { self.content(&ext) };
+            expect.push((rel.clone(), bytes));
+        }
+        for i in 0..self.rng.below(3) {
+            let rel = format!("downloaded/new {n} {i}.txt");
+            let cl = rel.to_lowercase();
+            if self.truth.keys().any(|k| k.to_lowercase() == cl) {
+                continue;
+            }
+            let b = self.content("txt");
+            expect.push((rel, b));
+        }
+        if expect.is_empty() {
+            return Ok(());
+        }
+        for (rel, b) in &expect {
+            let p = inner.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
+            std::fs::write(&p, b).map_err(|e| e.to_string())?;
+        }
+        let drop = if self.rng.chance(30) {
+            let z = self.scratch.join(format!("dl{n}.zip"));
+            crate::zip::zip_dir(&dl, &z)?;
+            z
+        } else {
+            dl.join(format!("Project-v{n}"))
+        };
+        let untouched: Vec<(String, Vec<u8>)> = self.truth.iter().filter(|(k, _)| !expect.iter().any(|(r, _)| r == *k)).map(|(k, b)| (k.clone(), b.clone())).collect();
+        let r = call(self.v(), "files.update", Json::obj().with("projectId", self.pid.as_str()).with("paths", Json::Arr(vec![Json::from(drop.to_string_lossy().to_string())])))?;
+        if let Some(e) = r.get("errors").and_then(|x| x.as_arr()).and_then(|a| a.first()) {
+            return Err(format!("update reported an error: {}", e.to_string()));
+        }
+        self.checks += 1;
+        for (rel, b) in expect {
+            match std::fs::read(self.abs(&rel)) {
+                Ok(d) if d == b => { self.truth.insert(rel, b); }
+                Ok(_) => return Err(format!("update: {rel} isn't the download's version")),
+                Err(e) => return Err(format!("update: {rel} missing after the update: {e}")),
+            }
+        }
+        for (k, b) in untouched {
+            if std::fs::read(self.abs(&k)).ok().as_ref() != Some(&b) {
+                return Err(format!("update touched {k}, which wasn't in the download"));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dl);
+        self.bump("update from download");
+        Ok(())
+    }
+
     fn step(&mut self) -> R<&'static str> {
         let ops: &[(&'static str, u64)] = &[
             ("create", 16), ("modify", 18), ("rename", 7), ("delete outside", 4), ("delete in app", 3), ("restore deleted", 3),
             ("editor save", 8), ("backup a file", 10), ("restore a version", 10), ("snapshot", 3), ("restore a snapshot", 3),
             ("backup + restore", 1), ("prune", 2), ("reopen", 2), ("scan", 10),
-            ("game output", 6), ("ignore game folder", 1), ("rename onto old name", 3), ("expire snapshots", 2), ("undo batch", 3),
+            ("game output", 6), ("ignore game folder", 1), ("rename onto old name", 3), ("expire snapshots", 2), ("undo batch", 3), ("update from download", 3),
         ];
         let total: u64 = ops.iter().map(|x| x.1).sum();
         let mut r = self.rng.next() % total;
@@ -835,6 +906,7 @@ impl World {
             "rename onto old name" => self.op_rename_onto_old(),
             "expire snapshots" => self.op_expire_snapshots(),
             "undo batch" => self.op_undo_batch(),
+            "update from download" => self.op_update_from_download(),
             _ => { self.bump("scan"); self.scan() }
         }?;
         Ok(which)

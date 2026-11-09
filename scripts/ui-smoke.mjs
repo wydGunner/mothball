@@ -702,6 +702,46 @@ await step('Header checkpoint: snapshot the whole project, make a bad edit, go b
   await page.getByRole('button', { name: 'Checkpoint', exact: true }).waitFor();
 });
 
+await step('Update the project from a downloaded copy (wrapped folder), then Undo', async () => {
+  // a "download" of the project: wrapped in two folders, one changed file, one new, one the same
+  const dl = join(tmp, 'Downloads', 'OMEN-v3', 'OMEN');
+  mkdirSync(join(dl, 'configs'), { recursive: true });
+  mkdirSync(join(dl, 'scripts/mp'), { recursive: true });
+  const wj = join(omen, 'configs/weapons.json');
+  const before = readFileSync(wj, 'utf8');
+  writeFileSync(join(dl, 'configs/weapons.json'), '{"ak47": {"damage": 99}}\n');
+  writeFileSync(join(dl, 'scripts/mp/_new_mode.gsc'), 'init() {}\n');
+  const listAll = (d, pre = '') => readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? listAll(join(d, e.name), pre + e.name + '/') : [pre + e.name]);
+  const projectBefore = listAll(omen);
+  // one more file, identical to the project's: left untouched
+  const same = projectBefore.find((f) => f.endsWith('.gsc'));
+  mkdirSync(join(dl, same, '..'), { recursive: true });
+  writeFileSync(join(dl, same), readFileSync(join(omen, same)));
+  await page.getByRole('tab', { name: /Files/ }).click();
+  page.once('dialog', (d) => d.accept(join(tmp, 'Downloads', 'OMEN-v3')));
+  await page.getByRole('button', { name: 'Import', exact: true }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Update the project' });
+  await m.getByRole('radio', { name: /Update the project's files/ }).waitFor();
+  if (!(await m.getByRole('radio', { name: /Update the project's files/ }).isChecked())) throw new Error('a whole copy of the project should default to Update');
+  await m.getByText('OMEN-v3/OMEN/').waitFor();
+  await m.locator('.import-row').filter({ hasText: 'configs/weapons.json' }).getByText('changed: replaced').waitFor();
+  await m.locator('.import-row').filter({ hasText: 'scripts/mp/_new_mode.gsc' }).getByText('new: added').waitFor();
+  await m.getByRole('button', { name: /Show 1 unchanged/ }).waitFor();
+  await m.getByText(/Also remove the/).waitFor(); // files not in the download: offered, off by default
+  if (shots) await page.screenshot({ path: join(shots, 'x-update-from-download.png') });
+  await m.getByRole('button', { name: 'Update 2 files' }).click();
+  const t = page.locator('.toast').filter({ hasText: /Updated .*: replaced 1, added 1/ });
+  await t.waitFor();
+  if (readFileSync(wj, 'utf8') !== '{"ak47": {"damage": 99}}\n') throw new Error('weapons.json was not replaced');
+  if (!existsSync(join(omen, 'scripts/mp/_new_mode.gsc'))) throw new Error('new file not added');
+  const gone = projectBefore.filter((f) => !existsSync(join(omen, f)));
+  if (gone.length) throw new Error('files not in the download were removed: ' + gone.join(', '));
+  await t.getByRole('button', { name: 'Undo' }).click();
+  await page.locator('.toast').filter({ hasText: /Undid the update \(2 files\)/ }).waitFor();
+  if (readFileSync(wj, 'utf8') !== before) throw new Error('undo did not put weapons.json back');
+  if (existsSync(join(omen, 'scripts/mp/_new_mode.gsc'))) throw new Error('undo did not remove the added file');
+});
+
 await step('Import with preview, then Undo import', async () => {
   const src = join(tmp, 'incoming'); mkdirSync(src, { recursive: true });
   writeFileSync(join(src, 'loot_table.json'), '{"a":1}\n');

@@ -884,3 +884,5 @@ html.pv-dragging, html.pv-dragging * { cursor: no-drop !important; user-select: 
 html.pv-dragging.pv-drag-ok, html.pv-dragging.pv-drag-ok * { cursor: grabbing !important; }
 .pv-drag-src { opacity: .45; }
 .pv-drag-ghost { position: fixed; z-index: 9999; pointer-events: none; opacity: .85; transform: rotate(1.5deg); box-shadow: 0 10px 30px #000c; background: var(--bg1); border-radius: 8px; max-height: 120px; overflow: hidden; }
+.update-plan .import-list { margin-top: 8px; }
+.update-missing { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }

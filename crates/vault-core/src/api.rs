@@ -221,6 +221,8 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "snapshots.delete" => snapshots::delete(v, &s(a, "id")?).and_then(|_| ok()),
         "files.stopTracking" => files::stop_tracking(v, &strs(a, "ids"), a.get("keepVersions").and_then(|x| x.as_bool()).unwrap_or(false)),
         "files.importPreview" => files::import_preview(v, &s(a, "projectId")?, &strs(a, "paths").into_iter().map(PathBuf::from).collect::<Vec<_>>(), &os(a, "destDir").unwrap_or_default()),
+        "files.updatePreview" => crate::update::preview(v, &s(a, "projectId")?, &strs(a, "paths").into_iter().map(PathBuf::from).collect::<Vec<_>>()),
+        "files.update" => crate::update::apply(v, &s(a, "projectId")?, &strs(a, "paths").into_iter().map(PathBuf::from).collect::<Vec<_>>(), a.get("removeMissing").and_then(|x| x.as_bool()).unwrap_or(false)),
         "files.importBatches" => files::import_batches(v, &s(a, "projectId")?),
         "files.undoImport" => files::undo_import(v, &s(a, "id")?),
         "files.moveToProject" => files::move_to_project(v, &strs(a, "ids"), &s(a, "targetProjectId")?, &os(a, "destDir").unwrap_or_default()),
