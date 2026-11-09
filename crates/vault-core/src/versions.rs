@@ -392,6 +392,16 @@ pub fn restore(v: &Vault, version_id: &str) -> DbResult<Json> {
 /// Steps: verify the stored copy, optionally back up the current file, write
 /// to a temp file in the same folder, verify, atomically replace, re-verify.
 pub fn restore_opts(v: &Vault, version_id: &str, keep_current: bool) -> DbResult<Json> {
+    restore_inner(v, version_id, keep_current, false)
+}
+
+/// For restoring many files at once (undoing a batch of changes): no
+/// activity entry or rescan per file; the caller writes one and rescans once.
+pub(crate) fn restore_quiet(v: &Vault, version_id: &str) -> DbResult<Json> {
+    restore_inner(v, version_id, true, true)
+}
+
+fn restore_inner(v: &Vault, version_id: &str, keep_current: bool, quiet: bool) -> DbResult<Json> {
     let ver = v.db.one("SELECT * FROM file_versions WHERE id=?", p![version_id])?.ok_or("Version not found")?;
     let fid = ver.s("file_id");
     let f = v.db.one("SELECT * FROM files WHERE id=?", p![fid.clone()])?.ok_or("File not found")?;
@@ -446,8 +456,10 @@ pub fn restore_opts(v: &Vault, version_id: &str, keep_current: bool) -> DbResult
         "INSERT INTO file_events(id,project_id,file_id,kind,detail,sha256,at) VALUES (?,?,?,'restored-version',?,?,?)",
         p![new_id(), pid.clone(), fid.clone(), format!("Restored {what}"), ver.s("sha256"), now_ms()],
     )?;
-    timeline::add(v, &pid, "version", &format!("Restored {} to {what}", f.s("rel_path")), "", Some(("file", &fid)), false)?;
-    files::scan(v, &pid)?;
+    if !quiet {
+        timeline::add(v, &pid, "version", &format!("Restored {} to {what}", f.s("rel_path")), "", Some(("file", &fid)), false)?;
+        files::scan(v, &pid)?;
+    }
     Ok(Json::obj().with("ok", true).with("unchanged", false))
 }
 

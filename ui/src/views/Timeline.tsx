@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { LuChevronRight, LuPlus, LuTrash2, LuUndo2 } from 'react-icons/lu';
 import { call } from '../ipc';
-import { Empty, useAction, useConfirm, useLoad, useToast } from '../components/common';
+import { Empty, Modal, useAction, useConfirm, useLoad, useToast } from '../components/common';
 import { bytes, cx, day } from '../format';
 import type { ProjectCtx } from './Project';
 import { CompareDialog, StructuredDiff } from './Versions';
@@ -10,6 +10,53 @@ import { WhyNote } from '../components/WhyNote';
 interface Change { change: 'added' | 'modified' | 'moved' | 'missing' | 'restored'; fileId: string; path: string; fromPath?: string; from?: string; to?: string }
 interface EntryData { changes?: Change[]; total?: number; fileId?: string; path?: string; from?: string; to?: string; saves?: number }
 interface Entry { id: string; kind: string; summary: string; detail: string; refType?: string; refId?: string; manual: boolean; at: number; data?: EntryData | null; note?: string }
+
+interface UndoItem { fileId: string; path: string; change: string; action: 'restore' | 'remove' | 'bring-back' | 'skip'; reason: string }
+const UNDO_GROUPS: { action: UndoItem['action']; title: string; hint: string }[] = [
+  { action: 'restore', title: 'Go back to how they were', hint: 'from the copy Mothball kept before the change' },
+  { action: 'remove', title: 'Removed (they were added)', hint: 'moved to the Recycle Bin; a copy stays in their History' },
+  { action: 'bring-back', title: 'Brought back (they went missing)', hint: 'from the copy Mothball kept' },
+  { action: 'skip', title: 'Left as they are', hint: '' },
+];
+
+/** "Undo these changes": what will happen to each file, then do it (after a snapshot). */
+function UndoChanges({ entry, onClose, onDone }: { entry: Entry; onClose: () => void; onDone: (msg: string) => void }) {
+  const plan = useLoad(() => call<{ items: UndoItem[]; listed: number; total: number }>('timeline.undoPlan', { id: entry.id }), [entry.id]);
+  const act = useAction();
+  const [busy, setBusy] = useState(false);
+  const items = plan.data?.items || [];
+  const n = items.filter((i) => i.action !== 'skip').length;
+  const go = async () => {
+    setBusy(true);
+    const r = await act(() => call<{ done: unknown[]; skipped: unknown[]; errors: { path?: string; error: string }[]; snapshotName: string }>('timeline.undo', { id: entry.id }));
+    setBusy(false);
+    if (!r) return;
+    const errs = r.errors.length ? ` ${r.errors.length} couldn't be undone: ${r.errors.map((x) => (x.path ? `${x.path}: ` : '') + x.error).join('; ')}` : '';
+    onDone(`Undid ${r.done.length} change${r.done.length === 1 ? '' : 's'}.${errs} Changed your mind? Restore the snapshot “${r.snapshotName}” (Backups tab).`);
+  };
+  return (
+    <Modal title="Undo these changes" onClose={onClose} wide footer={<>
+      <button className="btn" onClick={onClose}>Cancel</button>
+      <button className="btn primary" disabled={!n || busy} onClick={go}><LuUndo2 /> {busy ? 'Undoing…' : n ? `Undo ${n} change${n === 1 ? '' : 's'}` : 'Nothing to undo'}</button>
+    </>}>
+      <p className="small" style={{ marginTop: 0 }}><b>{entry.summary}</b> <span className="dim">· {new Date(entry.at).toLocaleString()}</span></p>
+      {plan.loading && <div className="small dim">Checking each file…</div>}
+      {plan.error && <div className="small" style={{ color: 'var(--bad)' }}>{String(plan.error)}</div>}
+      {UNDO_GROUPS.map((g) => {
+        const list = items.filter((i) => i.action === g.action);
+        if (!list.length) return null;
+        return (
+          <div key={g.action} className={cx('undo-group', g.action === 'skip' && 'skip')}>
+            <div className="small"><b>{g.title}</b> <span className="dim">{list.length}{g.hint ? ` · ${g.hint}` : ''}</span></div>
+            {list.map((i) => <div key={i.fileId + i.path} className="undo-item small"><span className="mono">{i.path}</span>{i.reason && <span className="dim"> — {i.reason}</span>}</div>)}
+          </div>
+        );
+      })}
+      {plan.data && plan.data.total > plan.data.listed && <p className="small dim">This entry lists {plan.data.listed} of its {plan.data.total} changes; only those can be undone here.</p>}
+      {n > 0 && <p className="small dim" style={{ marginBottom: 0 }}>Before anything changes, Mothball takes a snapshot of the whole project (kept for a week), so you can redo these changes from the Backups tab.</p>}
+    </Modal>
+  );
+}
 
 const CHANGE_LABEL: Record<Change['change'], string> = { added: 'Added', modified: 'Changed', moved: 'Moved', missing: 'Missing', restored: 'Back' };
 const expandable = (e: Entry) => !!(e.data && ((e.data.changes && e.data.changes.length) || (e.data.from && e.data.to)));
@@ -52,6 +99,7 @@ export function TimelineTab({ ctx }: { ctx: ProjectCtx }) {
   const [openIds, setOpenIds] = useState<Set<string>>(new Set());
   const toggle = (id: string) => setOpenIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const [compare, setCompare] = useState<null | CompareReq>(null);
+  const [undoing, setUndoing] = useState<Entry | null>(null);
   const open = (e: Entry) => {
     if (e.refType === 'note' && e.refId) ctx.openNote(e.refId);
     else if (e.refType === 'task' && e.refId) ctx.openTask(e.refId);
@@ -87,7 +135,12 @@ export function TimelineTab({ ctx }: { ctx: ProjectCtx }) {
                   {openIds.has(e.id) && e.data && (
                     <div className="tl-detail">
                       {e.data.changes
-                        ? <ChangeList changes={e.data.changes} total={e.data.total || e.data.changes.length} openFile={ctx.openFile} onCompare={setCompare} />
+                        ? <>
+                            <ChangeList changes={e.data.changes} total={e.data.total || e.data.changes.length} openFile={ctx.openFile} onCompare={setCompare} />
+                            {e.data.changes.some((c) => c.change === 'modified' || c.change === 'added' || c.change === 'missing') && (
+                              <div className="row tl-undo-row"><button className="btn sm" onClick={() => setUndoing(e)}><LuUndo2 /> Undo these changes…</button></div>
+                            )}
+                          </>
                         : <ChangeDiff fileId={e.data.fileId!} from={e.data.from!} to={e.data.to!} title={e.data.path || ''} openFile={ctx.openFile} onCompare={setCompare} why={e.note} />}
                     </div>
                   )}
@@ -103,6 +156,7 @@ export function TimelineTab({ ctx }: { ctx: ProjectCtx }) {
           </div>
         ))}
       </div>
+      {undoing && <UndoChanges entry={undoing} onClose={() => setUndoing(null)} onDone={(m) => { setUndoing(null); toast(m, 'success'); tl.reload(); ctx.scan(true); }} />}
       {compare && <CompareDialog fileId={compare.fileId} title={compare.title} old={compare.old} new={compare.new} why={compare.why} onClose={() => setCompare(null)} />}
       {(tl.data?.length || 0) >= limit && <button className="btn" style={{ marginTop: 12 }} onClick={() => setLimit(limit + 200)}>Load older</button>}
     </div>

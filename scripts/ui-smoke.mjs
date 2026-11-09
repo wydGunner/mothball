@@ -317,6 +317,36 @@ await step('Compare file versions (no Git needed)', async () => {
   await page.keyboard.press('Escape');
 });
 
+await step('Timeline: "Undo these changes" puts a batch of outside changes back, after a snapshot', async () => {
+  const f = join(omen, 'scripts/mp/weapon_tuner.gsc');
+  const before = readFileSync(f, 'utf8');
+  writeFileSync(f, before + '// LLM rewrite that broke things\n');
+  execFileSync(process.execPath, ['-e', `require('fs').utimesSync(${JSON.stringify(f)}, new Date(), new Date(Date.now()+11000))`]);
+  writeFileSync(join(omen, 'scripts/mp/_llm_extra.gsc'), 'extra() {}\n');
+  await toastGone();
+  await page.getByRole('button', { name: 'Rescan' }).click();
+  await page.locator('.toast').filter({ hasText: /1 added/ }).waitFor();
+  await page.getByRole('tab', { name: /Timeline/ }).click();
+  const entry = page.locator('.tlitem').filter({ hasText: 'File changes detected: 1 added, 1 modified' }).first();
+  await entry.locator('.tl-toggle').click();
+  await entry.getByRole('button', { name: 'Undo these changes…' }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Undo these changes' });
+  await m.locator('.undo-group').filter({ hasText: 'Go back to how they were' }).getByText('scripts/mp/weapon_tuner.gsc').waitFor();
+  await m.locator('.undo-group').filter({ hasText: 'Removed (they were added)' }).getByText('scripts/mp/_llm_extra.gsc').waitFor();
+  await m.getByText(/takes a snapshot of the whole project/).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-undo-plan.png') });
+  await m.getByRole('button', { name: 'Undo 2 changes' }).click();
+  await page.locator('.toast').filter({ hasText: /Undid 2 changes\. .*Restore the snapshot “Before undoing changes/ }).waitFor();
+  if (readFileSync(f, 'utf8') !== before) throw new Error('weapon_tuner.gsc was not put back');
+  if (existsSync(join(omen, 'scripts/mp/_llm_extra.gsc'))) throw new Error('the added file is still there');
+  await page.locator('.tlitem').filter({ hasText: /^.*Undid 2 changes from “File changes detected: 1 added, 1 modified”/ }).first().waitFor();
+  // and the snapshot to redo it is under Backups
+  await page.getByRole('tab', { name: /Backups/ }).click();
+  await page.locator('[data-testid=snapshot-row]').filter({ hasText: 'Before undoing changes' }).locator('.badge.temp').waitFor();
+  await page.getByRole('tab', { name: /Files/ }).click();
+  await page.locator('.filerow').filter({ hasText: 'weapon_tuner.gsc' }).click();
+});
+
 await step('Git history for the file', async () => {
   await page.getByRole('button', { name: 'Git commits' }).click();
   await page.getByText('Add player connect hook').waitFor();

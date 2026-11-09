@@ -262,6 +262,8 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
             timeline::add(v, &pid, "journal", summary.trim(), &os(a, "detail").unwrap_or_default(), None, true)?;
             ok()
         }
+        "timeline.undoPlan" => crate::undo::plan(v, &s(a, "id")?),
+        "timeline.undo" => crate::undo::apply(v, &s(a, "id")?),
         "timeline.setNote" => timeline::set_note(v, &s(a, "id")?, &os(a, "note").unwrap_or_default()),
         "files.reviewWithNote" => files::review_with_note(v, &s(a, "id")?, &os(a, "note").unwrap_or_default()),
         "files.setEventNote" => files::set_event_note(v, &s(a, "id")?, &os(a, "note").unwrap_or_default()),

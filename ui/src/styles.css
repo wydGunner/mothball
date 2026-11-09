@@ -874,3 +874,7 @@ input[type=checkbox] { accent-color: var(--accent); }
 /* a folded entry's note: a small marker; hover shows the note, click opens the entry */
 .why-chip { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; height: 18px; align-self: center; border: 1px solid var(--accent-line); border-radius: 9px; background: var(--accent-bg); color: var(--accent-text); font: inherit; font-size: 10.5px; font-weight: 600; letter-spacing: .03em; cursor: pointer; flex: none; }
 .why-chip svg { width: 11px; height: 11px; }
+.tl-undo-row { justify-content: flex-end; margin-top: 8px; }
+.undo-group { margin: 10px 0; }
+.undo-group .undo-item { padding: 2px 0 2px 12px; border-left: 2px solid var(--accent-line); }
+.undo-group.skip .undo-item { border-left-color: var(--line2); }

@@ -243,7 +243,9 @@ impl World {
         self.checks += 1;
         let rows = self.v().db.query("SELECT rel_path, state, sha256 FROM files WHERE project_id=? AND lower(rel_path) LIKE ?", crate::p![self.pid.as_str(), format!("{GAME}/%")]).map_err(|e| e.to_string())?;
         if self.game_ignored {
-            if let Some(r) = rows.first() {
+            // a file deleted through Mothball keeps its record and copy (so it can be
+            // restored); ignoring the folder doesn't throw that away. Anything else must go.
+            if let Some(r) = rows.iter().find(|r| r.s("state") != "deleted") {
                 return Err(format!("{GAME}/ is ignored, but {} is still recorded ({})", r.s("rel_path"), r.s("state")));
             }
             return Ok(());
@@ -735,12 +737,73 @@ impl World {
         Ok(())
     }
 
+    /// "Undo these changes" on the latest batch of detected changes. Checked
+    /// against the batch itself, not against the code: a restored file must
+    /// have exactly its before-content, an added one must be gone, one that
+    /// came back must match what was recorded, and nothing else may change.
+    fn op_undo_batch(&mut self) -> R<()> {
+        self.scan()?;
+        let tl = call(self.v(), "timeline.list", Json::obj().with("projectId", self.pid.as_str()).with("limit", 30))?;
+        let Some(e) = tl.as_arr().cloned().unwrap_or_default().into_iter().find(|e| e.str_of("summary").unwrap_or_default().starts_with("File changes detected")) else { return Ok(()) };
+        let eid = e.str_of("id").unwrap_or_default();
+        let plan = match call(self.v(), "timeline.undoPlan", Json::obj().with("id", eid.as_str())) { Ok(p) => p, Err(_) => return Ok(()) };
+        let items = plan.get("items").and_then(|x| x.as_arr()).cloned().unwrap_or_default();
+        if !items.iter().any(|i| i.str_of("action").as_deref() != Some("skip")) {
+            return Ok(());
+        }
+        let changes = e.get("data").and_then(|d| d.get("changes")).and_then(|c| c.as_arr()).cloned().unwrap_or_default();
+        // expected content after the undo, per path
+        let mut expect: Vec<(String, Option<String>)> = Vec::new();
+        for i in &items {
+            let path = i.str_of("path").unwrap_or_default();
+            match i.str_of("action").as_deref() {
+                Some("restore") => {
+                    let from = changes.iter().find(|c| c.str_of("path") == i.str_of("path") && c.str_of("change").as_deref() == Some("modified")).and_then(|c| c.str_of("from"));
+                    expect.push((path, from));
+                }
+                Some("remove") => expect.push((path, None)),
+                Some("bring-back") => {
+                    let sha = self.v().db.one("SELECT sha256 FROM files WHERE id=?", crate::p![i.str_of("fileId").unwrap_or_default()]).ok().flatten().and_then(|r| r.os("sha256"));
+                    expect.push((path, sha));
+                }
+                _ => {}
+            }
+        }
+        let untouched: Vec<(String, Vec<u8>)> = self.truth.iter().filter(|(k, _)| !expect.iter().any(|(p, _)| p == *k)).map(|(k, b)| (k.clone(), b.clone())).collect();
+        let r = call(self.v(), "timeline.undo", Json::obj().with("id", eid.as_str()))?;
+        if let Some(e) = r.get("errors").and_then(|x| x.as_arr()).and_then(|a| a.first()) {
+            return Err(format!("undo reported an error: {}", e.to_string()));
+        }
+        if let Some(sid) = r.str_of("snapshotId") {
+            self.snapshots.push((sid.clone(), self.truth.clone()));
+            self.temp_snaps.insert(sid);
+        }
+        self.checks += 1;
+        for (path, want) in &expect {
+            let disk = std::fs::read(self.abs(path)).ok();
+            match (want, &disk) {
+                (None, None) => { self.truth.remove(path); }
+                (None, Some(_)) => return Err(format!("undo: {path} was added in that batch and should be gone")),
+                (Some(sha), Some(b)) if sha256_bytes(b) == *sha => { self.truth.insert(path.clone(), b.clone()); }
+                (Some(_), Some(_)) => return Err(format!("undo: {path} isn't back to its content from before the batch")),
+                (Some(_), None) => return Err(format!("undo: {path} should be back but isn't on disk")),
+            }
+        }
+        for (k, b) in untouched {
+            if std::fs::read(self.abs(&k)).ok().as_ref() != Some(&b) {
+                return Err(format!("undo touched {k}, which wasn't part of it"));
+            }
+        }
+        self.bump("undo batch");
+        Ok(())
+    }
+
     fn step(&mut self) -> R<&'static str> {
         let ops: &[(&'static str, u64)] = &[
             ("create", 16), ("modify", 18), ("rename", 7), ("delete outside", 4), ("delete in app", 3), ("restore deleted", 3),
             ("editor save", 8), ("backup a file", 10), ("restore a version", 10), ("snapshot", 3), ("restore a snapshot", 3),
             ("backup + restore", 1), ("prune", 2), ("reopen", 2), ("scan", 10),
-            ("game output", 6), ("ignore game folder", 1), ("rename onto old name", 3), ("expire snapshots", 2),
+            ("game output", 6), ("ignore game folder", 1), ("rename onto old name", 3), ("expire snapshots", 2), ("undo batch", 3),
         ];
         let total: u64 = ops.iter().map(|x| x.1).sum();
         let mut r = self.rng.next() % total;
@@ -771,6 +834,7 @@ impl World {
             }
             "rename onto old name" => self.op_rename_onto_old(),
             "expire snapshots" => self.op_expire_snapshots(),
+            "undo batch" => self.op_undo_batch(),
             _ => { self.bump("scan"); self.scan() }
         }?;
         Ok(which)

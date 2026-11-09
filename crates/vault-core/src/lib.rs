@@ -26,6 +26,7 @@ pub mod storage;
 pub mod stress;
 pub mod symbols;
 pub mod tasks;
+pub mod undo;
 pub mod time;
 pub mod timeline;
 pub mod util;
