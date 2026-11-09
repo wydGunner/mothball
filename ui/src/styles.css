@@ -878,3 +878,9 @@ input[type=checkbox] { accent-color: var(--accent); }
 .undo-group { margin: 10px 0; }
 .undo-group .undo-item { padding: 2px 0 2px 12px; border-left: 2px solid var(--accent-line); }
 .undo-group.skip .undo-item { border-left-color: var(--line2); }
+
+/* in-app dragging (see dnd.ts) */
+html.pv-dragging, html.pv-dragging * { cursor: no-drop !important; user-select: none !important; }
+html.pv-dragging.pv-drag-ok, html.pv-dragging.pv-drag-ok * { cursor: grabbing !important; }
+.pv-drag-src { opacity: .45; }
+.pv-drag-ghost { position: fixed; z-index: 9999; pointer-events: none; opacity: .85; transform: rotate(1.5deg); box-shadow: 0 10px 30px #000c; background: var(--bg1); border-radius: 8px; max-height: 120px; overflow: hidden; }

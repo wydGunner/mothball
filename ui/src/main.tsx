@@ -1,6 +1,7 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGroupOrder, sortGroups, moveGroup, GROUP_DRAG } from './groupOrder';
 import { createRoot } from 'react-dom/client';
+import { installPointerDnd } from './dnd';
 import { LuLayoutDashboard, LuSearch, LuSettings, LuPanelLeftClose, LuPanelLeftOpen, LuStar, LuClock, LuPlus, LuChevronRight, LuChevronDown, LuX } from 'react-icons/lu';
 import { call, isTauri, type Project } from './ipc';
 import { ToastProvider, ConfirmProvider, ContextMenuProvider, PromptProvider, ProjectIcon, TooltipLayer, useToast } from './components/common';
@@ -320,6 +321,7 @@ window.addEventListener('unhandledrejection', (e) => {
   if (r && r.name === 'Canceled' && r.message === 'Canceled') e.preventDefault();
 });
 
+installPointerDnd();
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ToastProvider><ConfirmProvider><PromptProvider><ContextMenuProvider><FileDialogsProvider><App /><TooltipLayer /></FileDialogsProvider></ContextMenuProvider></PromptProvider></ConfirmProvider></ToastProvider>
