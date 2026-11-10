@@ -146,7 +146,9 @@ fn make_plan(v: &Vault, project_id: &str, sources: &[PathBuf]) -> DbResult<Plan>
     let mut best = score("");
     for pre in &prefixes {
         let s = score(pre);
-        if s > best || (s == best && s > 0 && pre.len() > strip.len()) {
+        // on a tie, keep the shallower one: stripping deeper than needed can
+        // land a file on a different one with the same name ("sub/x" → "x")
+        if s > best {
             best = s;
             strip = pre.clone();
         }
@@ -405,6 +407,24 @@ mod tests {
         let paths = Json::Arr(vec![Json::from(t.0.join("dl/Downtime-v9").to_string_lossy().to_string())]);
         let pv = crate::api::dispatch(&v, "files.updatePreview", &Json::obj().with("projectId", pid.as_str()).with("paths", paths)).unwrap();
         assert_eq!(pv.get("items").unwrap().as_arr().unwrap()[0].str_of("path").as_deref(), Some("Games/Keno.lua"), "{}", pv.to_string());
+    }
+
+    #[test]
+    fn a_nested_file_never_lands_on_a_same_named_one_higher_up() {
+        let (t, v) = crate::testutil::vault();
+        let d = t.0.join("Mod");
+        fs::create_dir_all(d.join("sub")).unwrap();
+        fs::write(d.join("x.blend"), "top").unwrap();
+        fs::write(d.join("sub/x.blend"), "nested").unwrap();
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "Mod").with("linkPath", d.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        crate::files::scan(&v, &pid).unwrap();
+        let dl = t.0.join("dl/Mod-v2/Mod/sub");
+        fs::create_dir_all(&dl).unwrap();
+        fs::write(dl.join("x.blend"), "nested v2").unwrap();
+        let paths = Json::Arr(vec![Json::from(t.0.join("dl/Mod-v2").to_string_lossy().to_string())]);
+        crate::api::dispatch(&v, "files.update", &Json::obj().with("projectId", pid.as_str()).with("paths", paths)).unwrap();
+        assert_eq!(fs::read_to_string(d.join("sub/x.blend")).unwrap(), "nested v2");
+        assert_eq!(fs::read_to_string(d.join("x.blend")).unwrap(), "top", "the top-level file wasn't in the download");
     }
 
 }

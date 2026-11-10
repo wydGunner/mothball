@@ -74,7 +74,10 @@ pub fn run() {
                     f(v);
                 }
             });
-            vault_core::printers::start(bambu_tls::connector(), locker);
+            vault_core::printers::start(bambu_tls::connector(), locker.clone());
+            // Backup drive: scheduled backups (also as soon as the drive is
+            // plugged in) and restore jobs; copies without holding the vault.
+            vault_core::drive::start(locker);
             app.manage(AppState { vault, open_error });
             Ok(())
         })

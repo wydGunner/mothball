@@ -9,6 +9,7 @@ import { Dashboard, NewProjectDialog } from './views/Dashboard';
 import { ProjectView, type Tab } from './views/Project';
 import { SearchView } from './views/Search';
 import { SettingsView } from './views/Settings';
+import { DriveWarning } from './views/BackupDrive';
 import { confirmDiscardProject, unsavedNames } from './unsaved';
 import { CommandPalette } from './views/Palette';
 import { cx } from './format';
@@ -289,6 +290,7 @@ function App() {
               })}
             </div>
           )}
+          <DriveWarning onOpen={() => { try { localStorage.setItem('pv.settingsSection', 'backups'); } catch { /* ignore */ } go({ view: 'settings' }); window.dispatchEvent(new CustomEvent('pv:settings-section', { detail: 'backups' })); }} />
           {update && (
             <button className="btn primary sm" style={{ marginLeft: 'auto' }} disabled={updating !== false} title={update.notes || undefined}
               onClick={async () => { setUpdating(null); try { await update.install((p) => setUpdating(p)); } catch (e: any) { setUpdating(false); alert('Update failed: ' + (e?.message || e)); } }}>

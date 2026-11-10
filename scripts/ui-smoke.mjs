@@ -1239,7 +1239,7 @@ await step('Restore: check a backup, restore a deleted project file', async () =
   const { rmSync } = await import('node:fs');
   rmSync(target);
   await page.locator('.set-link').filter({ hasText: 'Restore' }).click();
-  const card = page.locator('.card').filter({ hasText: 'Check or restore a backup' });
+  const card = page.locator('.card').filter({ hasText: 'From an exported copy' });
   await card.getByPlaceholder(/Mothball-backup-/).fill(zip);
   await card.getByRole('button', { name: 'Check', exact: true }).click();
   await card.getByText(/Verified — \d+ files match/).waitFor({ timeout: 60000 });
@@ -1261,7 +1261,7 @@ await step('Restore: check a backup, restore a deleted project file', async () =
 
 await step('Scheduled backups', async () => {
   await page.locator('.set-link').filter({ hasText: 'Backups' }).click();
-  const card = page.locator('.card').filter({ hasText: 'Scheduled backups' });
+  const card = page.locator('.card').filter({ hasText: 'Scheduled exports' });
   const sched = join(tmp, 'scheduled'); mkdirSync(sched);
   await card.getByPlaceholder('E:\\Backups\\Mothball', { exact: true }).fill(sched);
   await card.getByRole('button', { name: 'Save schedule' }).click();
@@ -1271,6 +1271,44 @@ await step('Scheduled backups', async () => {
   await page.getByText(/Scheduled backup written/).waitFor({ timeout: 60000 });
   if (!readdirSync(sched).some((f) => f.includes('-auto'))) throw new Error('no scheduled backup written');
   await card.getByText(/Last run .* OK/).waitFor();
+  await toastGone();
+});
+
+await step('Backup drive: first backup, restore a deleted file, find it from Restore', async () => {
+  await page.locator('.set-link').filter({ hasText: 'Backups' }).click();
+  const card = page.locator('.card').filter({ hasText: 'Backup drive' });
+  const drive = join(tmp, 'usb'); mkdirSync(drive);
+  await card.getByPlaceholder('E:\\', { exact: true }).fill(drive);
+  await card.getByRole('button', { name: 'Turn on' }).click();
+  // in tests everything is on one disk, so the same-drive warning shows
+  await page.locator('.modal').filter({ hasText: 'Back up to the same drive?' }).getByRole('button', { name: 'Use it anyway' }).click();
+  await card.getByText(/project files and \d+ saved versions/).waitFor({ timeout: 60000 });
+  await card.getByText('just now').first().waitFor();
+  if (!existsSync(join(drive, 'Mothball Backup', 'README.txt'))) throw new Error('no backup on the drive');
+  if (shots) await card.screenshot({ path: join(shots, 'x-backup-drive.png') });
+  await toastGone();
+
+  const target = join(omen, 'configs/weapons.json');
+  const before = readFileSync(target, 'utf8');
+  rmSync(target);
+  await card.getByRole('button', { name: 'Backups on this drive' }).click();
+  await card.locator('tr').first().getByRole('button', { name: /Restore/ }).click();
+  const m = page.locator('.modal').filter({ hasText: 'Backup from' });
+  const opt = await m.locator('select option').filter({ hasText: 'OMEN v2' }).getAttribute('value');
+  await m.locator('select').selectOption(opt);
+  await m.getByText(/missing file\(s\) will be recreated/).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-backup-drive-restore.png') });
+  await m.getByRole('button', { name: /^Restore [\d,]+ file/ }).click();
+  const done = page.locator('.modal').filter({ hasText: /file\(s\) restored into/ });
+  await done.waitFor({ timeout: 60000 });
+  await done.getByRole('button', { name: 'Done' }).click();
+  if (readFileSync(target, 'utf8') !== before) throw new Error('file not restored from the drive');
+
+  await page.locator('.set-link').filter({ hasText: 'Restore' }).click();
+  const rc = page.locator('.card').filter({ hasText: 'From a backup drive' });
+  await rc.getByPlaceholder('E:\\', { exact: true }).fill(drive);
+  await rc.getByRole('button', { name: 'Show backups' }).click();
+  await rc.locator('tr').first().getByText(/project\(s\)/).waitFor();
   await toastGone();
 });
 

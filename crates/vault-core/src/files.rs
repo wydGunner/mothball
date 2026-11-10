@@ -173,7 +173,7 @@ pub struct Seen {
 }
 
 #[cfg(windows)]
-fn is_cloud_placeholder(m: &std::fs::Metadata) -> bool {
+pub(crate) fn is_cloud_placeholder(m: &std::fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
     const FILE_ATTRIBUTE_OFFLINE: u32 = 0x1000;
     const FILE_ATTRIBUTE_RECALL_ON_OPEN: u32 = 0x40000;
@@ -181,7 +181,7 @@ fn is_cloud_placeholder(m: &std::fs::Metadata) -> bool {
     m.file_attributes() & (FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS) != 0
 }
 #[cfg(not(windows))]
-fn is_cloud_placeholder(_m: &std::fs::Metadata) -> bool {
+pub(crate) fn is_cloud_placeholder(_m: &std::fs::Metadata) -> bool {
     false
 }
 

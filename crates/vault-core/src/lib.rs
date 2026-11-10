@@ -11,6 +11,7 @@ pub mod db;
 pub mod deploy;
 pub mod deps;
 pub mod diff;
+pub mod drive;
 pub mod files;
 pub mod git;
 pub mod json;

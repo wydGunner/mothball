@@ -59,6 +59,18 @@ folder by default. To keep them on another drive, use Settings → Storage →
 removed from the old drive). File backups and snapshots have their own location
 in the same place.
 
+## Backup drive
+
+Settings → Backups → *Backup drive*: pick a folder on another drive (a USB
+drive, a second internal drive) and Mothball keeps a complete backup there —
+project files, every saved version, snapshot and checkpoint, and its own
+database. File contents are stored once by SHA-256, so after the first run only
+what changed is copied; each run can be restored on its own (keep the newest 7
+to 120). It runs in the background while Mothball is open, and when the drive
+isn't connected it waits and catches up as soon as it is. Settings → Restore →
+*From a backup drive* brings back one project's files, or everything (on a new
+PC). Unlike *Export a copy*, these backups need Mothball to read them back.
+
 ## Bambu Lab printer status
 
 Settings → **Printers** → *Add printer*: the printer's IP address, serial number

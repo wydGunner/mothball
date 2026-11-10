@@ -5,7 +5,7 @@
 use crate::db::DbResult;
 use crate::json::Json;
 use crate::projects::NewProject;
-use crate::{backup, deploy, deps, files, git, knowledge, printers, profiles, projects, search, snapshots, storage, symbols, tasks, timeline, versions, watch, time, Vault};
+use crate::{backup, deploy, drive, deps, files, git, knowledge, printers, profiles, projects, search, snapshots, storage, symbols, tasks, timeline, versions, watch, time, Vault};
 use std::path::PathBuf;
 
 fn s(a: &Json, k: &str) -> DbResult<String> {
@@ -330,6 +330,20 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "backup.setSchedule" => backup::schedule_set(v, a.get("schedule").unwrap_or(&Json::obj())),
         "backup.runDue" => backup::run_due(v, a.get("force").and_then(|x| x.as_bool()).unwrap_or(false)),
         "backup.verify" => backup::verify(&PathBuf::from(s(a, "path")?)),
+        "drive.status" => drive::status(v),
+        "drive.setSettings" => drive::set_settings(v, a.get("settings").unwrap_or(&Json::obj())),
+        "drive.check" => drive::check(v, &PathBuf::from(s(a, "dest")?)),
+        "drive.runs" => drive::runs(v, a.str_of("dest").filter(|d| !d.is_empty()).as_deref().map(std::path::Path::new)),
+        "drive.restorePreview" => drive::restore_preview(v, a.str_of("dest").filter(|d| !d.is_empty()).as_deref().map(std::path::Path::new), &s(a, "runId")?, &s(a, "projectId")?),
+        "drive.runNow" => drive::enqueue(drive::Job::Backup),
+        "drive.verify" => drive::enqueue(drive::Job::Verify),
+        "drive.restoreProject" => drive::enqueue(drive::Job::RestoreProject {
+            dest: a.str_of("dest").filter(|d| !d.is_empty()).map(PathBuf::from),
+            run: s(a, "runId")?,
+            project: s(a, "projectId")?,
+            overwrite: a.get("overwrite").and_then(|x| x.as_bool()).unwrap_or(false),
+        }),
+        "drive.restoreAll" => drive::enqueue(drive::Job::RestoreAll { dest: a.str_of("dest").filter(|d| !d.is_empty()).map(PathBuf::from), run: s(a, "runId")? }),
 
         _ => Err(format!("unknown command: {cmd}")),
     }

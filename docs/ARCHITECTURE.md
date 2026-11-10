@@ -31,6 +31,7 @@
 │   diff.rs       Myers line diff → hunks                        │
 │   profiles.rs   file-type groups per project type              │
 │   backup.rs     verified metadata backups + Markdown export    │
+│   drive.rs      incremental backup drive (content-addressed)  │
 │   printers.rs   Bambu printer status (MQTT), print logging     │
 └───────────────────────────────────────────────────────────────┘
 ```

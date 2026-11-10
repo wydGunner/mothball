@@ -596,6 +596,87 @@ impl World {
         self.scan()
     }
 
+    /// Backup drive: back up (sometimes pulling the drive out halfway), lose
+    /// and change files, restore from the newest backup, and every file must
+    /// be exactly as it was. Now and then, read the whole drive back.
+    fn op_drive_roundtrip(&mut self) -> R<()> {
+        self.scan()?;
+        let drive = self.scratch.join("usb");
+        std::fs::create_dir_all(&drive).map_err(|e| e.to_string())?;
+        crate::drive::set_settings(self.v(), &Json::obj().with("enabled", true).with("dest", drive.to_string_lossy().to_string()).with("keep", 3))?;
+        let root = crate::drive::root_of(&drive);
+        let runs_before = crate::drive::runs(self.v(), None)?.get("runs").and_then(|x| x.as_arr()).map(|a| a.len()).unwrap_or(0);
+        if self.rng.chance(25) {
+            // pulled out during the backup
+            let away = self.scratch.join("usb-unplugged");
+            let after = 1 + self.rng.below(3) as i64;
+            let calls = std::cell::Cell::new(0i64);
+            let v = self.v.as_ref().unwrap();
+            let w = |f: &mut dyn FnMut(&Vault)| f(v);
+            let r = crate::drive::backup(&w, &|_, _, _, _| {
+                calls.set(calls.get() + 1);
+                if calls.get() == after && drive.exists() {
+                    let _ = std::fs::rename(&drive, &away);
+                }
+            })?;
+            if away.exists() {
+                std::fs::rename(&away, &drive).map_err(|e| e.to_string())?;
+                if r.get("ok").and_then(|x| x.as_bool()) == Some(true) {
+                    return Err("a backup reported success after the drive was pulled out".into());
+                }
+                let n = crate::drive::runs(self.v(), None)?.get("runs").and_then(|x| x.as_arr()).map(|a| a.len()).unwrap_or(0);
+                if n != runs_before {
+                    return Err("a half-written backup was listed as a backup".into());
+                }
+                self.checks += 1;
+                self.bump("drive pulled out mid-backup");
+            }
+        }
+        let v = self.v.as_ref().unwrap();
+        let w = |f: &mut dyn FnMut(&Vault)| f(v);
+        let r = crate::drive::backup(&w, &|_, _, _, _| {})?;
+        if r.get("ok").and_then(|x| x.as_bool()) != Some(true) {
+            return Err(format!("backup to the drive failed: {}", r.to_string()));
+        }
+        if self.rng.chance(15) {
+            let ver = crate::drive::verify(&w, &|_, _, _, _| {})?;
+            if ver.get("ok").and_then(|x| x.as_bool()) != Some(true) {
+                return Err(format!("the drive failed a full check: {}", ver.to_string()));
+            }
+            self.checks += 1;
+        }
+        let run = r.str_of("runId").unwrap_or_default();
+        let snap = self.truth.clone();
+        for rel in self.present() {
+            if self.rng.chance(30) {
+                let _ = std::fs::remove_file(self.abs(&rel));
+                self.truth.remove(&rel);
+            } else if self.rng.chance(20) {
+                let ext = Self::ext_of(&rel);
+                let c = self.content(&ext);
+                self.write(&rel, c)?;
+            }
+        }
+        let v = self.v.as_ref().unwrap();
+        let w = |f: &mut dyn FnMut(&Vault)| f(v);
+        let res = crate::drive::restore_project(&w, None, &run, &self.pid, true, &|_, _, _, _| {})?;
+        if res.get("errors").and_then(|x| x.as_arr()).map(|a| !a.is_empty()).unwrap_or(false) {
+            return Err(format!("restoring from the drive had errors: {}", res.to_string()));
+        }
+        for (k, b) in &snap {
+            let got = std::fs::read(self.abs(k)).map_err(|e| format!("drive restore didn't bring back {k}: {e}"))?;
+            if &got != b {
+                return Err(format!("drive restore: {k} has the wrong content"));
+            }
+            self.truth.insert(k.clone(), b.clone());
+        }
+        if !root.join("README.txt").exists() {
+            return Err("backup drive has no README".into());
+        }
+        self.bump("backup drive + restore");
+        self.scan()
+    }
+
     fn op_prune(&mut self) -> R<()> {
         let keep = 1 + self.rng.below(3) as i64;
         call(self.v(), "versions.prune", Json::obj().with("projectId", self.pid.as_str()).with("keep", keep))?;
@@ -874,7 +955,7 @@ impl World {
             ("create", 16), ("modify", 18), ("rename", 7), ("delete outside", 4), ("delete in app", 3), ("restore deleted", 3),
             ("editor save", 8), ("backup a file", 10), ("restore a version", 10), ("snapshot", 3), ("restore a snapshot", 3),
             ("backup + restore", 1), ("prune", 2), ("reopen", 2), ("scan", 10),
-            ("game output", 6), ("ignore game folder", 1), ("rename onto old name", 3), ("expire snapshots", 2), ("undo batch", 3), ("update from download", 3),
+            ("game output", 6), ("ignore game folder", 1), ("rename onto old name", 3), ("expire snapshots", 2), ("undo batch", 3), ("update from download", 3), ("backup drive + restore", 2),
         ];
         let total: u64 = ops.iter().map(|x| x.1).sum();
         let mut r = self.rng.next() % total;
@@ -907,6 +988,7 @@ impl World {
             "expire snapshots" => self.op_expire_snapshots(),
             "undo batch" => self.op_undo_batch(),
             "update from download" => self.op_update_from_download(),
+            "backup drive + restore" => self.op_drive_roundtrip(),
             _ => { self.bump("scan"); self.scan() }
         }?;
         Ok(which)

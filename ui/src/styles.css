@@ -916,3 +916,9 @@ button.ov2-card:focus-visible { outline: 2px solid var(--accent); outline-offset
 .ov2-main { gap: 24px; }
 .sidebar .section-n { margin-left: auto; font-weight: 400; letter-spacing: 0; color: var(--fg3); }
 .sidebar nav + .section, .sidebar div + .section { margin-top: 2px; }
+
+/* top-bar chip: backups to the drive have stopped */
+.drive-warn { margin-left: auto; margin-right: 8px; flex: none; color: var(--accent2); border-color: var(--a2-bg); background: transparent; }
+.drive-warn svg { color: var(--accent2); }
+.drive-warn + .searchbox, .drive-warn + .btn + .searchbox { margin-left: 0 !important; }
+.drive-warn + .btn { margin-left: 0 !important; margin-right: 8px; }

@@ -8,6 +8,7 @@ import { getSaveMode, setSaveMode, getLargeThreshold, setLargeThreshold, type Sa
 import { bytes, CATEGORY_LABELS, cx, dateTime, hiddenTypes, setHiddenTypes } from '../format';
 import type { Nav } from '../main';
 import { THEMES, applyTheme, getTheme, themeFromColor } from '../theme';
+import { BackupDriveCard, DriveRestoreCard } from './BackupDrive';
 
 /** How many projects stay open as tabs (1 = one at a time, as before tabs). */
 function TabSettings() {
@@ -200,7 +201,7 @@ function BackupCard({ nav, dataDir }: { nav: Nav; dataDir?: string }) {
   };
   return (
     <div className="card pad" style={{ marginBottom: 16 }}>
-      <h2>Back up now</h2>
+      <h2>Export a copy</h2>
       <p className="muted small" style={{ marginTop: 0 }}>A consistent copy of the vault database, a readable export of every project (notes as Markdown, file documentation, tasks, timeline) and a manifest with checksums. Verified right after it's written, and readable without Mothball.</p>
       <div className="field"><label>Destination folder (e.g. an external drive)</label><BackupDest value={dest} onChange={setDest} /></div>
       <div className="grid2">
@@ -246,7 +247,7 @@ function ScheduleCard() {
   const every = s.everyDays >= 1 ? `${s.everyDays}` : 'h';
   return (
     <div className="card pad" style={{ marginBottom: 16 }}>
-      <h2>Scheduled backups</h2>
+      <h2>Scheduled exports</h2>
       <p className="muted small" style={{ marginTop: 0 }}>Runs automatically while Mothball is open (checked at start-up and every 30 minutes). If the app was closed when one was due, it runs the next time you open it.</p>
       <label className="row" style={{ marginBottom: 10 }}><input type="checkbox" checked={!!s.enabled} onChange={(e) => save({ enabled: e.target.checked })} /> <b>Back up automatically</b></label>
       <div className="field"><label>Destination folder</label><BackupDest value={s.dest} onChange={(dest) => setS({ ...s, dest })} /></div>
@@ -302,7 +303,7 @@ function RestoreCard({ nav }: { nav: Nav }) {
   };
   return (
     <div className="card pad" style={{ marginBottom: 16 }}>
-      <h2>Check or restore a backup</h2>
+      <h2>From an exported copy</h2>
       {pending.data?.pending && <div className="alert warn" style={{ marginBottom: 10 }}><LuTriangleAlert /><div className="grow">A database restore is waiting and will be applied the next time Mothball starts.</div><button className="btn sm" onClick={async () => { await act(() => call('backup.cancelDatabaseRestore')); pending.reload(); }}>Cancel it</button></div>}
       <p className="muted small" style={{ marginTop: 0 }}>Choose a backup folder or .zip. It's verified (every checksum plus a database integrity check) before anything is offered.</p>
       <div className="row"><input className="input mono" value={path} onChange={(e) => setPath(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && path && open(path)} placeholder="E:\Backups\Mothball\Mothball-backup-…" />
@@ -532,7 +533,7 @@ const SECTIONS: { id: Section; label: string; icon: ReactElement; hint: string }
   { id: 'editor', label: 'Editor & saving', icon: <LuFileCode />, hint: 'What Ctrl+S does' },
   { id: 'tracking', label: 'Change tracking', icon: <LuRadar />, hint: 'Notice changes to project folders as they happen' },
   { id: 'printers', label: 'Printers', icon: <LuPrinter />, hint: 'Watch a Bambu Lab printer and log prints to projects' },
-  { id: 'backups', label: 'Backups', icon: <LuDatabaseBackup />, hint: 'Back up now, or on a schedule' },
+  { id: 'backups', label: 'Backups', icon: <LuDatabaseBackup />, hint: 'Back up to another drive, or export a copy' },
   { id: 'restore', label: 'Restore', icon: <LuArchiveRestore />, hint: 'Check a backup and bring things back' },
   { id: 'storage', label: 'Storage', icon: <LuHardDrive />, hint: 'Where project folders, file backups and snapshots live' },
   { id: 'about', label: 'About & updates', icon: <LuInfo />, hint: 'Version, data folder, shortcuts' },
@@ -543,6 +544,11 @@ export function SettingsView({ nav }: { nav: Nav }) {
   const act = useAction();
   const [sec, setSecRaw] = useState<Section>(() => (localStorage.getItem('pv.settingsSection') as Section) || 'appearance');
   const setSec = (x: Section) => { setSecRaw(x); try { localStorage.setItem('pv.settingsSection', x); } catch { /* ignore */ } };
+  useEffect(() => {
+    const on = (e: Event) => setSecRaw((e as CustomEvent).detail as Section);
+    window.addEventListener('pv:settings-section', on);
+    return () => window.removeEventListener('pv:settings-section', on);
+  }, []);
   const cur = SECTIONS.find((x) => x.id === sec) || SECTIONS[0];
   return (
     <div className="page settings">
@@ -559,8 +565,8 @@ export function SettingsView({ nav }: { nav: Nav }) {
         {sec === 'editor' && <EditorSaving />}
         {sec === 'tracking' && <><WatchCard /><TimeSettings /></>}
         {sec === 'printers' && <PrinterSettings />}
-        {sec === 'backups' && <><BackupCard nav={nav} dataDir={info.data?.dataDir} /><ScheduleCard /></>}
-        {sec === 'restore' && <RestoreCard nav={nav} />}
+        {sec === 'backups' && <><BackupDriveCard nav={nav} /><BackupCard nav={nav} dataDir={info.data?.dataDir} /><ScheduleCard /></>}
+        {sec === 'restore' && <><DriveRestoreCard nav={nav} /><RestoreCard nav={nav} /></>}
         {sec === 'storage' && <><ProjectStorage /><BackupStorage /></>}
         {sec === 'about' && <>
           <div className="card pad">
