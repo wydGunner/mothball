@@ -217,7 +217,9 @@ function App() {
   const [sideDrop, setSideDrop] = useState<{ g: string; after: boolean } | null>(null);
   // The 8 most recently opened projects, grouped ones included (their group may be collapsed),
   // listed alphabetically so opening one doesn't reshuffle the list. Favorites are always shown above.
-  const recent = [...projects].filter((p) => p.lastOpenedAt && !p.favorite).sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0)).slice(0, 8)
+  // the last few projects you opened: quick access, without repeating the whole list. (The open
+  // one stays in it, highlighted: dropping it would shift the list under the mouse.)
+  const recent = [...projects].filter((p) => p.lastOpenedAt && !p.favorite).sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0)).slice(0, 4)
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
   const [sideClosed, setSideClosed] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pv.sideCollapsed') || '[]'); } catch { return []; } });
   const toggleSide = (g: string) => setSideClosed((c) => { const n = c.includes(g) ? c.filter((x) => x !== g) : [...c, g]; try { localStorage.setItem('pv.sideCollapsed', JSON.stringify(n)); } catch { /* ignore */ } return n; });
@@ -240,6 +242,7 @@ function App() {
         </nav>
         <div className="scroll">
           {favorites.length > 0 && <><div className="section"><LuStar size={10} /> Favorites</div><nav>{favorites.map(projLink)}</nav></>}
+          {recent.length > 0 && <><div className="section"><LuClock size={10} /> Recent</div><nav>{recent.map(projLink)}</nav></>}
           {groupNames.map((g) => {
             const open = !sideClosed.includes(g);
             return (
@@ -248,12 +251,11 @@ function App() {
                   draggable onDragStart={(e) => { e.dataTransfer.setData(GROUP_DRAG, g); e.dataTransfer.effectAllowed = 'move'; }}
                   onDragOver={(e) => { if (!e.dataTransfer.types.includes(GROUP_DRAG)) return; e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2; if (sideDrop?.g !== g || sideDrop.after !== after) setSideDrop({ g, after }); }}
                   onDragLeave={() => setSideDrop(null)} onDragEnd={() => setSideDrop(null)}
-                  onDrop={(e) => { const d = e.dataTransfer.getData(GROUP_DRAG); if (!d) return; e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setSideDrop(null); moveGroup(groupNames, d, g, e.clientY > r.top + r.height / 2); }}>{open ? <LuChevronDown size={10} /> : <LuChevronRight size={10} />} <span className="label">{g}</span></button>
+                  onDrop={(e) => { const d = e.dataTransfer.getData(GROUP_DRAG); if (!d) return; e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setSideDrop(null); moveGroup(groupNames, d, g, e.clientY > r.top + r.height / 2); }}>{open ? <LuChevronDown size={10} /> : <LuChevronRight size={10} />} <span className="label">{g}</span><span className="section-n">{projects.filter((p) => !p.favorite && p.group === g).length}</span></button>
                 {open && <nav>{projects.filter((p) => !p.favorite && p.group === g).sort(byName).map(projLink)}</nav>}
               </div>
             );
           })}
-          {recent.length > 0 && <><div className="section"><LuClock size={10} /> Recent</div><nav>{recent.map(projLink)}</nav></>}
         </div>
         <div className="foot">
           <button className={cx('navitem', route.view === 'settings' && 'active')} onClick={() => go({ view: 'settings' })} title="Settings, backups and restore"><LuSettings /><span className="label">Settings</span></button>

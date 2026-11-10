@@ -102,8 +102,8 @@ export function TimeCard({ projectId, onTimerChange }: { projectId: string; onTi
       <div className="row small" style={{ marginTop: 6 }}>
         <button className="btn ghost sm" onClick={() => setLogging(true)}><LuPlus /> Log time</button>
         {d.sessions.length > 4 && <button className="btn ghost sm" onClick={() => setShowAll(!showAll)}>{showAll ? 'Fewer' : `All ${d.sessions.length} sessions`}</button>}
+        {d.estimate && <span className="dim tc-est" title="Includes time estimated from when this project’s files were saved: saves within 30 minutes of each other count as one work session.">includes file activity</span>}
       </div>
-      {d.estimate && <p className="small dim" style={{ margin: '6px 0 0' }}>Includes time estimated from when this project’s files were saved — saves within 30 minutes of each other count as one work session.</p>}
       {logging && <LogTime projectId={projectId} onClose={() => setLogging(false)} onDone={() => { setLogging(false); setTick((t) => t + 1); }} />}
     </>
   );

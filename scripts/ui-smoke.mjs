@@ -920,8 +920,10 @@ await step('3D printing project', async () => {
   await page.locator('.pcard').filter({ hasText: 'Desk Cat' }).click();
 });
 await step('3D printing project details', async () => {
-    await page.getByText('Print details').waitFor();
-    await page.locator('[data-panel=details]').getByRole('button', { name: 'Edit' }).click();
+    // nothing filled in yet: one line instead of an empty section, with a link to the editor
+    await page.locator('.ov2-empty').getByText('No print details yet.').waitFor();
+    if (await page.locator('[data-panel=details]').count()) throw new Error('empty details section should be folded into one line');
+    await page.locator('.ov2-empty').getByRole('link', { name: 'Add print details' }).click();
     await page.getByPlaceholder('Notes (settings, what went wrong…)').fill('Gray layer showed through');
     await page.getByRole('button', { name: 'Log', exact: true }).click();
     await page.locator('.modal').getByRole('button', { name: 'Save' }).click();
@@ -1126,7 +1128,10 @@ await step('New project as a copy; attach a dependency, put it in place, put the
   await page.getByRole('button', { name: 'Dashboard' }).click();
   await page.locator('.pcard').filter({ hasText: 'OMEN old' }).click();
   await page.getByRole('tab', { name: /Overview/ }).click();
+  // no dependencies yet: the section is folded into one line; "Add a dependency" opens it
   const panel = page.locator('[data-panel=deps]');
+  if (await panel.count()) throw new Error('empty Dependencies section should be folded into one line');
+  await page.locator('.ov2-empty').getByRole('link', { name: 'Add a dependency' }).click();
   await panel.getByText(/Attach files this project needs/).waitFor();
   await panel.getByRole('button', { name: 'Attach dependency…' }).click();
   const m = page.locator('.modal').filter({ hasText: 'Attach a dependency' });
@@ -1148,8 +1153,9 @@ await step('New project as a copy; attach a dependency, put it in place, put the
   if (readFileSync(join(game, 'iw4x.dll'), 'utf8') !== 'stock') throw new Error('original not restored');
   await toastGone();
   // an IW4X mod gets IW4X details, not WoW ones; switching the subtype switches the fields
-  await page.locator('[data-panel=details]').getByText('IW4X mod details').waitFor();
-  await page.locator('[data-panel=details]').getByRole('button', { name: 'Edit' }).click();
+  // (no details filled in yet: one line, naming the right kind of details)
+  await page.locator('.ov2-empty').getByText('No IW4X mod details yet.').waitFor();
+  await page.locator('.ov2-empty').getByRole('link', { name: 'Add details' }).click();
   const ed = page.locator('.modal');
   await ed.getByText('IW4X client build').waitFor();
   await ed.getByText('Who needs it').waitFor();
@@ -1197,7 +1203,7 @@ await step('New project as a copy; attach a dependency, put it in place, put the
   if (shots) await page.screenshot({ path: join(shots, 'x-custom-types.png') });
   await page.getByRole('button', { name: 'Dashboard' }).click();
   await page.locator('.pcard').filter({ hasText: 'OMEN old' }).click();
-  await page.locator('[data-panel=details]').getByRole('button', { name: 'Edit' }).click();
+  await page.locator('.ov2-empty').getByRole('link', { name: 'Add details' }).click();
   await ed.getByRole('button', { name: 'General' }).click();
   await ed.getByRole('button', { name: /^Project type:/ }).click();
   await page.getByRole('menu', { name: 'Project type' }).getByRole('menuitem', { name: 'Game addon / mod' }).click();
@@ -1207,7 +1213,7 @@ await step('New project as a copy; attach a dependency, put it in place, put the
   await ed.locator('.field').filter({ hasText: 'Server name' }).locator('input').fill('Trickshot Lobby #1');
   await ed.getByRole('button', { name: 'Save' }).click();
   await page.locator('[data-panel=details]').getByText('Trickshot Lobby #1').waitFor();
-  await page.locator('[data-panel=about]').getByText('Plutonium T6 mod').waitFor();
+  await page.locator('.ov2-hero').getByText('Plutonium T6 mod').waitFor();
   if (!(await api('projects.remove', { id: pr.id, deleteManagedFiles: true })).ok) throw new Error('remove failed');
   await page.getByRole('button', { name: 'Dashboard' }).click();
 });

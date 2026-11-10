@@ -1,7 +1,8 @@
 :root {
   --bg0: #000000; --bg1: #0a0a0a; --bg2: #101010; --bg3: #171717; --bg4: #212121;
   --line: #1c1c1c; --line2: #2a2a2a;
-  --fg0: #ededed; --fg1: #b3b3b3; --fg2: #858585; --fg3: #595959;
+  /* secondary text a step brighter than before, for contrast on black */
+  --fg0: #ededed; --fg1: #bdbdbd; --fg2: #969696; --fg3: #6a6a6a;
   /* the only color in the app — changed in Settings → Appearance */
   --accent: #ededed; --accent2: #a3a3a3; --accent3: #d4d4d4; --accent-fg: #000000;
   --accent-bg: color-mix(in srgb, var(--accent) 13%, transparent);
@@ -38,7 +39,7 @@ code, pre, .mono { font-family: var(--mono); font-size: 12px; }
 .sidebar .brand { font-family: var(--display); font-size: 15px; }
 .sidebar .brand .logo { width: 24px; height: 24px; flex: none; color: var(--fg0); }
 .sidebar nav { padding: 4px 8px; display: flex; flex-direction: column; gap: 1px; }
-.sidebar .section { padding: 14px 16px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--fg3); }
+.sidebar .section { padding: 16px 16px 5px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--fg2); }
 .sidebar .scroll { overflow-y: auto; flex: 1; padding-bottom: 8px; }
 .navitem { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: var(--r); color: var(--fg1); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 0; background: none; text-align: left; width: 100%; }
 .navitem:hover { background: var(--bg3); color: var(--fg0); }
@@ -711,7 +712,8 @@ input[type=checkbox] { accent-color: var(--accent); }
 .pcard.drop-after { box-shadow: 8px 0 0 -5px var(--accent); }
 
 /* overview panels */
-.ov2 .panel-h { border-bottom: 1px solid var(--line); padding-bottom: 6px; margin-bottom: 10px; }
+/* headings are separated by spacing, not lines */
+.ov2 .panel-h { padding-bottom: 2px; margin-bottom: 8px; }
 .ov2 .panel.collapsed .panel-h { margin-bottom: 0; }
 .ov2 .panel-t h2 { text-transform: none; letter-spacing: 0; font-size: 16px; color: var(--fg0); }
 .ov2-rail .panel-t h2 { font-size: 14.5px; }
@@ -886,3 +888,31 @@ html.pv-dragging.pv-drag-ok, html.pv-dragging.pv-drag-ok * { cursor: grabbing !i
 .pv-drag-ghost { position: fixed; z-index: 9999; pointer-events: none; opacity: .85; transform: rotate(1.5deg); box-shadow: 0 10px 30px #000c; background: var(--bg1); border-radius: 8px; max-height: 120px; overflow: hidden; }
 .update-plan .import-list { margin-top: 8px; }
 .update-missing { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+
+/* ---- Overview cleanup: summary cards, rail cards, one line for empty sections ---- */
+.ov2-main > .ov2-hero { margin-bottom: -6px; }
+.ov2-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 1400px) { .ov2-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ov2-card { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 12px 14px; background: var(--bg1); border: 1px solid var(--line); border-radius: 8px; color: var(--fg0); font: inherit; text-align: left; }
+button.ov2-card { cursor: pointer; }
+button.ov2-card:hover { border-color: var(--line2); background: var(--bg2); }
+button.ov2-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ov2-card .k { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--fg2); }
+.ov2-card .k svg { width: 12px; height: 12px; }
+.ov2-card .v { font: 600 20px/1.25 var(--display); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov2-card .s { font-size: 12px; color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov2-card .s b { color: var(--accent-text); font-weight: 600; }
+.ov2-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 10px 14px; border: 1px dashed var(--line2); border-radius: 8px; color: var(--fg2); }
+.ov2-empty a { color: var(--accent-text); text-decoration: none; }
+.ov2-empty a:hover { text-decoration: underline; }
+/* the side column: each section is a card, instead of lines between them */
+.ov2-rail { gap: 12px; padding-left: 0; border-left: 0; }
+.ov2-rail > .panel { background: var(--bg1); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px 12px; }
+.ov2-rail > .panel.collapsed { padding-bottom: 8px; }
+.ov2-rail .linkrow { min-height: 30px; }
+.ov2-rail .why-host { min-height: 26px; display: flex; flex-direction: column; justify-content: center; }
+.ov2-rail .panel-t h2 { font-size: 14px; }
+.tc-est { margin-left: auto; font-size: 11.5px; cursor: help; border-bottom: 1px dotted var(--fg3); }
+.ov2-main { gap: 24px; }
+.sidebar .section-n { margin-left: auto; font-weight: 400; letter-spacing: 0; color: var(--fg3); }
+.sidebar nav + .section, .sidebar div + .section { margin-top: 2px; }

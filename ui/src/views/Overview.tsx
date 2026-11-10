@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   LuTriangleAlert, LuGitCompareArrows, LuPlus, LuTrash2, LuCircleCheck, LuCircleX, LuFileWarning, LuPencil,
   LuNotebookPen, LuListTodo, LuHistory, LuChevronRight, LuDiff, LuBug, LuImage, LuCode,
-  LuInfo, LuFileClock, LuSlidersHorizontal, LuClock, LuFolder, LuFolderX, LuPlug, LuMessageSquarePlus,
+  LuFileClock, LuSlidersHorizontal, LuClock, LuFolder, LuFolderX, LuFiles, LuPlug, LuMessageSquarePlus,
 } from 'react-icons/lu';
 import { DepsBody, depsSummary, type Dep } from './Deps';
 import { SpoolChip } from './Printers';
@@ -192,11 +192,29 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const depsRelevant = ['addon', 'game', 'software'].includes(p.category) || !!deps.data?.length;
 
   const ext = (path: string) => (path.includes('.') ? path.split('.').pop()!.toLowerCase() : '');
+  // time in the last 7 days, for the summary card
+  const week = useLoad(() => call<{ sessions: { start: number; end: number }[] }>('time.summary', { projectId: p.id, since: Date.now() - 7 * 86_400_000 }), [p.id, ctx.scanTick]);
+  const weekMs = (() => { const from = Date.now() - 7 * 86_400_000; return (week.data?.sessions || []).reduce((n, x) => n + Math.max(0, x.end - Math.max(x.start, from)), 0); })();
+  // empty details / dependencies don't each take a section: one line offers both
+  const [showDeps, setShowDeps] = useState(false);
+  const detailsEmpty = !filled.length && !custom.length && !(p.category === '3d-printing' && printLog.length);
+  const depsEmpty = depsRelevant && !deps.data?.length && !showDeps;
+  // "Print details" → "print details", but "WoW addon details" / "IW4X mod details" keep their capitals
+  const lowerFirst = (t: string) => (/^[A-Z][a-z]/.test(t) ? t[0].toLowerCase() + t.slice(1) : t);
+  const emptyParts = [mod && detailsEmpty && lowerFirst(mod.title || 'Details'), depsEmpty && 'dependencies'].filter(Boolean) as string[];
+  const emptyLine = emptyParts.length ? (
+    <div className="ov2-empty small">
+      <span>No {emptyParts.join(' or ')} yet.</span>
+      {mod && detailsEmpty && <a href="#" onClick={(e) => { e.preventDefault(); setEditing('details'); }}>Add {p.category === '3d-printing' ? 'print details' : 'details'}</a>}
+      {depsEmpty && <a href="#" onClick={(e) => { e.preventDefault(); setShowDeps(true); }} title="Files this project needs that live outside it, like a modded DLL">Add a dependency</a>}
+    </div>
+  ) : null;
   return (
     <div className="page ov2">
-      <PanelBoard storageKey="overview" defaults={{ main: ['about', 'attention', 'recent', 'details', 'deps'], rail: ['time', 'next', 'notes', 'activity', 'info'] }}
-        zoneClass={{ main: 'ov2-main', rail: 'ov2-rail' }} panels={[
-        { id: 'about', icon: <LuInfo />, summary: p.description ? p.description.split('\n')[0] : undefined, title: 'About', className: 'ov2-hero-panel', body: <div className="ov2-hero">
+      <PanelBoard storageKey="overview" defaults={{ main: ['attention', 'recent', 'details', 'deps'], rail: ['time', 'next', 'activity', 'notes', 'info'] }}
+        zoneClass={{ main: 'ov2-main', rail: 'ov2-rail' }}
+        before={{ main: <>
+          <div className="ov2-hero">
           {thumb && <button className="ov2-pic" title="Change the picture" onClick={() => setPicking(true)}><img src={thumb.src} alt="" style={{ objectFit: thumb.fit || 'cover', objectPosition: `${thumb.x ?? 50}% ${thumb.y ?? 50}%` }} /></button>}
           <div className="ov2-about">
             {p.description
@@ -214,7 +232,28 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
               {!thumb && <button className="btn sm ghost" onClick={() => setPicking(true)}><LuImage /> Add a picture</button>}
             </div>
           </div>
-        </div> },
+        </div>
+          <div className="ov2-cards">
+            <button className="ov2-card" onClick={() => ctx.openFiles()} title="Open the Files tab">
+              <span className="k"><LuFiles /> Files</span><span className="v">{p.fileCount}</span>
+              <span className="s">{changed.data?.length ? <><b>{changed.data.length} changed</b> since you looked</> : bytes(p.bytes)}</span>
+            </button>
+            <button className="ov2-card" onClick={() => ctx.openTimeline()} title="Open the Timeline">
+              <span className="k"><LuHistory /> Last change</span><span className="v">{timeline.data?.[0] ? ago(timeline.data[0].at) : '—'}</span>
+              <span className="s">{timeline.data?.[0]?.summary.replace(/^File changes detected: /, '') || 'Nothing yet'}</span>
+            </button>
+            <div className="ov2-card" title="Time on this project in the last 7 days (timer, logged time and file activity)">
+              <span className="k"><LuClock /> Time</span><span className="v">{fmtHM(weekMs) || '0 min'}</span>
+              <span className="s">last 7 days{timeTotal ? ` · ${fmtHM(timeTotal)} in total` : ''}</span>
+            </div>
+            <button className="ov2-card" onClick={() => ctx.openTask('')} title="Open Tasks & bugs">
+              <span className="k"><LuListTodo /> Tasks</span><span className="v">{openCount ? `${openCount} open` : 'None open'}</span>
+              <span className="s">{nextTasks[0] ? `Next: ${nextTasks[0].title}` : 'Add one so you know where to pick up'}</span>
+            </button>
+          </div>
+        </> }}
+        after={{ main: emptyLine }}
+        panels={[
         { id: 'attention', icon: <LuTriangleAlert />, title: 'Needs your attention', summary: `${attention} item${attention === 1 ? '' : 's'} to look at`, meta: attention || undefined, hidden: attention === 0, className: 'ov2-sec attention', body: <>
             {(reviews.data || []).map((r) => (
               <div key={r.id} className="att-row">
@@ -320,7 +359,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
             ))}
           </div>}
         </> },
-        { id: 'details', icon: <LuSlidersHorizontal />, summary: filled.length || custom.length ? `${filled.length + custom.length} filled in` : 'Nothing filled in yet', title: mod?.title || 'Details', hidden: !mod, actions: <button className="btn sm ghost" onClick={() => setEditing('details')}><LuPencil /> Edit</button>, body: <>
+        { id: 'details', icon: <LuSlidersHorizontal />, summary: filled.length || custom.length ? `${filled.length + custom.length} filled in` : 'Nothing filled in yet', title: mod?.title || 'Details', hidden: !mod || detailsEmpty, actions: <button className="btn sm ghost" onClick={() => setEditing('details')}><LuPencil /> Edit</button>, body: <>
             {filled.length === 0 && !custom.length ? (
               <p className="muted small" style={{ margin: 0 }}><a href="#" onClick={(e) => { e.preventDefault(); setEditing('details'); }}>Add {p.category === '3d-printing' ? 'material, printer and print time' : 'details'}</a>{p.category === '3d-printing' ? ', or fill them from a .3mf in this project.' : '.'}</p>
             ) : (
@@ -349,7 +388,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
               </div>
             )}
         </> },
-        { id: 'deps', icon: <LuPlug />, title: 'Dependencies', summary: depsSummary(deps.data), hidden: !depsRelevant, body: <DepsBody projectId={p.id} deps={deps.data} onChanged={() => setDepsTick((t) => t + 1)} /> },
+        { id: 'deps', icon: <LuPlug />, title: 'Dependencies', summary: depsSummary(deps.data), hidden: !depsRelevant || (!deps.data?.length && !showDeps), body: <DepsBody projectId={p.id} deps={deps.data} onChanged={() => setDepsTick((t) => t + 1)} /> },
         { id: 'time', icon: <LuClock />, summary: timeTotal ? `${fmtHM(timeTotal)} in total` : 'No time recorded yet', title: 'Time', body: <>
           <TimeCard projectId={p.id} onTimerChange={() => window.dispatchEvent(new CustomEvent('pv:timer'))} />
         </> },
@@ -367,7 +406,7 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
           )) : <div className="muted small"><a href="#" onClick={(e) => { e.preventDefault(); ctx.openNote(''); }}>Write the first note</a>: setup steps, decisions, how things fit together.</div>}
         </> },
         { id: 'activity', icon: <LuHistory />, summary: timeline.data?.[0] ? <>{timeline.data[0].summary} · {ago(timeline.data[0].at)}</> : undefined, title: 'Activity', actions: <button className="btn sm ghost" onClick={() => ctx.openTimeline()}>Timeline <LuChevronRight /></button>, body: <>
-          {(timeline.data || []).map((e) => (
+          {(timeline.data || []).slice(0, 3).map((e) => (
             <div key={e.id} className="why-host small" style={{ padding: '3px 0' }} title={e.note ? `Why: ${e.note}` : undefined}>
               <WhyNote note={e.note} onSave={async (n) => { await call('timeline.setNote', { id: e.id, note: n }); timeline.reload(); }}>
                 {(add) => <div className="row" style={{ alignItems: 'baseline', gap: 6 }}><span className="grow" style={e.manual ? { fontWeight: 600 } : undefined}>{e.summary}</span>{add}<span className="dim" style={{ whiteSpace: 'nowrap' }}>{ago(e.at)}</span></div>}

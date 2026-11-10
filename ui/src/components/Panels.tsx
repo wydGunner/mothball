@@ -54,13 +54,15 @@ function normalize(saved: Layout | null, defaults: Record<string, string[]>): La
  * layout is remembered per board. Right-click a header for keyboard-friendly
  * Move up / Move down / Reset layout.
  */
-export function PanelBoard({ storageKey, defaults, panels, zoneClass, before }: {
+export function PanelBoard({ storageKey, defaults, panels, zoneClass, before, after }: {
   storageKey: string;
   defaults: Record<string, string[]>;
   panels: PanelDef[];
   zoneClass: Record<string, string>;
   /** Rendered at the start of a zone, not movable (e.g. a page title). */
   before?: Record<string, ReactNode>;
+  /** Rendered at the end of a zone, not movable (e.g. one line for empty sections). */
+  after?: Record<string, ReactNode>;
 }) {
   const defaultsKey = JSON.stringify(defaults);
   const [layout, setLayout] = useState<Layout>(() => normalize(load(storageKey), defaults));
@@ -172,6 +174,7 @@ export function PanelBoard({ storageKey, defaults, panels, zoneClass, before }: 
                 </section>
               );
             })}
+            {after?.[zone]}
           </div>
         );
       })}
