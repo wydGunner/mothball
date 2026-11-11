@@ -879,22 +879,21 @@ pub fn dirs(v: &Vault, project_id: &str) -> DbResult<Json> {
 /// actually present in each group, most common first.
 pub fn groups(v: &Vault, project_id: &str) -> DbResult<Json> {
     let pr = v.db.one("SELECT category FROM projects WHERE id=?", p![project_id])?.ok_or("Project not found")?;
-    let mut counts: Vec<(String, i64)> = v
-        .db
-        .query("SELECT ext, count(*) AS n FROM files WHERE project_id=? AND state='present' GROUP BY ext ORDER BY n DESC, ext", p![project_id])?
-        .iter()
-        .map(|r| (r.s("ext"), r.i("n")))
-        .collect();
+    let rows = v.db.query("SELECT ext, count(*) AS n, coalesce(sum(size),0) AS b FROM files WHERE project_id=? AND state='present' GROUP BY ext ORDER BY n DESC, ext", p![project_id])?;
+    let mut counts: Vec<(String, i64)> = rows.iter().map(|r| (r.s("ext"), r.i("n"))).collect();
+    let sizes: std::collections::HashMap<String, i64> = rows.iter().map(|r| (r.s("ext"), r.i("b"))).collect();
     let found = |exts: &[String], counts: &[(String, i64)]| -> (i64, Json) {
         let hits: Vec<&(String, i64)> = counts.iter().filter(|(e, _)| exts.contains(e)).collect();
-        (hits.iter().map(|(_, n)| n).sum(), Json::Arr(hits.iter().map(|(e, n)| Json::obj().with("ext", e.as_str()).with("count", *n)).collect()))
+        (hits.iter().map(|(_, n)| n).sum(), Json::Arr(hits.iter().map(|(e, n)| Json::obj().with("ext", e.as_str()).with("count", *n).with("bytes", sizes.get(e).copied().unwrap_or(0))).collect()))
     };
+    let bytes_of = |exts: &[String]| -> i64 { exts.iter().filter_map(|e| sizes.get(e)).sum() };
     let mut out = Vec::new();
     let mut covered: Vec<String> = Vec::new();
     let defs = crate::profiles::groups(&pr.s("category"));
     for g in &defs {
         let exts: Vec<String> = g.exts.iter().map(|e| e.to_string()).collect();
         let (n, f) = found(&exts, &counts);
+        let b = bytes_of(&exts);
         covered.extend(exts.iter().cloned());
         out.push(
             Json::obj()
@@ -902,6 +901,7 @@ pub fn groups(v: &Vault, project_id: &str) -> DbResult<Json> {
                 .with("label", g.label)
                 .with("hint", g.hint)
                 .with("count", n)
+                .with("bytes", b)
                 .with("found", f)
                 .with("exts", Json::Arr(exts.into_iter().map(Json::from).collect())),
         );
@@ -917,6 +917,7 @@ pub fn groups(v: &Vault, project_id: &str) -> DbResult<Json> {
                     .with("label", "Other files")
                     .with("hint", "File types this project type doesn't group")
                     .with("count", n)
+                    .with("bytes", bytes_of(&other))
                     .with("found", f)
                     .with("exts", Json::Arr(other.into_iter().map(Json::from).collect())),
             );

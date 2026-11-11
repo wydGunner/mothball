@@ -929,7 +929,8 @@ await step('3D printing project details', async () => {
     await page.locator('.modal').getByRole('button', { name: 'Save' }).click();
     await page.getByText('Gray layer showed through').waitFor();
     if (shots) await page.screenshot({ path: join(shots, 'x-3d-overview.png') });
-    await page.locator('.ov2-groups .chip').filter({ hasText: 'Meshes' }).click();
+    // "What's inside": the legend opens the Files tab filtered to that kind
+    await page.locator('[data-panel=inside] .ov2-leg').filter({ hasText: 'Meshes' }).click();
     await page.locator('.chip.on').filter({ hasText: 'Meshes' }).waitFor();
     await page.locator('.filerow').filter({ hasText: 'desk cat.stl' }).click();
     await page.getByText('Mesh bounds').waitFor();
@@ -1666,6 +1667,22 @@ await step('WoW addon: .toc panel and Lua functions', async () => {
   await page.locator('.symrow').filter({ hasText: 'function WL:Refresh()' }).waitFor();
   await page.locator('.symrow').filter({ hasText: 'function WL:OnEnable()' }).getByRole('button', { name: 'Uses' }).click();
   await page.locator('.refrow').filter({ hasText: 'Modules/Farm.lua:1' }).waitFor();
+  // the Overview shows what the .toc says instead of asking for details
+  await page.getByRole('tab', { name: /Overview/ }).click();
+  const det = page.locator('[data-panel=details]');
+  await det.getByText('Retail 11.2.5').waitFor();
+  await det.getByText('2.1.0', { exact: true }).waitFor();
+  await det.getByText('WhatsLeftDB', { exact: true }).waitFor();
+  await det.getByText(/lists 1 file that doesn't exist/).waitFor();
+  await det.getByRole('button', { name: 'Unused.lua' }).waitFor();
+  const empty = await page.locator('.ov2-empty').textContent();
+  if (/details/i.test(empty || '') || /woW/.test(await page.locator('.ov2').textContent())) throw new Error('still asks for details: ' + empty);
+  await page.locator('[data-panel=inside] .ov2-leg').first().waitFor();
+  // no time yet: the card offers the timer, and the Time panel waits until there's time
+  if (await page.locator('[data-panel=time]').count()) throw new Error('empty Time panel shown');
+  await page.locator('.ov2-card').filter({ hasText: 'Time' }).getByRole('button', { name: 'Log time' }).click();
+  await page.locator('[data-panel=time]').waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-wow-overview.png') });
 });
 
 await step('Deploy a project to a game folder', async () => {
@@ -1843,10 +1860,12 @@ await step('Dashboard: one top bar, attention and recent in drawers; overview pa
   await page.locator('[data-panel=time] .panel-t').click();
   await page.locator('[data-panel=time] .tc-big').waitFor();
   // collapsed panels still say what's in them
-  for (const id of ['time', 'next', 'notes', 'activity', 'info']) await page.locator(`[data-panel=${id}] .panel-t`).click();
+  // (Next up only shows with open tasks, Time once there's time)
+  const shown = await rail();
+  for (const id of shown) await page.locator(`[data-panel=${id}] .panel-t`).click();
   await page.locator('[data-panel=activity] .panel-summary').waitFor();
   if (shots) await page.screenshot({ path: join(shots, 'x-collapsed-rail.png') });
-  for (const id of ['time', 'next', 'notes', 'activity', 'info']) await page.locator(`[data-panel=${id}] .panel-t`).click();
+  for (const id of shown) await page.locator(`[data-panel=${id}] .panel-t`).click();
 });
 
 await step('Settings: hide project types from the pickers', async () => {

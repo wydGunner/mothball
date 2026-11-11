@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   LuTriangleAlert, LuGitCompareArrows, LuPlus, LuTrash2, LuCircleCheck, LuCircleX, LuFileWarning, LuPencil,
   LuNotebookPen, LuListTodo, LuHistory, LuChevronRight, LuDiff, LuBug, LuImage, LuCode,
-  LuFileClock, LuSlidersHorizontal, LuClock, LuFolder, LuFolderX, LuFiles, LuPlug, LuMessageSquarePlus,
+  LuFileClock, LuSlidersHorizontal, LuClock, LuFolderX, LuFiles, LuPlug, LuMessageSquarePlus,
 } from 'react-icons/lu';
 import { DepsBody, depsSummary, type Dep } from './Deps';
 import { SpoolChip } from './Printers';
@@ -197,21 +197,33 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
   const weekMs = (() => { const from = Date.now() - 7 * 86_400_000; return (week.data?.sessions || []).reduce((n, x) => n + Math.max(0, x.end - Math.max(x.start, from)), 0); })();
   // empty details / dependencies don't each take a section: one line offers both
   const [showDeps, setShowDeps] = useState(false);
+  // a WoW addon's .toc already says most of what its details would
+  const isWow = p.category === 'addon' && (tkey === 'addon:wow' || tkey === 'addon');
+  const tocs = useLoad(() => (isWow ? call<any[]>('files.list', { projectId: p.id, exts: ['toc'], limit: 20 }) : Promise.resolve([])), [p.id, isWow, ctx.scanTick]);
+  const toc = tocs.data?.length ? [...tocs.data].sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.length - b.path.length)[0] : null;
+  // the Time panel only once there's time (its controls are on the card until then)
+  const [timerTick, setTimerTick] = useState(0);
+  useEffect(() => { const on = () => setTimerTick((t) => t + 1); window.addEventListener('pv:timer', on); return () => window.removeEventListener('pv:timer', on); }, []);
+  const timer = useLoad(() => call<any>('time.timer'), [timerTick]);
+  const timing = timer.data?.projectId === p.id;
+  const [showTime, setShowTime] = useState(false);
+  const timeShown = !!timeTotal || timing || showTime;
   const detailsEmpty = !filled.length && !custom.length && !(p.category === '3d-printing' && printLog.length);
   const depsEmpty = depsRelevant && !deps.data?.length && !showDeps;
   // "Print details" → "print details", but "WoW addon details" / "IW4X mod details" keep their capitals
-  const lowerFirst = (t: string) => (/^[A-Z][a-z]/.test(t) ? t[0].toLowerCase() + t.slice(1) : t);
-  const emptyParts = [mod && detailsEmpty && lowerFirst(mod.title || 'Details'), depsEmpty && 'dependencies'].filter(Boolean) as string[];
+  const lowerFirst = (t: string) => (/^[A-Z][a-z]*(\s|$)/.test(t) ? t[0].toLowerCase() + t.slice(1) : t);
+  const detailsAsk = mod && detailsEmpty && !toc;
+  const emptyParts = [detailsAsk && lowerFirst(mod!.title || 'Details'), depsEmpty && 'dependencies'].filter(Boolean) as string[];
   const emptyLine = emptyParts.length ? (
     <div className="ov2-empty small">
       <span>No {emptyParts.join(' or ')} yet.</span>
-      {mod && detailsEmpty && <a href="#" onClick={(e) => { e.preventDefault(); setEditing('details'); }}>Add {p.category === '3d-printing' ? 'print details' : 'details'}</a>}
+      {detailsAsk && <a href="#" onClick={(e) => { e.preventDefault(); setEditing('details'); }}>Add {p.category === '3d-printing' ? 'print details' : 'details'}</a>}
       {depsEmpty && <a href="#" onClick={(e) => { e.preventDefault(); setShowDeps(true); }} title="Files this project needs that live outside it, like a modded DLL">Add a dependency</a>}
     </div>
   ) : null;
   return (
     <div className="page ov2">
-      <PanelBoard storageKey="overview" defaults={{ main: ['attention', 'recent', 'details', 'deps'], rail: ['time', 'next', 'activity', 'notes', 'info'] }}
+      <PanelBoard storageKey="overview" defaults={{ main: ['attention', 'recent', 'inside', 'details', 'deps'], rail: ['time', 'next', 'activity', 'notes'] }}
         zoneClass={{ main: 'ov2-main', rail: 'ov2-rail' }}
         before={{ main: <>
           <div className="ov2-hero">
@@ -224,6 +236,8 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
               <span>{typeLabel(tkey)}</span>
               {p.status !== 'Active' && <StatusPill status={p.status} />}
               {p.group && <span>in {p.group}</span>}
+              <span title={p.mode === 'linked' ? 'Mothball tracks the files where they are' : 'Mothball keeps the files in its own storage'}>{p.mode === 'linked' ? 'Linked folder' : 'In app storage'}</span>
+              <span title={dateTime(p.createdAt)}>added {ago(p.createdAt)}</span>
               {p.tags.map((t) => <span className="tag" key={t}>{t}</span>)}
             </div>
             {p.progress > 0 && <div className="ov2-progress" title={`${p.progress}% done`}><div className="progress"><div style={{ width: `${p.progress}%` }} /></div><span className="small dim">{p.progress}%</span></div>}
@@ -244,7 +258,11 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
             </button>
             <div className="ov2-card" title="Time on this project in the last 7 days (timer, logged time and file activity)">
               <span className="k"><LuClock /> Time</span><span className="v">{fmtHM(weekMs) || '0 min'}</span>
-              <span className="s">last 7 days{timeTotal ? ` · ${fmtHM(timeTotal)} in total` : ''}</span>
+              {timeShown ? <span className="s">last 7 days{timeTotal ? ` · ${fmtHM(timeTotal)} in total` : ''}</span>
+                : <span className="s ov2-card-acts">
+                  <button className="linklike" onClick={async () => { await act(() => call('time.start', { projectId: p.id })); window.dispatchEvent(new CustomEvent('pv:timer')); }}>Start timer</button>
+                  <button className="linklike" onClick={() => setShowTime(true)}>Log time</button>
+                </span>}
             </div>
             <button className="ov2-card" onClick={() => ctx.openTask('')} title="Open Tasks & bugs">
               <span className="k"><LuListTodo /> Tasks</span><span className="v">{openCount ? `${openCount} open` : 'None open'}</span>
@@ -353,14 +371,11 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
               );
             })}
           </div> : <div className="small muted">{p.fileCount ? 'No files yet.' : p.mode === 'managed' ? 'No files yet. Import some from the Files tab.' : 'No files found in the folder yet. Press Rescan.'}</div>}
-          {(groups.data || []).some((g) => g.count > 0) && <div className="ov2-groups">
-            {groups.data!.filter((g) => g.count > 0).map((g) => (
-              <button key={g.id} className="chip" onClick={() => ctx.openFiles(g.id)} title={`${g.hint ? g.hint + ': ' : ''}${(g.found || []).map((f: any) => `${f.ext ? '.' + f.ext : 'no extension'} ${f.count}`).join(', ')}`}>{g.label} <span>{g.count}</span></button>
-            ))}
-          </div>}
         </> },
-        { id: 'details', icon: <LuSlidersHorizontal />, summary: filled.length || custom.length ? `${filled.length + custom.length} filled in` : 'Nothing filled in yet', title: mod?.title || 'Details', hidden: !mod || detailsEmpty, actions: <button className="btn sm ghost" onClick={() => setEditing('details')}><LuPencil /> Edit</button>, body: <>
-            {filled.length === 0 && !custom.length ? (
+        { id: 'inside', icon: <LuFiles />, title: "What's inside", summary: insideSummary(groups.data), hidden: !(groups.data || []).some((g) => g.count > 0), body: <Inside groups={groups.data || []} total={p.bytes} onOpen={(id) => ctx.openFiles(id)} /> },
+        { id: 'details', icon: <LuSlidersHorizontal />, summary: filled.length || custom.length ? `${filled.length + custom.length} filled in` : toc ? `From ${toc.name}` : 'Nothing filled in yet', title: mod?.title || 'Details', hidden: !mod || (detailsEmpty && !toc), actions: <button className="btn sm ghost" onClick={() => setEditing('details')}><LuPencil /> Edit</button>, body: <>
+            {detailsEmpty && toc ? <TocDetails fileId={toc.id} name={toc.path} description={p.description} onOpen={() => ctx.openFile(toc.id)} onOpenFile={(id) => ctx.openFile(id)} />
+            : filled.length === 0 && !custom.length ? (
               <p className="muted small" style={{ margin: 0 }}><a href="#" onClick={(e) => { e.preventDefault(); setEditing('details'); }}>Add {p.category === '3d-printing' ? 'material, printer and print time' : 'details'}</a>{p.category === '3d-printing' ? ', or fill them from a .3mf in this project.' : '.'}</p>
             ) : (
               <>
@@ -389,10 +404,10 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
             )}
         </> },
         { id: 'deps', icon: <LuPlug />, title: 'Dependencies', summary: depsSummary(deps.data), hidden: !depsRelevant || (!deps.data?.length && !showDeps), body: <DepsBody projectId={p.id} deps={deps.data} onChanged={() => setDepsTick((t) => t + 1)} /> },
-        { id: 'time', icon: <LuClock />, summary: timeTotal ? `${fmtHM(timeTotal)} in total` : 'No time recorded yet', title: 'Time', body: <>
+        { id: 'time', icon: <LuClock />, summary: timeTotal ? `${fmtHM(timeTotal)} in total` : 'No time recorded yet', title: 'Time', hidden: !timeShown, body: <>
           <TimeCard projectId={p.id} onTimerChange={() => window.dispatchEvent(new CustomEvent('pv:timer'))} />
         </> },
-        { id: 'next', icon: <LuListTodo />, summary: openCount ? `${openCount} open${nextTasks[0] ? ` · ${nextTasks[0].title}` : ''}` : 'Nothing open', title: 'Next up', actions: <button className="btn sm ghost" onClick={() => ctx.openTask('')}>Board <LuChevronRight /></button>, body: <>
+        { id: 'next', icon: <LuListTodo />, summary: openCount ? `${openCount} open${nextTasks[0] ? ` · ${nextTasks[0].title}` : ''}` : 'Nothing open', title: 'Next up', hidden: !openCount, actions: <button className="btn sm ghost" onClick={() => ctx.openTask('')}>Board <LuChevronRight /></button>, body: <>
           {nextTasks.length ? nextTasks.map((t) => (
             <div key={t.id} className="linkrow" onClick={() => ctx.openTask(t.id)}>
               {t.kind === 'bug' ? <LuBug color="var(--accent)" /> : <span className={`prio p${t.priority}`} title={['Low', 'Normal', 'High', 'Urgent'][t.priority] + ' priority'} />}
@@ -413,15 +428,6 @@ export function Overview({ ctx }: { ctx: ProjectCtx }) {
               </WhyNote>
             </div>
           ))}
-        </> },
-        { id: 'info', icon: <LuFolder />, summary: <span className="mono">{p.rootPath}</span>, title: 'Folder', className: 'small', body: <>
-
-          <div className="kv">
-            <span>Folder</span><span className="mono" style={{ wordBreak: 'break-all' }}>{p.rootPath}</span>
-            <span>Files</span><span>{p.mode === 'linked' ? 'Edited where they are' : 'Kept in app storage'}</span>
-            <span>Size</span><span>{p.fileCount} {p.fileCount === 1 ? 'file' : 'files'}, {bytes(p.bytes)}</span>
-            <span>Created</span><span>{dateTime(p.createdAt)}</span>
-          </div>
         </> },
       ]} />
 
@@ -667,3 +673,88 @@ export function CustomFields({ value, onChange, compact }: { value: Record<strin
   );
 }
 
+
+// ---------------------------------------------------------------- what's inside / .toc
+
+/** WoW color codes (|cffrrggbb … |r) and texture tags out of .toc text. */
+const tocText = (x?: string) => (x || '').replace(/\|c[0-9a-fA-F]{8}|\|r|\|T[^|]*\|t/g, '').trim();
+
+/** Groups with each extension counted once (some types put .png in two groups). */
+function insideRows(groups: any[]) {
+  const seen = new Set<string>();
+  return groups.map((g) => {
+    let count = 0, size = 0;
+    for (const f of g.found || []) {
+      if (seen.has(f.ext)) continue;
+      seen.add(f.ext);
+      count += f.count; size += f.bytes || 0;
+    }
+    return { ...g, count, size };
+  }).filter((g) => g.count > 0);
+}
+
+function insideSummary(groups?: any[]) {
+  const rows = insideRows(groups || []).sort((a, b) => b.count - a.count);
+  return rows.slice(0, 3).map((g) => `${g.label} ${g.count}`).join(' · ') || undefined;
+}
+
+/** A bar of the project's files by kind (shades of the accent), with a legend that opens the Files tab filtered. */
+function Inside({ groups, total, onOpen }: { groups: any[]; total: number; onOpen: (id: string) => void }) {
+  const rows = insideRows(groups).sort((a, b) => (a.id === 'other' ? 1 : b.id === 'other' ? -1 : b.count - a.count));
+  const n = rows.reduce((x, g) => x + g.count, 0);
+  if (!n) return null;
+  const shade = (i: number) => `color-mix(in srgb, var(--accent) ${Math.max(22, 100 - i * 18)}%, var(--bg2))`;
+  return (
+    <div>
+      <div className="ov2-bar" role="img" aria-label={rows.map((g) => `${g.label} ${g.count}`).join(', ')}>
+        {rows.map((g, i) => <span key={g.id} style={{ flexGrow: g.count, background: shade(i) }} title={`${g.label}: ${g.count} files`} />)}
+      </div>
+      <div className="ov2-legend">
+        {rows.map((g, i) => (
+          <button key={g.id} className="ov2-leg" onClick={() => onOpen(g.id)} title={`${g.hint ? g.hint + '. ' : ''}${(g.found || []).map((f: any) => `${f.ext ? '.' + f.ext : 'no extension'} ${f.count}`).join(', ')}`}>
+            <span className="sw" style={{ background: shade(i) }} /><span className="l">{g.label}</span><span className="n">{g.count}</span><span className="b">{bytes(g.size)}</span>
+          </button>
+        ))}
+        <span className="ov2-leg total"><span className="l">Total</span><span className="n">{n}</span><span className="b">{bytes(total)}</span></span>
+      </div>
+    </div>
+  );
+}
+
+/** A WoW addon's details as its .toc states them, plus a check of its load order. */
+function TocDetails({ fileId, name, description, onOpen, onOpenFile }: { fileId: string; name: string; description?: string; onOpen: () => void; onOpenFile: (id: string) => void }) {
+  const d = useLoad(() => call<any>('symbols.toc', { fileId }), [fileId]);
+  if (d.error) return <div className="small muted">Couldn't read {name}: {d.error}</div>;
+  if (!d.data) return <div className="small muted">Reading {name}…</div>;
+  const fl = d.data.fields || {};
+  const versions: string[] = d.data.gameVersions || [];
+  const game = versions.map((v) => `${Number(v.split('.')[0]) >= 11 ? 'Retail' : 'Classic'} ${v}`).join(', ');
+  const rows: [string, string][] = [
+    ['Game', game],
+    ['Version', tocText(fl.Version)],
+    ['Author', tocText(fl.Author)],
+    // the .toc's Notes are often the project description already
+    ['Description', tocText(fl.Notes).toLowerCase() === (description || '').trim().toLowerCase() ? '' : tocText(fl.Notes)],
+    ['Saved variables', [fl.SavedVariables, fl.SavedVariablesPerCharacter && `${fl.SavedVariablesPerCharacter} (per character)`].filter(Boolean).join(', ')],
+    ['Needs', tocText(fl.RequiredDeps || fl.Dependencies)],
+    ['Optional', tocText(fl.OptionalDeps)],
+  ].filter(([, v]) => v) as [string, string][];
+  const files: any[] = d.data.files || [];
+  const missing = files.filter((f) => f.status === 'missing');
+  const notLoaded: any[] = d.data.notLoaded || [];
+  const ok = files.filter((f) => f.status === 'ok').length;
+  return (
+    <>
+      <dl className="ov2-dl">{rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
+      <div className="ov2-toccheck small">
+        {!missing.length && !notLoaded.length
+          ? <div><LuCircleCheck color="var(--ok)" /> Loads {ok} file{ok === 1 ? '' : 's'}; every Lua and XML file in the addon is in the load order.</div>
+          : <>
+            {missing.length > 0 && <div><LuTriangleAlert color="var(--warn)" /> The .toc lists {missing.length} file{missing.length === 1 ? '' : 's'} that {missing.length === 1 ? "doesn't" : "don't"} exist: <span className="mono">{missing.slice(0, 4).map((f) => f.entry).join(', ')}{missing.length > 4 ? '…' : ''}</span></div>}
+            {notLoaded.length > 0 && <div><LuTriangleAlert color="var(--warn)" /> {notLoaded.length} Lua/XML file{notLoaded.length === 1 ? '' : 's'} nothing loads: {notLoaded.slice(0, 4).map((f, i) => <span key={f.fileId}>{i ? ', ' : ''}<button className="linklike mono" onClick={() => onOpenFile(f.fileId)}>{f.path.split('/').pop()}</button></span>)}{notLoaded.length > 4 ? '…' : ''}</div>}
+          </>}
+        <div className="dim">Read from <button className="linklike mono" onClick={onOpen}>{name}</button>. Anything you add with Edit is shown here instead.</div>
+      </div>
+    </>
+  );
+}

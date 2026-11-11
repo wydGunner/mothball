@@ -280,3 +280,4 @@ mod tests {
         assert_eq!(g(mk("misc", &["a.png"])), None);
     }
 }
+
