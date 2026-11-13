@@ -48,6 +48,7 @@ impl Rng {
     }
 }
 
+#[derive(Clone)]
 pub struct Opts {
     pub rounds: usize,
     pub seed: u64,
@@ -1151,6 +1152,18 @@ pub fn crash(o: &Opts, exe: &Path) -> R<()> {
     Ok(())
 }
 
+const HELP: &str = "Mothball stress test: random edits, renames, deletes, game output, checkpoints, undo,
+updates from downloads and backup-drive round trips on a throwaway project, checking
+every file after each step. Your own projects aren't touched.
+
+  vault-stress                      (double-click) 2000 operations + 15 crashes, then waits
+  vault-stress --rounds 3000        how many operations
+  vault-stress --dir E:\\Stress      where to run (e.g. a USB drive)
+  vault-stress --crash 25           kill it mid-work 25 times, check nothing is corrupted
+  vault-stress --long-paths         very deep folder paths
+  vault-stress --seed 3             replay an exact run
+  vault-stress --verbose            print every operation";
+
 /// Command-line entry shared by the two stress binaries.
 pub fn main_with_args() -> i32 {
     let args: Vec<String> = std::env::args().collect();
@@ -1163,6 +1176,27 @@ pub fn main_with_args() -> i32 {
         long_paths: args.iter().any(|a| a == "--long-paths"),
         verbose: args.iter().any(|a| a == "--verbose"),
     };
+    if args.iter().any(|a| a == "--help" || a == "-h" || a == "/?") {
+        println!("{HELP}");
+        return 0;
+    }
+    // double-clicked (no options): a full run, then wait so the window stays open
+    if args.len() == 1 {
+        println!("Mothball stress test: 2000 random operations on a throwaway project in a temp folder,");
+        println!("then 15 crashes mid-work. Your own projects aren't touched. This takes several minutes.\n");
+        let mut res = run(&Opts { rounds: 2000, ..o.clone() });
+        if res.is_ok() {
+            println!("\nNow killing it mid-work 15 times…");
+            res = crash(&Opts { rounds: 2000, crash: 15, ..o.clone() }, &std::env::current_exe().unwrap_or_default());
+        }
+        match &res {
+            Ok(()) => println!("\nPASSED — every check held (seed {}).", o.seed),
+            Err(e) => println!("\n{e}\n\nFAILED (seed {}). Copy everything in this window and send it over.", o.seed),
+        }
+        println!("\nPress Enter to close.");
+        let _ = std::io::stdin().read_line(&mut String::new());
+        return if res.is_ok() { 0 } else { 1 };
+    }
     let res = if args.iter().any(|a| a == "--child") {
         run_child(o.dir.as_deref().unwrap_or(Path::new(".")), o.seed)
     } else if o.crash > 0 {

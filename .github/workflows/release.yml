@@ -19,7 +19,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: |
+            src-tauri
+            crates/vault-stress
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: npm install
@@ -35,3 +37,12 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
+      # The stress test as a standalone .exe: double-click it to run a full test.
+      - name: Attach vault-stress.exe
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cargo build --release --manifest-path crates/vault-stress/Cargo.toml
+          $v = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          gh release upload "v$v" crates/vault-stress/target/release/vault-stress.exe --clobber
