@@ -204,6 +204,8 @@ table.list tr.sel td { background: var(--accent-bg); }
 .md p { margin: .5em 0; } .md ul, .md ol { padding-left: 22px; margin: .4em 0; }
 .md code { background: var(--bg3); padding: 1px 5px; border-radius: 4px; }
 .md pre { background: var(--bg0); border: 1px solid var(--line); padding: 10px 12px; border-radius: var(--r); overflow: auto; }
+.md pre code.language-text { white-space: pre; display: block; font-size: 12.5px; line-height: 1.6; }
+.md h4 { font-size: 13px; color: var(--fg1); margin: 14px 0 6px; }
 .md pre code { background: none; padding: 0; }
 .md blockquote { margin: .5em 0; padding: 2px 12px; border-left: 3px solid var(--line2); color: var(--fg1); }
 .md table { border-collapse: collapse; } .md td, .md th { border: 1px solid var(--line2); padding: 4px 8px; }

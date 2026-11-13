@@ -1346,6 +1346,26 @@ await step('Tabs "+": open another project in a tab; header folds; path menu', a
   await page.locator('.pathbtn:visible').waitFor();
 });
 
+await step('Notes: plain-text notes read well; Markdown notes unchanged', async () => {
+  const omenId = (await api('projects.list', {})).data.find((p) => p.name === 'OMEN v2').id;
+  const body = ['<name> = any part of the player\'s name.', '', '==============================', ' 1. CHAT COMMANDS  (type in chat)', '==============================', '', 'Anyone', '   !open              opens the menu', '   !fps <number>      your own FPS', '   !dll               tell the menu you have the dll (only if options', '                      are missing)', '', 'Real Markdown', '=============', '', '| a | b |', '|---|---|', '| `<x>` | 2 |'].join('\n');
+  await api('notes.create', { projectId: omenId, title: 'Plain text commands', body });
+  await page.evaluate(() => location.reload());
+  await page.locator('.sidebar .navitem').filter({ hasText: 'OMEN v2' }).first().click();
+  await page.getByRole('tab', { name: /Notes/ }).click();
+  await page.getByText('Plain text commands').first().click();
+  await page.getByRole('button', { name: 'Read', exact: true }).click();
+  const md = page.locator('.md:visible').first();
+  await md.locator('h2').filter({ hasText: '1. CHAT COMMANDS (type in chat)' }).waitFor();
+  await md.locator('h4').filter({ hasText: 'Anyone' }).waitFor();
+  const pre = await md.locator('pre code.language-text').textContent();
+  if (!pre.includes('!fps <number>      your own FPS') || !pre.includes('\n                   are missing)')) throw new Error('columns not kept: ' + pre);
+  if (!(await md.textContent()).includes("<name> = any part")) throw new Error('<name> placeholder was dropped');
+  await md.locator('h1').filter({ hasText: 'Real Markdown' }).waitFor();
+  await md.locator('table td code').filter({ hasText: '<x>' }).waitFor();
+  if (shots) await page.screenshot({ path: join(shots, 'x-note-plaintext.png') });
+});
+
 await step('GSC: functions list, go to definition, function search', async () => {
   writeFileSync(join(omen, 'scripts/mp/_hud.gsc'), '#include scripts\\mp\\_util;\n\ninit()\n{\n    level thread scripts\\mp\\_util::util();\n}\n');
   await page.getByRole('button', { name: 'Dashboard' }).click();
