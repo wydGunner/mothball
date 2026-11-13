@@ -10,6 +10,7 @@ import { ProjectView, type Tab } from './views/Project';
 import { SearchView } from './views/Search';
 import { SettingsView } from './views/Settings';
 import { DriveWarning } from './views/BackupDrive';
+import { NewTabButton } from './components/TabMenus';
 import { confirmDiscardProject, unsavedNames } from './unsaved';
 import { CommandPalette } from './views/Palette';
 import { cx } from './format';
@@ -92,7 +93,9 @@ function App() {
   routeRef.current = route;
   // the project tab you were last in (reused when you open a project from the dashboard)
   const lastTab = useRef<string | null>(null);
-  if (route.view === 'project') lastTab.current = route.id;
+  // when each tab was last shown, to close the least recently used one at the limit
+  const usedAt = useRef<Record<string, number>>({});
+  if (route.view === 'project') { lastTab.current = route.id; usedAt.current[route.id] = Date.now(); }
   else if (lastTab.current && !openTabs.includes(lastTab.current)) lastTab.current = null;
   const go = useCallback((r: Route) => {
     const cur = routeRef.current;
@@ -111,9 +114,11 @@ function App() {
         }
         let n = [...t, r.id];
         const max = (() => { try { return Number(localStorage.getItem('pv.maxTabs')) || 10; } catch { return 10; } })();
-        // too many open: close the oldest tab without unsaved edits (never the one being opened)
+        // too many open: close the least recently used tab without unsaved
+        // edits (never the one being opened or the one you're in)
+        const keep = new Set([r.id, cur.view === 'project' ? cur.id : '']);
         while (n.length > max) {
-          const drop = n.find((id) => id !== r.id && !unsavedNames(id).length);
+          const drop = [...n].sort((a, b) => (usedAt.current[a] || 0) - (usedAt.current[b] || 0)).find((id) => !keep.has(id) && !unsavedNames(id).length);
           if (!drop) break;
           n = n.filter((id) => id !== drop);
           delete tabRoutes.current[drop];
@@ -169,6 +174,7 @@ function App() {
       if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(true); }
       else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); go({ view: 'search' }); }
       else if (mod && e.key.toLowerCase() === 'n' && !e.shiftKey) { e.preventDefault(); setNewProject(true); }
+      else if (mod && e.key.toLowerCase() === 't' && !e.shiftKey) { e.preventDefault(); window.dispatchEvent(new CustomEvent('pv:newtab')); }
       else if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); setCollapsed((c) => !c); }
       else if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); back(); }
       else if (e.ctrlKey && e.key === 'Tab') { e.preventDefault(); cycleTab(e.shiftKey ? -1 : 1); }
@@ -290,6 +296,7 @@ function App() {
               })}
             </div>
           )}
+          <NewTabButton projects={projects} openIds={openTabs} onNew={() => setNewProject(true)} onOpen={(id) => go({ view: 'project', id, newTab: true })} />
           <DriveWarning onOpen={() => { try { localStorage.setItem('pv.settingsSection', 'backups'); } catch { /* ignore */ } go({ view: 'settings' }); window.dispatchEvent(new CustomEvent('pv:settings-section', { detail: 'backups' })); }} />
           {update && (
             <button className="btn primary sm" style={{ marginLeft: 'auto' }} disabled={updating !== false} title={update.notes || undefined}

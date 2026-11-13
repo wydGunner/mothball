@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
-import { LuLayoutDashboard, LuFiles, LuNotebookPen, LuListTodo, LuHistory, LuGitBranch, LuRefreshCw, LuTriangleAlert, LuFolderOpen, LuLink, LuStar, LuCircleCheck, LuShieldCheck } from 'react-icons/lu';
-import { call, isTauri, pickFolder, revealPath, onFileDrop, type Project, type ScanReport } from '../ipc';
+import { LuLayoutDashboard, LuFiles, LuNotebookPen, LuListTodo, LuHistory, LuGitBranch, LuRefreshCw, LuTriangleAlert, LuStar, LuChevronDown, LuChevronRight, LuCircleCheck, LuShieldCheck } from 'react-icons/lu';
+import { call, pickFolder, onFileDrop, type Project, type ScanReport } from '../ipc';
+import { PathMenu } from '../components/TabMenus';
 import { Empty, ProjectIcon, StatusPill, useAction, useToast, useConfirm } from '../components/common';
 import { ago, cx } from '../format';
 import { FirstTips } from './Welcome';
@@ -131,6 +132,10 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus, act
     return () => off?.();
   }, [id, project?.mode, act, confirm, toast, reload]);
 
+  // header folded to one line (all projects, remembered)
+  const [compact, setCompactRaw] = useState(() => { try { return localStorage.getItem('pv.headerCompact') === '1'; } catch { return false; } });
+  const setCompact = (c: boolean) => { setCompactRaw(c); try { localStorage.setItem('pv.headerCompact', c ? '1' : '0'); } catch { /* ignore */ } window.dispatchEvent(new CustomEvent('pv:header-compact', { detail: c })); };
+  useEffect(() => { const on = (e: Event) => setCompactRaw((e as CustomEvent).detail); window.addEventListener('pv:header-compact', on); return () => window.removeEventListener('pv:header-compact', on); }, []);
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (!activeRef.current) return;
@@ -157,22 +162,20 @@ export function ProjectView({ nav, id, tab: initialTab, focus: initialFocus, act
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div className="row" style={{ padding: '12px 16px 8px', background: 'var(--bg1)', gap: 12 }}>
-        <ProjectIcon category={project.category} icon={project.icon} color={project.color} size={34} />
-        <div className="grow">
-          <div className="row"><h1 style={{ fontSize: 20 }}>{project.name}</h1>{project.status !== 'Active' && <StatusPill status={project.status} />}
+      <div className={cx('phead', compact && 'compact')}>
+        <button className="phead-fold" title={compact ? 'Show the full header' : 'Fold the header to one line'} aria-expanded={!compact} onClick={() => setCompact(!compact)}>{compact ? <LuChevronRight size={14} /> : <LuChevronDown size={14} />}</button>
+        <ProjectIcon category={project.category} icon={project.icon} color={project.color} size={compact ? 20 : 34} />
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div className="row"><h1 style={{ fontSize: compact ? 15 : 20 }}>{project.name}</h1>{project.status !== 'Active' && <StatusPill status={project.status} />}
             <button className={cx('star', project.favorite && 'on')} title="Favorite" onClick={async () => { await act(() => call('projects.update', { id, patch: { favorite: !project.favorite } })); reload(); nav.refreshProjects(); }}><LuStar fill={project.favorite ? 'currentColor' : 'none'} /></button>
           </div>
-          <div className="small dim mono" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={project.rootPath}>
-            {project.mode === 'linked' ? <LuLink size={11} /> : null} {project.rootPath}
-          </div>
+          {!compact && <PathMenu path={project.rootPath} linked={project.mode === 'linked'} />}
         </div>
         <span className="small dim">{project.lastScanAt ? `Checked ${ago(project.lastScanAt)}` : ''}</span>
         <TimerChip projectId={project.id} tick={timerTick} />
         <DeployButtons project={project} />
         {project.rootAvailable && <CheckpointButton projectId={project.id} rootPath={project.rootPath} scanTick={scanTick} onRestored={() => scan(true)} />}
         <button className="btn" onClick={() => scan(false)} disabled={scanning} title="Re-scan for external changes (F5)"><LuRefreshCw className={scanning ? 'spin' : ''} /> {scanning ? 'Scanning…' : 'Rescan'}</button>
-        {isTauri && <button className="btn icon" title="Open folder in Explorer" onClick={() => act(() => revealPath(project.rootPath))}><LuFolderOpen /></button>}
       </div>
       {!project.rootAvailable && (
         <div className="alert bad" style={{ margin: '0 16px 8px' }}><LuTriangleAlert />

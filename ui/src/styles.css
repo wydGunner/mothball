@@ -941,3 +941,26 @@ button.ov2-card:focus-visible { outline: 2px solid var(--accent); outline-offset
 .ov2-card-acts { display: flex; gap: 12px; }
 .ov2-card-acts .linklike { font-size: inherit; color: var(--accent-text); }
 .ov2-leg .l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* project header: foldable, path menu */
+.phead { display: flex; align-items: center; gap: 12px; padding: 12px 16px 8px 8px; background: var(--bg1); }
+.phead.compact { padding: 6px 16px 6px 8px; gap: 10px; }
+.phead.compact .btn { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.phead-fold { display: grid; place-items: center; width: 20px; height: 20px; margin-right: -4px; border: 0; border-radius: 5px; background: none; color: var(--fg3); cursor: pointer; flex: none; }
+.phead-fold:hover { background: var(--bg3); color: var(--fg0); }
+.pathmenu { position: relative; min-width: 0; }
+.pathbtn { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-width: 0; padding: 1px 6px; margin-left: -6px; border: 0; border-radius: 5px; background: none; color: var(--fg2); font-size: 12px; cursor: pointer; }
+.pathbtn:hover, .pathbtn.open { background: var(--bg3); color: var(--fg0); }
+.pathbtn .chev { flex: none; opacity: .6; }
+.ell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.dd-sep { height: 1px; background: var(--line); margin: 4px 2px; }
+.dd-item.sel { background: var(--bg4); color: var(--fg0); }
+.dd-item kbd { font-size: 10.5px; }
+/* "+" after the tabs */
+.newtab { position: relative; display: flex; align-items: center; margin-left: 4px; }
+.newtab-btn { display: grid; place-items: center; width: 26px; height: 26px; margin-top: 4px; border: 0; border-radius: 6px; background: none; color: var(--fg2); cursor: pointer; }
+.newtab-btn:hover, .newtab-btn.open { background: var(--bg2); color: var(--fg0); }
+.newtab-menu { width: 300px; left: 0; padding: 6px; }
+.newtab-menu .input { width: 100%; margin-bottom: 4px; }
+.newtab-list { max-height: 50vh; overflow: auto; }
+.newtab-list .dd-item { gap: 8px; }

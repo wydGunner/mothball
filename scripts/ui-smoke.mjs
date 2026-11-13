@@ -1313,6 +1313,39 @@ await step('Backup drive: first backup, restore a deleted file, find it from Res
   await toastGone();
 });
 
+await step('Tabs "+": open another project in a tab; header folds; path menu', async () => {
+  await api('projects.create', { name: 'Tab Test', category: 'other' });
+  await page.evaluate(() => location.reload());
+  await page.locator('.sidebar .navitem').filter({ hasText: 'OMEN v2' }).first().click();
+  const tabs = () => page.locator('.ptab').count();
+  const n = await tabs();
+  await page.locator('.newtab-btn').click();
+  await page.getByPlaceholder('Open a project…').fill('tab te');
+  await page.keyboard.press('Enter');
+  await page.locator('.ptab.on').filter({ hasText: 'Tab Test' }).waitFor();
+  // a new tab: the project you were in keeps its own (at the tab limit the oldest other one closes)
+  if (!(await page.locator('.ptab').filter({ hasText: 'OMEN v2' }).count()) || (await tabs()) < Math.min(n + 1, 10)) throw new Error('"+" replaced the current tab instead of opening a new one');
+  // Ctrl+T opens the same menu; its last item makes a new project
+  await page.keyboard.press('Control+t');
+  await page.locator('.newtab-menu .dd-item').filter({ hasText: 'New project…' }).click();
+  await page.locator('.modal').filter({ hasText: 'New project' }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.locator('.modal').waitFor({ state: 'detached' });
+  // the path opens folder actions
+  await page.locator('.pathbtn:visible').click();
+  await page.locator('.pathmenu:visible .dd-item').filter({ hasText: 'Copy path' }).waitFor();
+  await page.keyboard.press('Escape');
+  // fold the header to one line; remembered after a reload
+  await page.locator('.phead-fold:visible').click();
+  await page.locator('.phead.compact:visible').waitFor();
+  if (await page.locator('.pathbtn:visible').count()) throw new Error('path still shown in the folded header');
+  await page.evaluate(() => location.reload());
+  await page.locator('.sidebar .navitem').filter({ hasText: 'OMEN v2' }).first().click();
+  await page.locator('.phead.compact:visible').waitFor();
+  await page.locator('.phead-fold:visible').click();
+  await page.locator('.pathbtn:visible').waitFor();
+});
+
 await step('GSC: functions list, go to definition, function search', async () => {
   writeFileSync(join(omen, 'scripts/mp/_hud.gsc'), '#include scripts\\mp\\_util;\n\ninit()\n{\n    level thread scripts\\mp\\_util::util();\n}\n');
   await page.getByRole('button', { name: 'Dashboard' }).click();
