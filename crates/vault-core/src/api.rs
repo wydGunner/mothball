@@ -93,7 +93,17 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
             &os(a, "destDir").unwrap_or_default(),
             a.get("allowDuplicates").and_then(|x| x.as_bool()).unwrap_or(false),
             os(a, "operation").as_deref() == Some("move"),
-        ),
+        )
+        .and_then(|r| {
+            // your "why" for bringing these in goes on the Timeline entry
+            let note = os(a, "note").unwrap_or_default();
+            if let (false, Some(batch)) = (note.trim().is_empty(), r.str_of("batchId")) {
+                if let Some(e) = v.db.one("SELECT id FROM timeline WHERE ref_type='import' AND ref_id=?", crate::p![batch])? {
+                    crate::timeline::set_note(v, &e.s("id"), &note)?;
+                }
+            }
+            Ok(r)
+        }),
         "projects.useFolder" => projects::use_folder(v, &s(a, "id")?, &PathBuf::from(s(a, "path")?)),
         "files.rename" => files::rename(v, &s(a, "id")?, &s(a, "name")?),
         "files.delete" => files::delete(v, &strs(a, "ids")),
@@ -222,7 +232,7 @@ pub fn dispatch(v: &Vault, cmd: &str, a: &Json) -> DbResult<Json> {
         "files.stopTracking" => files::stop_tracking(v, &strs(a, "ids"), a.get("keepVersions").and_then(|x| x.as_bool()).unwrap_or(false)),
         "files.importPreview" => files::import_preview(v, &s(a, "projectId")?, &strs(a, "paths").into_iter().map(PathBuf::from).collect::<Vec<_>>(), &os(a, "destDir").unwrap_or_default()),
         "files.updatePreview" => crate::update::preview(v, &s(a, "projectId")?, &strs(a, "paths").into_iter().map(PathBuf::from).collect::<Vec<_>>()),
-        "files.update" => crate::update::apply(v, &s(a, "projectId")?, &strs(a, "paths").into_iter().map(PathBuf::from).collect::<Vec<_>>(), a.get("removeMissing").and_then(|x| x.as_bool()).unwrap_or(false)),
+        "files.update" => crate::update::apply_noted(v, &s(a, "projectId")?, &strs(a, "paths").into_iter().map(PathBuf::from).collect::<Vec<_>>(), a.get("removeMissing").and_then(|x| x.as_bool()).unwrap_or(false), &os(a, "note").unwrap_or_default()),
         "files.importBatches" => files::import_batches(v, &s(a, "projectId")?),
         "files.undoImport" => files::undo_import(v, &s(a, "id")?),
         "files.moveToProject" => files::move_to_project(v, &strs(a, "ids"), &s(a, "targetProjectId")?, &os(a, "destDir").unwrap_or_default()),

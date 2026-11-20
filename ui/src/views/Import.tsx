@@ -35,6 +35,8 @@ export function ImportDialog({ projectId, paths, initialDir, onClose, onDone }: 
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [op, setOp] = useState<Op>('copy');
+  // why these files are coming in: goes on the Timeline entry (and each replaced file's history)
+  const [why, setWhy] = useState('');
   // "Update the project from this": a newer copy of the project (or some of its files)
   const [up, setUp] = useState<UpdatePreview | null>(null);
   const [removeMissing, setRemoveMissing] = useState(false);
@@ -50,7 +52,7 @@ export function ImportDialog({ projectId, paths, initialDir, onClose, onDone }: 
   const nUp = up ? up.changed + up.new + (removeMissing ? up.notInDrop.length : 0) : 0;
   const runUpdate = async () => {
     setBusy(true);
-    const r: any = await act(() => call('files.update', { projectId, paths, removeMissing }));
+    const r: any = await act(() => call('files.update', { projectId, paths, removeMissing, note: why }));
     setBusy(false);
     if (!r) return;
     onDone();
@@ -86,7 +88,7 @@ export function ImportDialog({ projectId, paths, initialDir, onClose, onDone }: 
     if (op === 'update') return runUpdate();
     if (op === 'inplace') return useInPlace();
     setBusy(true);
-    const r: any = await act(() => call('files.import', { projectId, paths, destDir: dir, operation: op }));
+    const r: any = await act(() => call('files.import', { projectId, paths, destDir: dir, operation: op, note: why }));
     setBusy(false);
     if (!r) return;
     onDone();
@@ -136,6 +138,12 @@ export function ImportDialog({ projectId, paths, initialDir, onClose, onDone }: 
               ? 'The project starts working on that folder directly — nothing is copied, and you edit the real files.'
               : <>This project already works directly on <span className="mono">{pv.root}</span>. Files outside it need to be copied or moved in.</>}</div></div></label>
         </div>
+        {op !== 'inplace' && <div className="field import-why">
+          <label htmlFor="import-why">{op === 'update' ? 'Why are these files being replaced?' : 'Why are you adding these?'} <span className="dim">optional, shown in the Timeline</span></label>
+          <input id="import-why" key={op} className="input" autoFocus value={why} maxLength={2000} onChange={(e) => setWhy(e.target.value)}
+            placeholder={op === 'update' ? 'e.g. v1.4 from Discord, fixes the spawn bug' : 'e.g. sounds for the new menu'}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !busy && (op === 'update' ? up && nUp : pv && n)) run(); }} />
+        </div>}
         {op === 'inplace' && <div className="import-dest">
           <div><span className="dim small">Project folder</span>
             <div className="row" style={{ gap: 6, minWidth: 0 }}>

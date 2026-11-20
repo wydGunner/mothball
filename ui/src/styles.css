@@ -966,3 +966,7 @@ button.ov2-card:focus-visible { outline: 2px solid var(--accent); outline-offset
 .newtab-menu .input { width: 100%; margin-bottom: 4px; }
 .newtab-list { max-height: 50vh; overflow: auto; }
 .newtab-list .dd-item { gap: 8px; }
+
+.import-why { margin: 12px 0 4px; }
+.import-why label { display: flex; gap: 8px; align-items: baseline; }
+.import-why .input { width: 100%; }

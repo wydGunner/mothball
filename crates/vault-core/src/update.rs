@@ -246,6 +246,12 @@ fn write_verified(target: &Path, bytes: &[u8], sha: &str) -> Result<(), String> 
 /// remove project files that aren't in the drop. One "Updated from …"
 /// Timeline batch, undoable.
 pub fn apply(v: &Vault, project_id: &str, sources: &[PathBuf], remove_missing: bool) -> DbResult<Json> {
+    apply_noted(v, project_id, sources, remove_missing, "")
+}
+
+/// [`apply`], with your "why" put on the Timeline entry and on each replaced
+/// or added file's change (shown in its History). Empty adds nothing.
+pub fn apply_noted(v: &Vault, project_id: &str, sources: &[PathBuf], remove_missing: bool, note: &str) -> DbResult<Json> {
     let pl = make_plan(v, project_id, sources)?;
     let label = match sources {
         [one] => one.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
@@ -304,6 +310,17 @@ pub fn apply(v: &Vault, project_id: &str, sources: &[PathBuf], remove_missing: b
         v.db.exec("UPDATE timeline SET summary=? WHERE id=?", p![format!("Updated from {label}: {rest}"), r.s("id")])?;
         entry_id = r.s("id");
     }
+    let note = note.trim();
+    if !note.is_empty() {
+        if !entry_id.is_empty() {
+            crate::timeline::set_note(v, &entry_id, note)?;
+        }
+        for id in written_ids.iter().chain(added_ids.iter()) {
+            for e in v.db.query("SELECT id FROM file_events WHERE file_id=? AND at>=? AND kind IN ('modified','added')", p![id.as_str(), start])? {
+                files::set_event_note(v, &e.s("id"), note)?;
+            }
+        }
+    }
     Ok(Json::obj()
         .with("updated", Json::Arr(updated))
         .with("added", Json::Arr(added))
@@ -318,6 +335,28 @@ mod tests {
     use crate::json::Json;
     use crate::p;
     use std::fs;
+
+    #[test]
+    fn the_why_lands_on_the_timeline_and_each_file() {
+        let (t, v) = crate::testutil::vault();
+        let d = t.0.join("Mod");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("a.gsc"), "one").unwrap();
+        fs::write(d.join("b.gsc"), "same").unwrap();
+        let pid = crate::api::dispatch(&v, "projects.create", &Json::obj().with("name", "Mod").with("linkPath", d.to_string_lossy().to_string())).unwrap().str_of("id").unwrap();
+        crate::files::scan(&v, &pid).unwrap();
+        let dl = t.0.join("dl/Mod");
+        fs::create_dir_all(&dl).unwrap();
+        fs::write(dl.join("a.gsc"), "two").unwrap();
+        fs::write(dl.join("b.gsc"), "same").unwrap();
+        fs::write(dl.join("c.gsc"), "new").unwrap();
+        let paths = Json::Arr(vec![Json::from(dl.to_string_lossy().to_string())]);
+        let r = crate::api::dispatch(&v, "files.update", &Json::obj().with("projectId", pid.as_str()).with("paths", paths).with("note", "  v1.4 from Discord: fixes spawns ")).unwrap();
+        let e = v.db.one("SELECT note FROM timeline WHERE id=?", p![r.str_of("entryId").unwrap()]).unwrap().unwrap();
+        assert_eq!(e.s("note"), "v1.4 from Discord: fixes spawns");
+        let noted: Vec<String> = v.db.query("SELECT f.rel_path FROM file_events e JOIN files f ON f.id=e.file_id WHERE e.note=? ORDER BY f.rel_path", p!["v1.4 from Discord: fixes spawns"]).unwrap().iter().map(|r| r.s("rel_path")).collect();
+        assert_eq!(noted, vec!["a.gsc", "c.gsc"], "only files that were replaced or added");
+    }
 
     /// User request: drop a downloaded newer copy of the project on it and
     /// have the edited files replaced, instead of copy/pasting in Explorer.

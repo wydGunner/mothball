@@ -728,10 +728,16 @@ await step('Update the project from a downloaded copy (wrapped folder), then Und
   await m.locator('.import-row').filter({ hasText: 'scripts/mp/_new_mode.gsc' }).getByText('new: added').waitFor();
   await m.getByRole('button', { name: /Show 1 unchanged/ }).waitFor();
   await m.getByText(/Also remove the/).waitFor(); // files not in the download: offered, off by default
+  // the "why" box is focused: type and press Enter to update
+  await m.getByLabel(/Why are these files being replaced/).waitFor();
+  await page.keyboard.type('v3 from Discord: new mode');
   if (shots) await page.screenshot({ path: join(shots, 'x-update-from-download.png') });
-  await m.getByRole('button', { name: 'Update 2 files' }).click();
+  await page.keyboard.press('Enter');
   const t = page.locator('.toast').filter({ hasText: /Updated .*: replaced 1, added 1/ });
   await t.waitFor();
+  const omenPid = (await api('projects.list', {})).data.find((p) => p.name === 'OMEN v2').id;
+  const tl = (await api('timeline.list', { projectId: omenPid, limit: 5 })).data;
+  if (!tl.some((e) => /^Updated from/.test(e.summary) && e.note === 'v3 from Discord: new mode')) throw new Error('the why is not on the Timeline entry: ' + JSON.stringify(tl.map((e) => [e.summary, e.note])));
   if (readFileSync(wj, 'utf8') !== '{"ak47": {"damage": 99}}\n') throw new Error('weapons.json was not replaced');
   if (!existsSync(join(omen, 'scripts/mp/_new_mode.gsc'))) throw new Error('new file not added');
   const gone = projectBefore.filter((f) => !existsSync(join(omen, f)));
@@ -754,8 +760,11 @@ await step('Import with preview, then Undo import', async () => {
   await m.getByText('OMEN', { exact: false }).first().waitFor();
   await m.getByText(/weapons.*\.json/).first().waitFor();
   if (shots) await page.screenshot({ path: join(shots, 'x-import.png') });
+  await m.getByLabel(/Why are you adding these/).fill('loot rework');
   await m.getByRole('button', { name: /Copy 2 files into/ }).click();
   await m.waitFor({ state: 'detached' });
+  const omenPid = (await api('projects.list', {})).data.find((p) => p.name === 'OMEN v2').id;
+  if (!(await api('timeline.list', { projectId: omenPid, limit: 5 })).data.some((e) => /^Imported/.test(e.summary) && e.note === 'loot rework')) throw new Error('the why is not on the import entry');
   if (!existsSync(join(omen, 'configs/loot_table.json'))) throw new Error('import did not copy');
   if (readFileSync(join(omen, 'configs/weapons.json'), 'utf8').includes('conflicting')) throw new Error('import overwrote an existing file');
   if (!existsSync(join(src, 'loot_table.json'))) throw new Error('import moved the source');
